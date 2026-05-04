@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile
+        working-directory: src
+        run: |
+          mkdir -p ../dist
+          targets="darwin/arm64 darwin/amd64 linux/arm64 linux/amd64"
+          for target in $targets; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            output="wt-${os}-${arch}"
+            echo "Building ${output}..."
+            mkdir -p "../dist/${output}"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -ldflags "-X main.version=${{ steps.version.outputs.tag }}" \
+              -o "../dist/${output}/wt" ./cmd/wt
+            tar -czf "../dist/${output}.tar.gz" -C "../dist/${output}" wt
+          done
+
+      - name: Determine release notes base tag
+        id: release-base
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          # Extract major.minor from current tag (e.g. v0.2.0 → 0.2)
+          current_minor=$(echo "$tag" | sed 's/^v//' | cut -d. -f1-2)
+          patch=$(echo "$tag" | sed 's/^v//' | cut -d. -f3)
+
+          if [ "$patch" = "0" ]; then
+            # Minor version bump — find the first tag of the previous minor version
+            major=$(echo "$current_minor" | cut -d. -f1)
+            minor=$(echo "$current_minor" | cut -d. -f2)
+            prev_minor=$((minor - 1))
+            prev_prefix="v${major}.${prev_minor}."
+            # Get the earliest tag matching the previous minor version
+            base_tag=$(git tag -l "${prev_prefix}*" --sort=version:refname | head -1)
+            if [ -n "$base_tag" ]; then
+              echo "base_tag=$base_tag" >> "$GITHUB_OUTPUT"
+              echo "Using base tag: $base_tag (minor version release)"
+            else
+              echo "No previous minor version tags found, using default"
+            fi
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true
+          previous_tag: ${{ steps.release-base.outputs.base_tag }}
+
+      - name: Update Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+
+          sha_darwin_arm64=$(sha256sum dist/wt-darwin-arm64.tar.gz | cut -d' ' -f1)
+          sha_darwin_amd64=$(sha256sum dist/wt-darwin-amd64.tar.gz | cut -d' ' -f1)
+          sha_linux_arm64=$(sha256sum dist/wt-linux-arm64.tar.gz | cut -d' ' -f1)
+          sha_linux_amd64=$(sha256sum dist/wt-linux-amd64.tar.gz | cut -d' ' -f1)
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/sahil87/homebrew-tap.git" /tmp/homebrew-tap
+
+          sed \
+            -e "s/VERSION_PLACEHOLDER/${version}/" \
+            -e "s/SHA_DARWIN_ARM64/${sha_darwin_arm64}/" \
+            -e "s/SHA_DARWIN_AMD64/${sha_darwin_amd64}/" \
+            -e "s/SHA_LINUX_ARM64/${sha_linux_arm64}/" \
+            -e "s/SHA_LINUX_AMD64/${sha_linux_amd64}/" \
+            .github/formula-template.rb > /tmp/homebrew-tap/Formula/wt.rb
+
+          cd /tmp/homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/wt.rb
+          git commit -m "wt v${version}"
+          git push

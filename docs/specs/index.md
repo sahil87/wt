@@ -13,3 +13,7 @@
 
 | Spec | Description |
 |------|-------------|
+| [`cli-surface.md`](cli-surface.md) | Per-subcommand reference: flags, positional args, exit codes for `wt create / list / open / delete / init / shell-setup`. |
+| [`worktree-layout.md`](worktree-layout.md) | Filesystem layout (`<repo>.worktrees/`), random adjective-noun naming, `--worktree-name` override, branch ↔ worktree relationship. |
+| [`init-protocol.md`](init-protocol.md) | Init script lookup contract: `WORKTREE_INIT_SCRIPT` env var, `"fab sync"` default, command-vs-path detection, working-dir resolution, graceful skip behavior. |
+| [`build-and-release.md`](build-and-release.md) | Local build (`just build`/`scripts/build.sh`), tag-driven release flow, cross-compile matrix, Homebrew tap update, pre-release setup. |
