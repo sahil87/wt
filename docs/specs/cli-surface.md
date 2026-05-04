@@ -115,9 +115,12 @@ lookup contract is documented in [`init-protocol.md`](init-protocol.md).
 
 No flags. No positional args.
 
-Exit codes: `ExitGitError` when not in a repo; otherwise the script's own exit
-code is returned via `RunE`. Missing init command/file results in a graceful
-skip with guidance — exit 0.
+Exit codes: `ExitGitError` when not in a repo; `ExitGeneralError` (1) when the
+init script runs but exits non-zero (the script's exit code is **not**
+preserved — `RunE` returns an error, which `main.go` maps to
+`ExitGeneralError`). Missing init command/file results in a graceful skip with
+guidance — exit 0. See [`init-protocol.md`](init-protocol.md) for full
+semantics.
 
 ## `wt shell-setup`
 

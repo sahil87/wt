@@ -50,7 +50,11 @@ func List() ([]Info, error) {
 		}
 
 		if info.IsMain {
-			info.Name = "(main)"
+			// Stable key, matched against by FindByName. Display layers
+			// (e.g. cmd/wt/list.go) are responsible for rendering this as
+			// "(main)" — keeping the key stable lets callers pass "main"
+			// rather than "(main)".
+			info.Name = "main"
 		} else {
 			info.Name = filepath.Base(e.path)
 		}
@@ -90,9 +94,11 @@ func Current() (*Info, error) {
 	return nil, fmt.Errorf("current directory is not a git worktree")
 }
 
-// FormatHuman formats a single worktree as a human-readable line.
+// FormatHuman formats a single worktree as a human-readable line. The main
+// worktree is rendered as "(main)" in display while Info.Name remains the
+// stable matching key "main".
 func FormatHuman(info *Info) string {
-	return fmt.Sprintf("%s  %s", info.Name, info.Branch)
+	return fmt.Sprintf("%s  %s", displayName(info), info.Branch)
 }
 
 // FormatAllHuman formats all worktrees as a human-readable table.
@@ -122,11 +128,21 @@ func FormatAllHuman(infos []Info) string {
 		if info.IsCurrent {
 			marker = "* "
 		}
-		fmt.Fprintf(&sb, "%s%-14s %s\n", marker, info.Name, info.Branch)
+		fmt.Fprintf(&sb, "%s%-14s %s\n", marker, displayName(&info), info.Branch)
 	}
 
 	fmt.Fprintf(&sb, "\nTotal: %d worktree(s)", len(infos))
 	return sb.String()
+}
+
+// displayName returns the user-facing rendering of a worktree's name. The
+// main worktree's stable Name key ("main") is rendered as "(main)" so it is
+// visually distinct from on-disk worktree directories.
+func displayName(info *Info) string {
+	if info.IsMain {
+		return "(main)"
+	}
+	return info.Name
 }
 
 // FormatJSON formats a single worktree as JSON.
@@ -164,6 +180,10 @@ func parseWorktreeList(raw string) []worktreeEntry {
 			current = worktreeEntry{path: strings.TrimPrefix(line, "worktree ")}
 		} else if strings.HasPrefix(line, "branch refs/heads/") {
 			current.branch = strings.TrimPrefix(line, "branch refs/heads/")
+		} else if line == "detached" {
+			// Detached HEAD: no branch ref. Map to a sentinel that mirrors
+			// what cmd/wt/list.go produces, so JSON/output stays consistent.
+			current.branch = "(detached)"
 		}
 	}
 	if current.path != "" {
