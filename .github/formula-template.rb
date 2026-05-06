@@ -26,6 +26,8 @@ class Wt < Formula
     end
   end
 
+  link_overwrite "bin/wt"
+
   def install
     bin.install "wt"
   end
