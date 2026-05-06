@@ -79,7 +79,8 @@ fi
 
 # ── Compute current and next version ─────────────────────────────────
 
-current=$(git -C "$repo_root" describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+current=$(git -C "$repo_root" tag -l 'v*' --sort=-v:refname | head -n1)
+current=${current:-v0.0.0}
 
 current_stripped="${current#v}"
 IFS='.' read -r major minor patch <<< "$current_stripped"
