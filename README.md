@@ -1,5 +1,9 @@
 # wt
 
+> Part of [@sahil87's open source toolkit](https://ai.shll.in) — see all projects there.
+
+[![Latest release](https://img.shields.io/github/v/release/sahil87/wt)](https://github.com/sahil87/wt/releases) [![Downloads](https://img.shields.io/github/downloads/sahil87/wt/total)](https://github.com/sahil87/wt/releases) [![Stars](https://img.shields.io/github/stars/sahil87/wt?style=social)](https://github.com/sahil87/wt/stargazers)
+
 A small CLI that wraps `git worktree` with opinionated defaults: worktrees
 are created as siblings of the main repo (`<repo>.worktrees/<name>/`), names
 are memorable random adjective-noun pairs, and a shell wrapper makes
