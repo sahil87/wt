@@ -151,8 +151,11 @@ func TestIntegration_MainRepoUnaffectedByWorktreeOps(t *testing.T) {
 // callers like `hop` rely on `wt open <path> --app open_here` working from
 // any cwd and writing the resolved path to WT_CD_FILE.
 func TestIntegration_LauncherContract_NonGitTempDir(t *testing.T) {
-	// Resolve symlinks (macOS /tmp -> /private/tmp); wt's filepath.Base on
-	// the resolved path is what ends up in WT_CD_FILE.
+	// Resolve symlinks (macOS /tmp -> /private/tmp) so the path written to
+	// WT_CD_FILE — the full resolved directory path passed to OpenInApp —
+	// matches what we assert below. On macOS the kernel hands back
+	// /var/folders/... while user-space sees /private/var/folders/...; we
+	// normalize to one form here so the equality check is stable.
 	cwd, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatalf("EvalSymlinks cwd: %v", err)

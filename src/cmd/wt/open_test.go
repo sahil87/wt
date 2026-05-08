@@ -133,6 +133,30 @@ func TestOpen_NameArg_NotFound_InRepo(t *testing.T) {
 	assertContains(t, r.Stderr, "not found")
 }
 
+// TestOpen_PathArg_ExistsButNotDir verifies that passing an arg that exists
+// on disk but is not a directory (e.g., a regular file) fails with a clear
+// "not a directory" message — not the misleading "name resolution requires a
+// git repository" error that would otherwise apply to non-existent args from
+// a non-git cwd.
+func TestOpen_PathArg_ExistsButNotDir(t *testing.T) {
+	cwd := t.TempDir()
+	filePath := filepath.Join(cwd, "regular-file.txt")
+	if err := os.WriteFile(filePath, []byte("hi"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	r := runWt(t, cwd, nil, "open", filePath)
+	if r.ExitCode != 1 {
+		t.Fatalf("expected exit 1 (ExitGeneralError), got %d\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+	assertContains(t, r.Stderr, "not a directory")
+	// Must NOT fall through to the name-resolution error path.
+	if strings.Contains(r.Stderr, "name resolution requires a git repository") {
+		t.Errorf("file-arg error must not surface the name-resolution message, got: %s", r.Stderr)
+	}
+}
+
 func TestOpen_ErrorUnknownApp(t *testing.T) {
 	repo := createTestRepo(t)
 	wtPath := createWorktreeViaWt(t, repo, "app-err")

@@ -44,13 +44,16 @@ existing directory and the cwd is in a git repo.
 `WT_CD_FILE` is a path to a writable file. When set:
 
 - The "Open here" menu option (and `--app open_here`) writes the resolved
-  directory path to that file (mode `0600`) instead of printing a `cd --` line
-  to stdout.
+  directory path to that file instead of printing a `cd --` line to stdout.
 - Consumers read the file after a zero-exit `wt open` invocation and apply the
   `cd` to the parent shell themselves (via shell wrapper, eval, or whatever
   mechanism the consumer uses).
 - The file is overwritten on each invocation; truncate-on-open semantics.
-- Mode `0600` is intentional — the file may contain a path the user considers
+- `wt` opens the file with mode `0600`, but Go's `os.WriteFile` only applies
+  the mode when *creating* the file — it does not `chmod` an existing file.
+  Consumers are therefore responsible for ensuring the path is either fresh
+  (e.g., produced by `mktemp` per invocation) or already mode `0600`. Mode
+  `0600` is intentional — the file may contain a path the user considers
   private; consumers MUST NOT relax this.
 
 When `WT_CD_FILE` is unset, "Open here" falls back to printing `cd -- '<path>'`

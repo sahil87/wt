@@ -56,13 +56,24 @@ requires a git repository.`,
 				// regardless of whether the path is actually a worktree of this
 				// repo; outside a git repo, leave repoName empty and the
 				// tab-name fallback in OpenInApp will use just the basename.
-				if info, err := os.Stat(target); err == nil && info.IsDir() {
+				info, statErr := os.Stat(target)
+				switch {
+				case statErr == nil && info.IsDir():
 					wtPath = target
 					wtName = filepath.Base(wtPath)
 					if inRepo {
 						repoName = ctx.RepoName
 					}
-				} else if inRepo {
+				case statErr == nil && !info.IsDir():
+					// Target exists but is a file (or other non-directory).
+					// Don't fall through to name resolution — that would
+					// produce a misleading "name resolution requires a git
+					// repository" message. wt open is directory-only.
+					wt.ExitWithError(wt.ExitGeneralError,
+						fmt.Sprintf("Cannot open '%s'", target),
+						"target exists but is not a directory; wt open accepts directories only",
+						"Pass a directory path or a worktree name (in a git repo)")
+				case inRepo:
 					// Try as worktree name (requires git context to walk worktrees).
 					path, err := resolveWorktreeByName(target, ctx)
 					if err != nil {
@@ -82,7 +93,7 @@ requires a git repository.`,
 					wtPath = path
 					wtName = target
 					repoName = ctx.RepoName
-				} else {
+				default:
 					// Outside a git repo with a non-path arg: name resolution
 					// would require the worktree list, which isn't reachable.
 					wt.ExitWithError(wt.ExitGeneralError,
