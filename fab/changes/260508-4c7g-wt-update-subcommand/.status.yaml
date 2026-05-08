@@ -10,8 +10,8 @@ progress:
     apply: done
     review: done
     hydrate: done
-    ship: active
-    review-pr: pending
+    ship: done
+    review-pr: active
 plan:
     generated: true
     task_count: 8
@@ -35,6 +35,8 @@ stage_metrics:
     apply: {started_at: "2026-05-08T19:26:14Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-08T19:30:27Z"}
     review: {started_at: "2026-05-08T19:30:27Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-08T19:35:25Z"}
     hydrate: {started_at: "2026-05-08T19:35:25Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-08T19:36:42Z"}
-    ship: {started_at: "2026-05-08T19:36:42Z", driver: fab-fff, iterations: 1}
-prs: []
-last_updated: 2026-05-08T19:36:42Z
+    ship: {started_at: "2026-05-08T19:36:42Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-08T19:38:43Z"}
+    review-pr: {started_at: "2026-05-08T19:38:43Z", driver: fab-fff, iterations: 1}
+prs:
+    - https://github.com/sahil87/wt/pull/4
+last_updated: 2026-05-08T19:38:43Z
