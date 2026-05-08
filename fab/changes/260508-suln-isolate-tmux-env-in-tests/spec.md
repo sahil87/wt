@@ -77,7 +77,7 @@ After this change, a complete `go test -count=1 ./...` run from `src/` SHALL NOT
 
 ### Requirement: Document tests touching `--worktree-open` / `--app` codepaths
 
-The change SHALL document an audit of tests that invoke `--worktree-open` (with a value other than `skip`) or `--app` (with a value that could resolve to `tmux_*` / `byobu_tab`). This audit lives in this spec's **Audit Results** section below; it does not produce code changes beyond Requirement 1, on the assumption that all tests go through `runWt` and inherit its default isolation.
+The change SHALL document an audit of tests that invoke `--worktree-open` (with a value other than `skip`) or `--app` (with a value that could resolve to `tmux_*` / `byobu_tab`). This audit lives in this spec's **Audit Results** section below; it does not produce code changes beyond Requirement 1, on the assumption that every audited `--worktree-open` / `--app` invocation goes through `runWt` and inherits its default isolation. (Other tests in `src/cmd/wt/` may invoke the binary directly via `exec.Command(wtBinary, ...)` — e.g., `TestCreate_PorcelainStdoutOnlyPath` — but they do not exercise the launcher codepaths and are out of scope for this audit.)
 
 If the audit surfaces a test that bypasses `runWt` and directly invokes the binary with non-isolated env, that becomes a discovered task and is added to the plan. Per intake clarification, the expectation is **zero discovered tasks**.
 
@@ -98,7 +98,7 @@ The audit SHALL grep for `--worktree-open` and `--app` across all `*_test.go` fi
 
 ## Audit Results
 
-Generated during apply via `grep -rn '--worktree-open\|--app' src/cmd/wt/*_test.go src/internal/worktree/*_test.go`. Every occurrence is classified per the requirement above. No `--worktree-open` or `--app` invocations exist in `src/internal/worktree/*_test.go` (which test pure functions and do not invoke the binary). All `cmd/wt` test invocations route through `runWt`, so they inherit the new default isolation.
+Generated during apply via `grep -rn '--worktree-open\|--app' src/cmd/wt/*_test.go src/internal/worktree/*_test.go`. Every occurrence is classified per the requirement above. No `--worktree-open` or `--app` invocations exist in `src/internal/worktree/*_test.go` (which test pure functions and do not invoke the binary). Every audited `--worktree-open` / `--app` invocation routes through `runWt`, so they inherit the new default isolation. (A small number of `cmd/wt` tests bypass `runWt` and use `exec.Command(wtBinary, ...)` directly — e.g., `TestCreate_PorcelainStdoutOnlyPath` — but none of them pass `--worktree-open` or `--app`, so they are outside the audit scope.)
 
 | Test | File | Invocation | Classification |
 |------|------|------------|----------------|
