@@ -178,6 +178,16 @@ func ResolveDefaultApp(apps []AppInfo) (*AppInfo, error) {
 	return &apps[idx-1], nil
 }
 
+// tabName composes a tmux/byobu tab or session name from repo + worktree names.
+// Returns wtName alone when repoName is empty (non-git invocation), avoiding a
+// leading dash. Otherwise preserves the historical "{repo}-{wt}" format.
+func tabName(repoName, wtName string) string {
+	if repoName == "" {
+		return wtName
+	}
+	return repoName + "-" + wtName
+}
+
 // OpenInApp opens the given path in the specified application.
 func OpenInApp(appCmd, path, repoName, wtName string) error {
 	switch appCmd {
@@ -236,7 +246,7 @@ func OpenInApp(appCmd, path, repoName, wtName string) error {
 		fmt.Println("Path copied to clipboard")
 		return nil
 	case "byobu_tab":
-		tabName := repoName + "-" + wtName
+		name := tabName(repoName, wtName)
 		if _, err := exec.LookPath("byobu"); err != nil {
 			return fmt.Errorf("byobu is not available on this system")
 		}
@@ -245,23 +255,23 @@ func OpenInApp(appCmd, path, repoName, wtName string) error {
 		if info, err := os.Stat(byobuCache); err == nil && info.IsDir() {
 			os.RemoveAll(byobuCache)
 		}
-		cmd := exec.Command("byobu", "new-window", "-n", tabName, "-c", path)
+		cmd := exec.Command("byobu", "new-window", "-n", name, "-c", path)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("byobu new-window failed: %s", strings.TrimSpace(string(out)))
 		}
 		return nil
 	case "tmux_window":
-		tabName := repoName + "-" + wtName
+		name := tabName(repoName, wtName)
 		if _, err := exec.LookPath("tmux"); err != nil {
 			return fmt.Errorf("tmux is not available on this system")
 		}
-		cmd := exec.Command("tmux", "new-window", "-n", tabName, "-c", path)
+		cmd := exec.Command("tmux", "new-window", "-n", name, "-c", path)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("tmux new-window failed: %s", strings.TrimSpace(string(out)))
 		}
 		return nil
 	case "tmux_session":
-		sessionName := repoName + "-" + wtName
+		sessionName := tabName(repoName, wtName)
 		if _, err := exec.LookPath("tmux"); err != nil {
 			return fmt.Errorf("tmux is not available on this system")
 		}

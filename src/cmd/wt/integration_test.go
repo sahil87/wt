@@ -145,6 +145,61 @@ func TestIntegration_MainRepoUnaffectedByWorktreeOps(t *testing.T) {
 	}
 }
 
+// TestIntegration_LauncherContract_NonGitTempDir exercises the full
+// WT_CD_FILE + WT_WRAPPER contract end-to-end against a non-git directory.
+// This is the spec-mandated regression test for the launcher contract:
+// callers like `hop` rely on `wt open <path> --app open_here` working from
+// any cwd and writing the resolved path to WT_CD_FILE.
+func TestIntegration_LauncherContract_NonGitTempDir(t *testing.T) {
+	// Resolve symlinks (macOS /tmp -> /private/tmp) so the path written to
+	// WT_CD_FILE — the full resolved directory path passed to OpenInApp —
+	// matches what we assert below. On macOS the kernel hands back
+	// /var/folders/... while user-space sees /private/var/folders/...; we
+	// normalize to one form here so the equality check is stable.
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks cwd: %v", err)
+	}
+	target, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks target: %v", err)
+	}
+
+	cdFile := filepath.Join(cwd, "wt-cd")
+	env := []string{
+		"WT_CD_FILE=" + cdFile,
+		"WT_WRAPPER=1",
+	}
+
+	r := runWt(t, cwd, env, "open", target, "--app", "open_here")
+	if r.ExitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+
+	info, err := os.Stat(cdFile)
+	if err != nil {
+		t.Fatalf("stat cd file %s: %v", cdFile, err)
+	}
+	// launcher-contract.md §3 documents 0600 as a stability guarantee.
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Errorf("expected cd file mode 0600, got %o", mode)
+	}
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file %s: %v", cdFile, err)
+	}
+	if string(data) != target {
+		t.Errorf("expected cd file to contain %q, got %q", target, string(data))
+	}
+
+	// stderr must NOT contain the shell-wrapper hint (WT_WRAPPER=1 suppresses it).
+	if strings.Contains(r.Stderr, "shell wrapper") {
+		t.Errorf("expected no shell-wrapper hint with WT_WRAPPER=1, got stderr: %q", r.Stderr)
+	}
+}
+
 func TestIntegration_WorktreeCommitIndependent(t *testing.T) {
 	repo := createTestRepo(t)
 
