@@ -133,6 +133,37 @@ preserved — `RunE` returns an error, which `main.go` maps to
 guidance — exit 0. See [`init-protocol.md`](init-protocol.md) for full
 semantics.
 
+## `wt update`
+
+Self-update the `wt` binary via Homebrew. Runs `brew update`, queries the tap
+formula (`sahil87/tap/wt`) for its latest stable version, and invokes
+`brew upgrade` when a newer version is available. Implementation lives under
+`src/internal/update/`.
+
+No flags. No positional args.
+
+User-facing outcomes:
+
+- **Homebrew upgrade succeeds**: prints `Current version: <v>` → `Checking for
+  updates...` → `Updating <current> → v<latest>...` → brew's tty-aware
+  progress (inherits `os.Stdin`/`os.Stdout`/`os.Stderr`) → `Updated to
+  v<latest>.`
+- **Already up to date**: prints `Already up to date (<currentVersion>).` and
+  exits without invoking `brew upgrade`.
+- **Not installed via Homebrew** (e.g., `just local-install` builds in
+  `~/.local/bin`): prints `wt <version> was not installed via Homebrew.` and
+  `Update manually, or reinstall with: brew install sahil87/tap/wt`. No
+  `brew` subprocess is invoked.
+- **brew not on PATH**: prints `wt update: brew not found on PATH.` to stderr
+  and exits — the cobra wrapper bypasses the default error formatter so the
+  user sees exactly one line.
+
+Exit codes: `ExitSuccess` (0) on successful upgrade, no-op when already up to
+date, and the not-installed-via-Homebrew fast path; `ExitGeneralError` (1)
+when `brew` is missing on PATH, `brew update` / `brew info` / `brew upgrade`
+returns a non-zero status, the `brew info` JSON cannot be parsed, or no
+stable version is reported by the tap formula.
+
 ## `wt shell-setup`
 
 Print a shell wrapper function (bash/zsh) to stdout. The function reads
