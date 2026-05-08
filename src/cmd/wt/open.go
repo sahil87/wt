@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,11 +17,15 @@ func openCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "open [name|path]",
-		Short: "Open a worktree in an application",
-		Long: `Open a git worktree in a detected application (editor, terminal, file manager).
+		Short: "Open a directory or worktree in an application",
+		Long: `Open a directory in a detected application (editor, terminal, file manager).
 
 When called without arguments from a worktree, opens the current worktree.
-When called without arguments from the main repo, shows a selection menu.`,
+When called without arguments from the main repo, shows a worktree-selection menu.
+When called without arguments from a non-git directory, opens the current working directory.
+
+Path arguments are accepted regardless of git context. Worktree-name resolution
+requires a git repository.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var target string
@@ -28,46 +33,75 @@ When called without arguments from the main repo, shows a selection menu.`,
 				target = args[0]
 			}
 
-			if err := wt.ValidateGitRepo(); err != nil {
-				wt.ExitWithError(wt.ExitGitError,
-					"Not a git repository",
-					"This command requires a git repository",
-					"Navigate to a git repository and try again")
+			// Soft git-context detection: git context enriches resolution but is
+			// no longer a precondition. ValidateGitRepo only gates branches that
+			// genuinely require a repo (worktree-name resolution, in-worktree
+			// "open current" defaults, the main-repo selection menu).
+			inRepo := wt.ValidateGitRepo() == nil
+			var ctx *wt.RepoContext
+			if inRepo {
+				var err error
+				ctx, err = wt.GetRepoContext()
+				if err != nil {
+					wt.ExitWithError(wt.ExitGeneralError, "Cannot get repo context", err.Error(), "")
+				}
 			}
 
-			ctx, err := wt.GetRepoContext()
-			if err != nil {
-				wt.ExitWithError(wt.ExitGeneralError, "Cannot get repo context", err.Error(), "")
-			}
+			var wtPath, wtName, repoName string
 
-			var wtPath, wtName string
-
-			if target != "" {
-				// Check if it's a direct path
+			switch {
+			case target != "":
+				// Path-first: an existing directory always wins. When in a git
+				// repo, preserve the historical tab-name format (repo-basename)
+				// regardless of whether the path is actually a worktree of this
+				// repo; outside a git repo, leave repoName empty and the
+				// tab-name fallback in OpenInApp will use just the basename.
 				if info, err := os.Stat(target); err == nil && info.IsDir() {
 					wtPath = target
 					wtName = filepath.Base(wtPath)
-				} else {
-					// Try as worktree name
+					if inRepo {
+						repoName = ctx.RepoName
+					}
+				} else if inRepo {
+					// Try as worktree name (requires git context to walk worktrees).
 					path, err := resolveWorktreeByName(target, ctx)
 					if err != nil {
-						wt.ExitWithError(wt.ExitGeneralError,
-							fmt.Sprintf("Worktree '%s' not found", target),
-							"No worktree with that name and not an existing directory",
-							"Use 'wt list' to see available worktrees")
+						if errors.Is(err, errWorktreeNotFound) {
+							wt.ExitWithError(wt.ExitGeneralError,
+								fmt.Sprintf("Worktree '%s' not found", target),
+								"No worktree with that name and not an existing directory",
+								"Use 'wt list' to see available worktrees")
+						}
+						// listWorktreeEntries failed — a real git operation
+						// error; map to ExitGitError per launcher-contract.md §5.
+						wt.ExitWithError(wt.ExitGitError,
+							"git worktree list failed",
+							err.Error(),
+							"Check 'git worktree list' from this repo")
 					}
 					wtPath = path
 					wtName = target
+					repoName = ctx.RepoName
+				} else {
+					// Outside a git repo with a non-path arg: name resolution
+					// would require the worktree list, which isn't reachable.
+					wt.ExitWithError(wt.ExitGeneralError,
+						fmt.Sprintf("Cannot open '%s'", target),
+						"name resolution requires a git repository",
+						"Example: wt open /absolute/path/to/dir")
 				}
-			} else if wt.IsWorktree() {
-				// In a worktree — open it
+			case inRepo && wt.IsWorktree():
+				// In a worktree — open it.
+				var err error
 				wtPath, err = wt.CurrentWorktreeTopLevel()
 				if err != nil {
 					wt.ExitWithError(wt.ExitGeneralError, "Cannot determine worktree root", err.Error(), "")
 				}
 				wtName = filepath.Base(wtPath)
-			} else {
-				// In main repo — show selection
+				repoName = ctx.RepoName
+			case inRepo:
+				// In main repo — show selection menu. --app is incompatible with
+				// the menu (preserved from pre-change behavior).
 				if appFlag != "" {
 					wt.ExitWithError(wt.ExitInvalidArgs,
 						"No worktree specified",
@@ -75,6 +109,14 @@ When called without arguments from the main repo, shows a selection menu.`,
 						"Example: wt open --app code my-worktree")
 				}
 				return selectAndOpen(ctx)
+			default:
+				// No git context, no target — open cwd.
+				cwd, err := os.Getwd()
+				if err != nil {
+					wt.ExitWithError(wt.ExitGeneralError, "Cannot determine current directory", err.Error(), "")
+				}
+				wtPath = cwd
+				wtName = filepath.Base(wtPath)
 			}
 
 			// Open with specified app or show menu
@@ -100,7 +142,7 @@ When called without arguments from the main repo, shows a selection menu.`,
 					}
 				}
 				wt.SaveLastApp(resolved.Cmd)
-				if openErr := wt.OpenInApp(resolved.Cmd, wtPath, ctx.RepoName, wtName); openErr != nil {
+				if openErr := wt.OpenInApp(resolved.Cmd, wtPath, repoName, wtName); openErr != nil {
 					exitCode := wt.ExitGeneralError
 					if strings.Contains(resolved.Cmd, "byobu") {
 						exitCode = wt.ExitByobuTabError
@@ -113,7 +155,7 @@ When called without arguments from the main repo, shows a selection menu.`,
 						"Verify the application is running and retry")
 				}
 			} else {
-				return handleAppMenu(wtPath, ctx.RepoName, wtName)
+				return handleAppMenu(wtPath, repoName, wtName)
 			}
 
 			return nil
@@ -124,6 +166,12 @@ When called without arguments from the main repo, shows a selection menu.`,
 
 	return cmd
 }
+
+// errWorktreeNotFound is returned by resolveWorktreeByName when the worktree
+// list was retrieved successfully but no entry matched the requested name.
+// Distinct from a git-operation failure (which propagates up unchanged) so the
+// caller can map to ExitGeneralError vs. ExitGitError per launcher-contract.md.
+var errWorktreeNotFound = fmt.Errorf("worktree not found")
 
 func resolveWorktreeByName(name string, ctx *wt.RepoContext) (string, error) {
 	entries, err := listWorktreeEntries()
@@ -138,7 +186,7 @@ func resolveWorktreeByName(name string, ctx *wt.RepoContext) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("not found")
+	return "", errWorktreeNotFound
 }
 
 func handleAppMenu(wtPath, repoName, wtName string) error {

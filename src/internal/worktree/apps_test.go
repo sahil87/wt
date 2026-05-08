@@ -9,6 +9,36 @@ import (
 	"testing"
 )
 
+func TestTabName(t *testing.T) {
+	tests := []struct {
+		name     string
+		repoName string
+		wtName   string
+		want     string
+	}{
+		{
+			name:     "empty repoName falls back to wtName",
+			repoName: "",
+			wtName:   "notes",
+			want:     "notes",
+		},
+		{
+			name:     "both names present yields repo-wt",
+			repoName: "repo",
+			wtName:   "swift-fox",
+			want:     "repo-swift-fox",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tabName(tt.repoName, tt.wtName)
+			if got != tt.want {
+				t.Errorf("tabName(%q, %q) = %q, want %q", tt.repoName, tt.wtName, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildAvailableApps_OpenHereFirst(t *testing.T) {
 	apps := BuildAvailableApps()
 	if len(apps) == 0 {

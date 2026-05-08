@@ -1,0 +1,21 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-05-08T11:57:19Z"}
+{"args":"Generalize wt open to work on any directory, not just git worktrees. Drop ValidateGitRepo hard-fail; soft-detect git context; formalize WT_CD_FILE/WT_WRAPPER contract for hop integration.","cmd":"fab-new","event":"command","ts":"2026-05-08T11:57:19Z"}
+{"delta":"+0.5","event":"confidence","score":0.5,"trigger":"calc-score","ts":"2026-05-08T11:59:09Z"}
+{"delta":"+0.0","event":"confidence","score":0.5,"trigger":"calc-score","ts":"2026-05-08T11:59:18Z"}
+{"cmd":"fab-clarify","event":"command","ts":"2026-05-08T12:00:21Z"}
+{"delta":"+3.0","event":"confidence","score":3.5,"trigger":"calc-score","ts":"2026-05-08T12:01:56Z"}
+{"delta":"+0.0","event":"confidence","score":3.5,"trigger":"calc-score","ts":"2026-05-08T12:02:12Z"}
+{"delta":"+0.0","event":"confidence","score":3.5,"trigger":"calc-score","ts":"2026-05-08T12:02:20Z"}
+{"cmd":"fab-fff","event":"command","ts":"2026-05-08T12:02:42Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"spec","ts":"2026-05-08T12:02:46Z"}
+{"delta":"+0.0","event":"confidence","score":3.5,"trigger":"calc-score","ts":"2026-05-08T12:04:40Z"}
+{"delta":"+0.0","event":"confidence","score":3.5,"trigger":"calc-score","ts":"2026-05-08T12:04:44Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-05-08T12:04:48Z"}
+{"delta":"+0.0","event":"confidence","score":3.5,"trigger":"calc-score","ts":"2026-05-08T12:04:48Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-05-08T12:12:21Z"}
+{"event":"review","result":"failed","ts":"2026-05-08T12:15:58Z"}
+{"action":"re-entry","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-05-08T12:15:58Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-05-08T12:18:23Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-05-08T12:22:49Z"}
+{"event":"review","result":"passed","ts":"2026-05-08T12:22:49Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-05-08T12:24:03Z"}

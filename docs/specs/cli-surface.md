@@ -67,7 +67,10 @@ Exit codes: `ExitInvalidArgs` if `--path` and `--json` are combined;
 
 ## `wt open [name|path]`
 
-Open a worktree in a detected application (editor, terminal, file manager).
+Open a directory in a detected application (editor, terminal, file manager).
+`wt open` is the canonical directory launcher — external callers (notably
+`hop`) MAY delegate to it via subprocess invocation. The full env-var contract
+is documented in [`launcher-contract.md`](launcher-contract.md).
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -78,13 +81,21 @@ Positional arg `[name|path]`:
 - Omitted, called from inside a worktree: opens the current worktree.
 - Omitted, called from the main repo: shows a worktree-selection menu (default
   highlight: most recently modified worktree).
-- Existing directory path: treated as a literal path.
-- Otherwise: resolved as a worktree name (case-insensitive).
+- Omitted, called from a non-git directory: opens the current working
+  directory (equivalent to `wt open .`).
+- Existing directory path: treated as a literal path. Works regardless of git
+  context — `wt open /tmp/notes` succeeds from any cwd as long as the path is
+  a real directory.
+- Otherwise: resolved as a worktree name (case-insensitive). **Requires a git
+  repository** — name resolution walks the worktree list, which is only
+  reachable when the cwd is inside a git repo.
 
-Exit codes: `ExitInvalidArgs` when `--app` is used without a worktree;
-`ExitGitError` when the working dir is not a git repo; `ExitByobuTabError` /
-`ExitTmuxWindowError` for terminal-app failures; `ExitGeneralError` for unknown
-apps or unresolved targets.
+Exit codes: `ExitInvalidArgs` when `--app` is used with the main-repo selection
+menu; `ExitGitError` only when a git operation fails during name resolution
+(not for path-only or no-args invocations from outside a repo);
+`ExitByobuTabError` / `ExitTmuxWindowError` for terminal-app failures;
+`ExitGeneralError` for unknown apps, unresolved targets, or name args supplied
+from a non-git cwd.
 
 ## `wt delete [worktree-names...]`
 

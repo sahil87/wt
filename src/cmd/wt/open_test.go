@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -25,13 +27,110 @@ func TestOpen_ErrorFromMainRepoWithoutTarget(t *testing.T) {
 	assertContains(t, r.Stderr, "No worktree specified")
 }
 
-func TestOpen_ErrorOutsideGitRepo(t *testing.T) {
-	dir := t.TempDir()
-	r := runWt(t, dir, nil, "open")
-	if r.ExitCode == 0 {
-		t.Error("expected failure outside git repo")
+// TestOpen_NoArgs_NonGit_OpensCwd verifies that running `wt open` from a
+// non-git directory opens the current working directory (no longer fails
+// with ExitGitError as it did pre-change).
+func TestOpen_NoArgs_NonGit_OpensCwd(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
 	}
-	assertContains(t, r.Stderr, "Not a git repository")
+
+	cdFile := filepath.Join(dir, "wt-cd")
+	env := []string{
+		"WT_CD_FILE=" + cdFile,
+		"WT_WRAPPER=1",
+	}
+
+	r := runWt(t, dir, env, "open", "--app", "open_here")
+	if r.ExitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != dir {
+		t.Errorf("expected cd file to contain %q, got %q", dir, string(data))
+	}
+}
+
+// TestOpen_PathArg_NonGit_OpensPath verifies that a path arg works from a
+// non-git cwd — the path may be unrelated to any repo.
+func TestOpen_PathArg_NonGit_OpensPath(t *testing.T) {
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks cwd: %v", err)
+	}
+	target, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks target: %v", err)
+	}
+
+	cdFile := filepath.Join(cwd, "wt-cd")
+	env := []string{
+		"WT_CD_FILE=" + cdFile,
+		"WT_WRAPPER=1",
+	}
+
+	r := runWt(t, cwd, env, "open", target, "--app", "open_here")
+	if r.ExitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != target {
+		t.Errorf("expected cd file to contain %q, got %q", target, string(data))
+	}
+}
+
+// TestOpen_NameArg_NonGit_FailsWithGuidance verifies the spec-mandated error
+// path: name args from a non-git cwd exit ExitGeneralError (1) with a clear
+// message that suggests passing a path and does NOT suggest cd'ing.
+func TestOpen_NameArg_NonGit_FailsWithGuidance(t *testing.T) {
+	dir := t.TempDir()
+
+	r := runWt(t, dir, nil, "open", "swift-fox")
+	if r.ExitCode != 1 {
+		t.Fatalf("expected exit 1 (ExitGeneralError), got %d\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+	assertContains(t, r.Stderr, "Cannot open 'swift-fox'")
+	assertContains(t, r.Stderr, "name resolution requires a git repository")
+	assertContains(t, r.Stderr, "wt open /absolute/path/to/dir")
+
+	// Must NOT suggest cd'ing into a git repo (per spec requirement).
+	if strings.Contains(r.Stderr, "Navigate to a git repository") {
+		t.Errorf("error message should not suggest cd'ing into a git repo, got: %s", r.Stderr)
+	}
+	if strings.Contains(strings.ToLower(r.Stderr), "cd into") {
+		t.Errorf("error message should not suggest cd'ing into a git repo, got: %s", r.Stderr)
+	}
+	if strings.Contains(strings.ToLower(r.Stderr), "run from a git repo") {
+		t.Errorf("error message should not suggest running from a git repo, got: %s", r.Stderr)
+	}
+}
+
+// TestOpen_NameArg_NotFound_InRepo verifies that asking for an unknown
+// worktree name from inside a git repo exits ExitGeneralError (1, not
+// ExitGitError) — the worktree list succeeded, the name simply didn't match.
+// This pins the sentinel-error path that distinguishes "not found" (general
+// error) from "git worktree list failed" (git error) per launcher-contract.md.
+func TestOpen_NameArg_NotFound_InRepo(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWt(t, repo, nil, "open", "no-such-worktree")
+	if r.ExitCode != 1 {
+		t.Fatalf("expected exit 1 (ExitGeneralError), got %d\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+	assertContains(t, r.Stderr, "not found")
 }
 
 func TestOpen_ErrorUnknownApp(t *testing.T) {
