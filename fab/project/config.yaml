@@ -1,35 +1,20 @@
-fab_version: 1.6.1
-
-project:
-  name: "worktree-cli"
-  description: "Git worktree management CLI — create, list, open, and delete worktrees with shell integration."
-
-# Directories containing implementation code (relative to repo root).
-source_paths:
-  - src/cmd
-  - src/internal
-
-# The review stage validates code against a quality checklist.
-# Built-in categories: functional_completeness, behavioral_correctness,
-# scenario_coverage, edge_cases, security.
-# Add your own — each becomes an extra section in the checklist.
-# Example: [accessibility, performance, i18n]
-checklist:
-  extra_categories: []
-
-# Extra instructions the agent follows when generating each stage's artifact.
-# Add directives to shape how the agent writes specs, plans tasks, writes code, etc.
-stage_directives:
-  intake: []
-  spec:
-    - Use GIVEN/WHEN/THEN for scenarios
-    - "Mark ambiguities with [NEEDS CLARIFICATION]"
-  tasks: []
-  apply: []
-  review: []
-  hydrate: []
-
 agent:
-  # Base command for spawning agent sessions in scripts and operators.
-  # Shell expansions (e.g., $(basename "$(pwd)")) expand at invocation time.
-  spawn_command: 'claude --dangerously-skip-permissions --effort xhigh -n "$(basename "$(pwd)")"'
+    spawn_command: claude --dangerously-skip-permissions --effort xhigh -n "$(basename "$(pwd)")"
+checklist:
+    extra_categories: []
+fab_version: 1.9.3
+project:
+    description: Git worktree management CLI — create, list, open, and delete worktrees with shell integration.
+    name: worktree-cli
+source_paths:
+    - src/cmd
+    - src/internal
+stage_directives:
+    apply: []
+    hydrate: []
+    intake: []
+    review: []
+    spec:
+        - Use GIVEN/WHEN/THEN for scenarios
+        - Mark ambiguities with [NEEDS CLARIFICATION]
+    tasks: []
