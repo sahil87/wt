@@ -2,8 +2,8 @@
 //
 // The brew formula is referenced by its fully-qualified name (sahil87/tap/wt)
 // to avoid any ambiguity with same-named entries from other taps. This package
-// uses os/exec directly per wt convention (no internal/proc wrapper); the
-// constitution does not mandate centralized subprocess routing.
+// uses os/exec directly (no internal/proc wrapper) — consistent with the rest
+// of the wt codebase, which has no centralized subprocess routing.
 package update
 
 import (

@@ -119,9 +119,9 @@ root.AddCommand(
 
 The `version` variable is already defined in `main.go` as `var version = "dev"` and is overridden via `-ldflags "-X main.version=..."` at build time — the `update.Run()` signature receives this verbatim. No build-system changes needed.
 
-**`errSilent` equivalent**: `wt`'s `main.go` uses a simpler error path (`fmt.Fprintf(os.Stderr, "%s\n", err); os.Exit(wt.ExitGeneralError)`) with no `errSilent` sentinel like `hop` has. To avoid a redundant error line when brew is missing, the cobra wrapper in `update.go` SHOULD print its own hint (already done in `internal/update`) and return `nil` after a brew-not-found, rather than propagating the error. The `internal/update` package writes the user-facing hint to `errOut` before returning the sentinel; the cmd wrapper checks `errors.Is(err, update.ErrBrewNotFound)` and returns `nil` so `main.go` doesn't double-print. This preserves the user experience from `hop` without introducing `errSilent` machinery.
+**`errSilent` equivalent**: `wt`'s `main.go` uses a simpler error path (`fmt.Fprintf(os.Stderr, "%s\n", err); os.Exit(wt.ExitGeneralError)`) with no `errSilent` sentinel like `hop` has. To avoid a redundant error line when brew is missing while still exiting non-zero, the cobra wrapper in `update.go` checks `errors.Is(err, update.ErrBrewNotFound)` and calls `os.Exit(wt.ExitGeneralError)` directly. This bypasses both cobra's automatic error print and `main.go`'s error formatter, so the user sees only the single hint line that `internal/update` already wrote to `errOut`. (`wt.ExitWithError` is NOT used here because it always prints a structured error first, which would violate the "exactly one stderr line" contract.) This preserves the user experience from `hop` without introducing `errSilent` machinery, and preserves the documented exit-code mapping (brew failure → 1).
 
-Alternatively, return a non-nil error and accept one extra "brew not found on PATH" line from `main.go` — that's still acceptable but slightly noisier. The intake assumes the cleaner suppress-via-nil approach; the spec stage may revisit.
+Alternatively, return a non-nil error and accept one extra "brew not found on PATH" line from `main.go` — that's still acceptable but slightly noisier. The spec resolved on the cleaner direct-exit approach above.
 
 ### Tests
 
