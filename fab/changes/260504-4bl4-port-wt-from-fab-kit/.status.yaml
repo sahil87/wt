@@ -7,17 +7,16 @@ issues: []
 progress:
     intake: done
     spec: done
-    tasks: done
     apply: done
     review: done
     hydrate: done
     ship: done
     review-pr: active
-checklist:
+plan:
     generated: true
-    path: checklist.md
-    completed: 39
-    total: 39
+    task_count: 24
+    acceptance_count: 39
+    acceptance_completed: 39
 confidence:
     certain: 15
     confident: 0
@@ -41,4 +40,4 @@ stage_metrics:
     review-pr: {started_at: "2026-05-04T11:02:02Z", driver: git-pr, iterations: 1}
 prs:
     - https://github.com/sahil87/wt/pull/1
-last_updated: 2026-05-04T11:02:02Z
+last_updated: 2026-05-08T11:47:30Z

@@ -65,3 +65,5 @@
 - If an item is not applicable, mark checked and prefix with **N/A**: `- [x] CHK-NNN **N/A**: {reason}`
 - No Security category — this is a pure source port with zero new attack surface; the existing wt codebase's security posture (no network, no shell injection, no untrusted input handling beyond what fab-kit's wt already shipped) is preserved verbatim.
 - No Removal Verification category — no deprecated requirements; nothing is being removed in this change.
+
+<!-- Migrated to plan.md on 2026-05-08 — safe to delete. -->
