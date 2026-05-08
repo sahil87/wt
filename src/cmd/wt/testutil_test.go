@@ -142,6 +142,20 @@ func runWt(t *testing.T, dir string, env []string, args ...string) wtResult {
 		// silently skipped. Empty string would fall through to the default
 		// "fab sync" which fails in non-fab-managed test repos.
 		"WORKTREE_INIT_SCRIPT=__wt_test_noinit__ noop",
+		// Default-isolate launcher-affecting env so tests that invoke
+		// `wt create --worktree-open default` or `wt open --app default`
+		// do NOT shell out to tmux/byobu and leak real windows. Tests that
+		// legitimately need to exercise the tmux/byobu codepaths must
+		// explicitly re-enable via the env parameter (last-wins semantics
+		// via the trailing append below). See docs/specs/launcher-contract.md
+		// for the runtime contract; the cleared list mirrors what
+		// IsTmuxSession/IsByobuSession/DetectDefaultApp consult.
+		"TMUX=",
+		"BYOBU_BACKEND=",
+		"BYOBU_TTY=",
+		"BYOBU_SESSION=",
+		"BYOBU_CONFIG_DIR=",
+		"TERM_PROGRAM=",
 	)
 	// Append test-provided env vars last so they can override defaults above
 	cmd.Env = append(cmd.Env, env...)

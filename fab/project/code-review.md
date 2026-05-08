@@ -50,3 +50,5 @@
      - No new dependencies without justification in the spec
      - Database migrations must be reversible
      - All user-facing strings must be internationalized -->
+
+- Tests that invoke the `wt` binary MUST NOT leak side-effects to the host system. Specifically, tests exercising `--worktree-open` or `--app` codepaths SHALL satisfy one of: (a) use a non-side-effecting target (`--worktree-open=skip`, `--app=open_here`, `--app=copy_*`, or any value that fails resolution before shelling out); (b) rely on `runWt`'s default env isolation, which clears `TMUX`, `BYOBU_BACKEND`, `BYOBU_TTY`, `BYOBU_SESSION`, `BYOBU_CONFIG_DIR`, and `TERM_PROGRAM`; or (c) explicitly register `t.Cleanup` to reap any tmux windows / sessions / byobu tabs the test creates. Patterns (a) and (b) are strongly preferred — actual window creation should be exercised only by hand or via dedicated end-to-end fixtures, not in the standard unit-test suite.
