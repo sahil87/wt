@@ -164,13 +164,13 @@ when `brew` is missing on PATH, `brew update` / `brew info` / `brew upgrade`
 returns a non-zero status, the `brew info` JSON cannot be parsed, or no
 stable version is reported by the tap formula.
 
-## `wt shell-setup`
+## `wt shell-init`
 
 Print a shell wrapper function (bash/zsh) to stdout. The function reads
 `WT_CD_FILE` after each `wt` invocation and runs `cd` in the parent shell when
 the file is non-empty — this is what powers the "Open here" menu option.
 
-Usage: add `eval "$(wt shell-setup)"` to `~/.bashrc` or `~/.zshrc`.
+Usage: add `eval "$(wt shell-init)"` to `~/.bashrc` or `~/.zshrc`.
 
 No flags. No positional args. Always exit 0. A warning is printed to stderr if
 `$SHELL` is set to something other than bash/zsh, but the wrapper is still

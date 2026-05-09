@@ -21,7 +21,7 @@ Shell wrapper (recommended):
   To enable the "Open here" menu option (cd into a worktree in the current
   shell), add this to your shell profile (~/.bashrc or ~/.zshrc):
 
-    eval "$(wt shell-setup)"`,
+    eval "$(wt shell-init)"`,
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -33,7 +33,7 @@ Shell wrapper (recommended):
 		openCmd(),
 		deleteCmd(),
 		initCmd(),
-		shellSetupCmd(),
+		shellInitCmd(),
 		updateCmd(),
 	)
 

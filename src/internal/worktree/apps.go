@@ -197,7 +197,7 @@ func OpenInApp(appCmd, path, repoName, wtName string) error {
 			return os.WriteFile(cdFile, []byte(path), 0600)
 		}
 		if os.Getenv("WT_WRAPPER") != "1" {
-			fmt.Fprintln(os.Stderr, `hint: "Open here" requires the shell wrapper to cd. Run: eval "$(wt shell-setup)"`)
+			fmt.Fprintln(os.Stderr, `hint: "Open here" requires the shell wrapper to cd. Run: eval "$(wt shell-init)"`)
 			fmt.Fprintln(os.Stderr, `      Add it to your ~/.zshrc or ~/.bashrc to make it permanent.`)
 		}
 		fmt.Printf("cd -- '%s'\n", shellQuoteSingle(path))

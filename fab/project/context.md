@@ -2,7 +2,7 @@
 
 ## Overview
 
-`worktree-cli` (binary name: `wt`) is a Git worktree management CLI written in Go. It provides ergonomic commands to create, list, open, and delete worktrees, plus a shell-setup eval flow for `cd`-into-worktree behavior. The code is being migrated from `fab-kit/src/go/wt/` into this standalone repo.
+`worktree-cli` (binary name: `wt`) is a Git worktree management CLI written in Go. It provides ergonomic commands to create, list, open, and delete worktrees, plus a shell-init eval flow for `cd`-into-worktree behavior. The code is being migrated from `fab-kit/src/go/wt/` into this standalone repo.
 
 ## Tech Stack
 
@@ -18,7 +18,7 @@
 src/
   cmd/          # cobra subcommand definitions + main.go
                 #   create.go, list.go, open.go, delete.go,
-                #   init.go, shell_setup.go, integration_test.go
+                #   init.go, shell_init.go, integration_test.go
   internal/
     worktree/   # core logic — git ops, naming, menus, rollback, etc.
                 #   apps.go, context.go, crud.go, errors.go,

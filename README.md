@@ -30,7 +30,7 @@ For the "Open here" menu option to actually `cd` your current shell, add the
 wrapper to your shell profile:
 
 ```bash
-eval "$(wt shell-setup)"
+eval "$(wt shell-init)"
 ```
 
 ## Usage
@@ -42,7 +42,7 @@ eval "$(wt shell-setup)"
 | `wt open [name\|path]` | Open a worktree in a detected app (editor, terminal, file manager). |
 | `wt delete [names...]` | Delete one or more worktrees with optional branch cleanup. |
 | `wt init` | Run the worktree init script (default `fab sync`, override via `WORKTREE_INIT_SCRIPT`). |
-| `wt shell-setup` | Print a shell wrapper function for `eval` in your shell profile. |
+| `wt shell-init` | Print a shell wrapper function for `eval` in your shell profile. |
 
 Run `wt <command> --help` for the full reference.
 

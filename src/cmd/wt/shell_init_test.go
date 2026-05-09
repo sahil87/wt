@@ -4,10 +4,10 @@ import (
 	"testing"
 )
 
-func TestShellSetup_OutputsWrapperFunction(t *testing.T) {
+func TestShellInit_OutputsWrapperFunction(t *testing.T) {
 	repo := createTestRepo(t)
 
-	r := runWt(t, repo, []string{"SHELL=/bin/zsh"}, "shell-setup")
+	r := runWt(t, repo, []string{"SHELL=/bin/zsh"}, "shell-init")
 	assertExitCode(t, r, 0)
 
 	// Verify the wrapper function is present in stdout
@@ -27,10 +27,10 @@ func TestShellSetup_OutputsWrapperFunction(t *testing.T) {
 	}
 }
 
-func TestShellSetup_BashShell(t *testing.T) {
+func TestShellInit_BashShell(t *testing.T) {
 	repo := createTestRepo(t)
 
-	r := runWt(t, repo, []string{"SHELL=/bin/bash"}, "shell-setup")
+	r := runWt(t, repo, []string{"SHELL=/bin/bash"}, "shell-init")
 	assertExitCode(t, r, 0)
 
 	if r.Stdout != ShellWrapperFunc {
@@ -42,10 +42,10 @@ func TestShellSetup_BashShell(t *testing.T) {
 	}
 }
 
-func TestShellSetup_EmptyShell(t *testing.T) {
+func TestShellInit_EmptyShell(t *testing.T) {
 	repo := createTestRepo(t)
 
-	r := runWt(t, repo, []string{"SHELL="}, "shell-setup")
+	r := runWt(t, repo, []string{"SHELL="}, "shell-init")
 	assertExitCode(t, r, 0)
 
 	if r.Stdout != ShellWrapperFunc {
@@ -58,10 +58,10 @@ func TestShellSetup_EmptyShell(t *testing.T) {
 	}
 }
 
-func TestShellSetup_UnsupportedShell(t *testing.T) {
+func TestShellInit_UnsupportedShell(t *testing.T) {
 	repo := createTestRepo(t)
 
-	r := runWt(t, repo, []string{"SHELL=/usr/bin/fish"}, "shell-setup")
+	r := runWt(t, repo, []string{"SHELL=/usr/bin/fish"}, "shell-init")
 	assertExitCode(t, r, 0)
 
 	// Still outputs the bash/zsh wrapper

@@ -13,7 +13,7 @@
 
 | Spec | Description |
 |------|-------------|
-| [`cli-surface.md`](cli-surface.md) | Per-subcommand reference: flags, positional args, exit codes for `wt create / list / open / delete / init / shell-setup`. |
+| [`cli-surface.md`](cli-surface.md) | Per-subcommand reference: flags, positional args, exit codes for `wt create / list / open / delete / init / shell-init`. |
 | [`worktree-layout.md`](worktree-layout.md) | Filesystem layout (`<repo>.worktrees/`), random adjective-noun naming, `--worktree-name` override, branch ↔ worktree relationship. |
 | [`init-protocol.md`](init-protocol.md) | Init script lookup contract: `WORKTREE_INIT_SCRIPT` env var, `"fab sync"` default, command-vs-path detection, working-dir resolution, graceful skip behavior. |
 | [`launcher-contract.md`](launcher-contract.md) | Subprocess-delegation contract for `wt open`: `WT_CD_FILE` / `WT_WRAPPER` env vars, exit-code semantics, stability guarantees. Used by external callers (e.g. `hop`) that delegate launching to `wt`. |

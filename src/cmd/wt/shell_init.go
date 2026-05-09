@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ShellWrapperFunc is the shell wrapper function output by shell-setup.
+// ShellWrapperFunc is the shell wrapper function output by shell-init.
 // Defined as a constant to avoid duplication between the subcommand and tests.
 const ShellWrapperFunc = `wt() {
   local _wt_cd _wt_rc
@@ -26,14 +26,14 @@ const ShellWrapperFunc = `wt() {
 export WT_WRAPPER=1
 `
 
-func shellSetupCmd() *cobra.Command {
+func shellInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "shell-setup",
+		Use:   "shell-init",
 		Short: "Output shell wrapper function for eval",
 		Long: `Output a shell wrapper function suitable for eval in your shell profile.
 
 Usage:
-  eval "$(wt shell-setup)"
+  eval "$(wt shell-init)"
 
 Add the above line to your ~/.bashrc or ~/.zshrc to enable the "Open here"
 menu option, which changes the current shell's working directory to the
