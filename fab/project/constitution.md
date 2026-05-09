@@ -3,7 +3,7 @@
 ## Core Principles
 
 ### I. Single-Binary CLI, No Hidden State
-`wt` SHALL ship as a single self-contained Go binary with no runtime dependencies beyond `git`. All persistent state SHALL live in the user's git repository (worktrees) or shell environment (via `wt shell-setup` eval output). The CLI MUST NOT write hidden config files outside the repository or modify global git configuration without explicit user action. Rationale: a worktree helper that mutates global state is a footgun; users must be able to uninstall the binary and walk away cleanly.
+`wt` SHALL ship as a single self-contained Go binary with no runtime dependencies beyond `git`. All persistent state SHALL live in the user's git repository (worktrees) or shell environment (via `wt shell-init` eval output). The CLI MUST NOT write hidden config files outside the repository or modify global git configuration without explicit user action. Rationale: a worktree helper that mutates global state is a footgun; users must be able to uninstall the binary and walk away cleanly.
 
 ### II. Cobra Command Surface
 New subcommands SHALL be added via `cobra.Command` definitions in `src/cmd/`, registered on the root command in `main.go`. Each subcommand MUST set `SilenceUsage: true` and `SilenceErrors: true` and return errors via `RunE` so the root handler controls exit-code mapping. Flags SHALL use long-form names with single-letter short flags only when they aid common interactive use. Rationale: consistent command structure makes the tool predictable and keeps error rendering centralized.
@@ -21,7 +21,7 @@ All non-trivial logic SHALL live under `src/internal/worktree/` and be exercised
 Commands that prompt the user (open menus, confirmations, name selection) SHALL accept a `--non-interactive` flag that produces deterministic, non-prompting behavior suitable for scripts. When stdout is not a TTY, commands SHOULD degrade gracefully without requiring the flag. Rationale: `wt` is used both by humans at a terminal and by automation (operators, CI); both modes must be first-class.
 
 ### VII. Shell Integration via Eval
-Features that require modifying the user's shell state (e.g., `cd` into a created worktree) SHALL be implemented via the `wt shell-setup` pattern: the binary prints shell code to stdout, and the user evaluates it in their shell profile. The binary itself MUST NOT attempt to modify the parent shell directly. Rationale: a child process cannot change its parent's working directory; pretending otherwise leads to silent failures.
+Features that require modifying the user's shell state (e.g., `cd` into a created worktree) SHALL be implemented via the `wt shell-init` pattern: the binary prints shell code to stdout, and the user evaluates it in their shell profile. The binary itself MUST NOT attempt to modify the parent shell directly. Rationale: a child process cannot change its parent's working directory; pretending otherwise leads to silent failures.
 
 ## Additional Constraints
 
@@ -33,4 +33,4 @@ The Go module path is `github.com/sahil87/wt`. Renames or relocations require a 
 
 ## Governance
 
-**Version**: 1.0.0 | **Ratified**: 2026-05-03 | **Last Amended**: 2026-05-03
+**Version**: 1.0.1 | **Ratified**: 2026-05-03 | **Last Amended**: 2026-05-09

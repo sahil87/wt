@@ -66,7 +66,7 @@ to stdout (single-quoted with `'\''` escaping for shell safety).
 
 - Suppresses the "shell wrapper not loaded" hint that would otherwise print to
   stderr when `WT_CD_FILE` is unset and the user selects "Open here". The hint
-  is informational ("eval `wt shell-setup` to make this work") — confusing
+  is informational ("eval `wt shell-init` to make this work") — confusing
   when displayed to a user whose consumer already handles `cd`.
 - Has no other observable effect; in particular, it does NOT change exit-code
   semantics or alter the `WT_CD_FILE` write behavior.

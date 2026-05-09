@@ -389,7 +389,7 @@ func TestOpenInApp_OpenHere_WithoutWrapper(t *testing.T) {
 	if !strings.Contains(stderrStr, `hint: "Open here" requires the shell wrapper`) {
 		t.Errorf("expected stderr to contain hint, got %q", stderrStr)
 	}
-	if !strings.Contains(stderrStr, `eval "$(wt shell-setup)"`) {
+	if !strings.Contains(stderrStr, `eval "$(wt shell-init)"`) {
 		t.Errorf("expected stderr to contain eval instruction, got %q", stderrStr)
 	}
 	if !strings.Contains(stderrStr, `Add it to your ~/.zshrc or ~/.bashrc`) {
