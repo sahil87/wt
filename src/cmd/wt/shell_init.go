@@ -28,19 +28,25 @@ export WT_WRAPPER=1
 
 func shellInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "shell-init",
+		Use:   "shell-init [shell]",
 		Short: "Output shell wrapper function for eval",
 		Long: `Output a shell wrapper function suitable for eval in your shell profile.
 
 Usage:
-  eval "$(wt shell-init)"
+  eval "$(wt shell-init)"        # infer shell from $SHELL
+  eval "$(wt shell-init zsh)"    # explicit shell name
 
 Add the above line to your ~/.bashrc or ~/.zshrc to enable the "Open here"
 menu option, which changes the current shell's working directory to the
 selected worktree.`,
-		Args: cobra.NoArgs,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			shell := filepath.Base(os.Getenv("SHELL"))
+			var shell string
+			if len(args) == 1 {
+				shell = args[0]
+			} else {
+				shell = filepath.Base(os.Getenv("SHELL"))
+			}
 
 			switch shell {
 			case "bash", "zsh", ".", "":
