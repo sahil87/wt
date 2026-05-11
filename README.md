@@ -76,6 +76,23 @@ $ wt delete lively-otter      # removes worktree (and optionally the branch)
 
 Run `wt <command> --help` for inline flag details, or see [`docs/specs/cli-surface.md`](docs/specs/cli-surface.md) for the full per-flag reference and exit codes.
 
+### `wt create --base` — branch start-point
+
+`--base <ref>` controls the start-point when wt creates a new branch (maps to `git worktree add -b <branch> <path> <start-point>`). Behavior depends on whether the branch already exists:
+
+| Scenario | `--base` | Behavior |
+|----------|----------|----------|
+| New branch (doesn't exist locally or remotely) | provided | Branch created from `--base` ref |
+| New branch | omitted | Branch created from `HEAD` (default) |
+| Existing local branch | provided | Warning: `--base ignored: branch already exists locally` |
+| Existing remote branch | provided | Warning: `--base ignored: fetching existing remote branch` |
+| Exploratory (no branch arg) | provided | Exploratory branch created from `--base` ref |
+| Exploratory | omitted | Branch created from current `HEAD` (default) |
+| With `--reuse` (worktree exists) | provided | `--reuse` takes precedence; `--base` has no effect |
+| Invalid ref | provided | Error exit; no worktree or branch created |
+
+The ref is validated via `git rev-parse --verify` before worktree creation, so invalid refs produce a clear error rather than a partial failure.
+
 ### `wt open` — context-aware launcher
 
 `wt open` is the one command worth knowing in detail. It's the canonical
