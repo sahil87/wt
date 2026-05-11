@@ -40,6 +40,8 @@ wrapper to your shell profile:
 eval "$(wt shell-init)"
 ```
 
+> 💡 Have other sahil87 tools? [`shll shell-install`](https://github.com/sahil87/shll#shll-shell-install--wire-the-rc-file-recommended) handles all of their shell integrations and autocompletions at once.
+
 ## Usage
 
 A typical first session:
