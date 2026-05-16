@@ -6,9 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -42,17 +40,10 @@ func TestResolveInitInvocation_CommandOnPath(t *testing.T) {
 	if cmd.Dir != "" {
 		t.Errorf("expected cmd.Dir empty (callers wire it), got %q", cmd.Dir)
 	}
-	// Verify Setpgid is set on Unix so SIGINT can target the process group.
-	if runtime.GOOS != "windows" {
-		if cmd.SysProcAttr == nil {
-			t.Error("expected SysProcAttr to be set on Unix")
-		} else {
-			sysAttr, ok := any(cmd.SysProcAttr).(*syscall.SysProcAttr)
-			if !ok || !sysAttr.Setpgid {
-				t.Error("expected SysProcAttr.Setpgid = true on Unix")
-			}
-		}
-	}
+	// The Setpgid assertion lives in init_unix_test.go (build !windows) —
+	// syscall.SysProcAttr does not expose Setpgid on Windows, so the
+	// assertion cannot live in a cross-platform file.
+	assertInitProcessGroupSet(t, cmd)
 }
 
 func TestResolveInitInvocation_CommandNotOnPath(t *testing.T) {

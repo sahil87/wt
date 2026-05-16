@@ -186,7 +186,7 @@ or creates a new branch.`,
 					// Non-fatal: reuse proceeds even if init fails (existing worktree may be functional).
 					if worktreeInit == "true" {
 						initScript := wt.InitScriptPath()
-						if err := wt.RunWorktreeSetup(existingWtPath, "force", initScript, ctx.RepoRoot); err != nil {
+						if err := wt.RunWorktreeSetup(existingWtPath, initScript, ctx.RepoRoot); err != nil {
 							fmt.Fprintf(os.Stderr, "Warning: worktree init failed for reused worktree %q: %v\n", finalName, err)
 						}
 					}
@@ -239,16 +239,42 @@ or creates a new branch.`,
 			}
 
 			// Setup
-			if worktreeInit == "true" {
+			//
+			// The init-phase signal handler MUST be installed AFTER any
+			// confirmation prompt completes (a SIGINT during the prompt
+			// would otherwise be consumed by the init handler with no init
+			// child to target — see Copilot review on PR #7). The flow:
+			//   1. While the rollback handler is still active, optionally
+			//      prompt the user (Ctrl-C during the prompt rolls back —
+			//      correct: init hasn't started, abort the whole creation).
+			//   2. Emit the deferred summary lines (still under the
+			//      rollback handler).
+			//   3. Swap to the init-phase handler with NO I/O in between.
+			//   4. Run init via RunWorktreeSetupWithObserver (no prompt
+			//      inside the runner).
+			runInit := worktreeInit == "true"
+			if runInit && !(nonInteractive || branchArg == "") {
+				runInit = wt.ConfirmYesNo("Initialize worktree?")
+			}
+
+			// Emit deferred summary (still under rollback handler).
+			for _, w := range baseWarnings {
+				fmt.Fprintln(os.Stderr, w)
+			}
+			fmt.Fprintf(os.Stderr, "Created worktree: %s\nPath: %s\nBranch: %s\n",
+				finalName, wtPath, createdSummaryBranch)
+
+			if runInit {
 				initScript := wt.InitScriptPath()
 
-				// SIGINT Option B: at this point git operations are complete.
-				// Reinstall the signal handler so SIGINT/SIGTERM target the
-				// init child's process group (not rb.Execute) — Ctrl-C while
-				// init is running means "stop this script", not "nuke the
-				// worktree". Keep this window tight: no I/O or user prompts
-				// between worktree creation and the swap. The previous
-				// signal.Notify above is overridden by signal.Reset.
+				// SIGINT Option B: git ops are done AND any prompt has been
+				// accepted. Reinstall the signal handler so SIGINT/SIGTERM
+				// target the init child's process group (not rb.Execute) —
+				// Ctrl-C while init is running means "stop this script", not
+				// "nuke the worktree". Keep this window tight: NO I/O or user
+				// prompts between this point and the new handler being
+				// installed. The previous signal.Notify above is overridden
+				// by signal.Reset.
 				signal.Reset(syscall.SIGINT, syscall.SIGTERM)
 				var initCmdPtr atomic.Pointer[exec.Cmd]
 				initSigCh := make(chan os.Signal, 1)
@@ -263,18 +289,7 @@ or creates a new branch.`,
 				}()
 				captureInit := func(c *exec.Cmd) { initCmdPtr.Store(c) }
 
-				// Signal swap done — safe to emit the deferred summary now.
-				for _, w := range baseWarnings {
-					fmt.Fprintln(os.Stderr, w)
-				}
-				fmt.Fprintf(os.Stderr, "Created worktree: %s\nPath: %s\nBranch: %s\n",
-					finalName, wtPath, createdSummaryBranch)
-
-				mode := "force"
-				if !(nonInteractive || branchArg == "") {
-					mode = "" // prompt for init in interactive existing-branch flow
-				}
-				if err := wt.RunWorktreeSetupWithObserver(wtPath, mode, initScript, ctx.RepoRoot, captureInit); err != nil {
+				if err := wt.RunWorktreeSetupWithObserver(wtPath, initScript, ctx.RepoRoot, captureInit); err != nil {
 					// Init-script non-zero exit: keep the worktree, print the
 					// structured banner, exit with ExitInitFailed so operators
 					// can distinguish "worktree exists, init didn't complete"
@@ -287,13 +302,6 @@ or creates a new branch.`,
 				}
 				signal.Stop(initSigCh)
 				close(initSigCh)
-			} else {
-				// Init disabled — no signal swap occurred; safe to print directly.
-				for _, w := range baseWarnings {
-					fmt.Fprintln(os.Stderr, w)
-				}
-				fmt.Fprintf(os.Stderr, "Created worktree: %s\nPath: %s\nBranch: %s\n",
-					finalName, wtPath, createdSummaryBranch)
 			}
 
 			// Open

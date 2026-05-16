@@ -80,7 +80,13 @@ func runInitScript() error {
 	cmd.Stdin = os.Stdin
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("init script failed: %w", err)
+		// Use the typed ExitInitFailed exit code so operators / shell
+		// wrappers can distinguish "init script failed" from generic
+		// errors — matches the contract `wt create` uses. The actual
+		// init-script output streamed to stderr above; we add a one-line
+		// trailer with the underlying error and exit.
+		fmt.Fprintf(os.Stderr, "\nInit script failed: %v\n", err)
+		os.Exit(wt.ExitInitFailed)
 	}
 
 	fmt.Println()

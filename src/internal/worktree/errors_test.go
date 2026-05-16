@@ -46,9 +46,14 @@ func captureStderr(t *testing.T, fn func()) string {
 
 // makeExitError runs a tiny `false`-equivalent so we get a real
 // *exec.ExitError with a known status. Avoids reaching into unexported
-// fields of exec.ExitError.
+// fields of exec.ExitError. Skips the calling test when no POSIX shell
+// is on PATH (Windows, minimal containers) — the seam being tested
+// (banner shape) is OS-agnostic; only the fixture needs sh.
 func makeExitError(t *testing.T, status int) error {
 	t.Helper()
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skipf("sh not on PATH; cannot construct *exec.ExitError fixture: %v", err)
+	}
 	cmd := exec.Command("sh", "-c", fmt.Sprintf("exit %d", status))
 	err := cmd.Run()
 	if err == nil {
@@ -183,8 +188,8 @@ func TestPrintInitFailureBanner_ExitError(t *testing.T) {
 	if !strings.Contains(out, "&&") {
 		t.Errorf("banner missing '&&' in retry hint (must be copy-paste safe across shells):\n%s", out)
 	}
-	if !strings.Contains(out, "wt delete "+name) {
-		t.Errorf("banner missing 'wt delete %s' remove hint:\n%s", name, out)
+	if !strings.Contains(out, "wt delete '"+name+"'") {
+		t.Errorf("banner missing 'wt delete %s' remove hint (single-quoted):\n%s", name, out)
 	}
 }
 
@@ -214,8 +219,35 @@ func TestPrintInitFailureBanner_NonExitError(t *testing.T) {
 	if !strings.Contains(out, "&&") {
 		t.Errorf("banner missing '&&' in retry hint:\n%s", out)
 	}
-	if !strings.Contains(out, "wt delete "+name) {
-		t.Errorf("banner missing 'wt delete %s' remove hint:\n%s", name, out)
+	if !strings.Contains(out, "wt delete '"+name+"'") {
+		t.Errorf("banner missing 'wt delete %s' remove hint (single-quoted):\n%s", name, out)
+	}
+}
+
+// TestPrintInitFailureBanner_PathWithSpaces verifies the retry/remove hints
+// stay copy-paste-safe when the worktree path or name contains shell-special
+// characters (spaces, single quotes). Regression: pre-fix the hint
+// `cd /tmp/my repo/wt && wt init` would shell-split into `cd /tmp/my`.
+func TestPrintInitFailureBanner_PathWithSpaces(t *testing.T) {
+	origRed, origBold, origReset := ColorRed, ColorBold, ColorReset
+	defer func() { ColorRed, ColorBold, ColorReset = origRed, origBold, origReset }()
+	ColorRed, ColorBold, ColorReset = "", "", ""
+
+	wtPath := "/tmp/my repo/wt with spaces"
+	name := "my'name"
+	err := errors.New("init failed")
+
+	out := captureStderr(t, func() {
+		PrintInitFailureBanner(wtPath, name, err)
+	})
+
+	// The path is wrapped in single quotes so the shell treats it as one token.
+	if !strings.Contains(out, "cd '/tmp/my repo/wt with spaces' && wt init") {
+		t.Errorf("retry hint must single-quote a spaces-containing path:\n%s", out)
+	}
+	// The name contains a single quote; shellQuoteSingle escapes it as '\''.
+	if !strings.Contains(out, `wt delete 'my'\''name'`) {
+		t.Errorf("remove hint must escape embedded single quotes in name:\n%s", out)
 	}
 }
 

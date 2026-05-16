@@ -34,6 +34,7 @@ This file documents the contract that `wt create` and `wt init` honor when the i
 
 - `ExitInitFailed = 7` is declared in `src/internal/worktree/errors.go`, appended after `ExitTmuxWindowError = 6`. Existing exit codes (0–6) MUST NOT be renumbered.
 - `cmd/wt/create.go` exits via `os.Exit(wt.ExitInitFailed)` on init-script non-zero exit — NOT via `wt.ExitWithError(...)` with a generic code.
+- `cmd/wt/init.go` (the `wt init` subcommand) also exits via `os.Exit(wt.ExitInitFailed)` on init-script non-zero exit. Returning the error to Cobra would map to `ExitGeneralError = 1`; the explicit `os.Exit` ensures both command paths emit the typed code.
 - Operators (shell wrappers, fab-kit, `hop`) can distinguish "worktree exists, init didn't complete" from any other generic failure.
 
 ### `--reuse` is exempt from the new failure contract
@@ -44,7 +45,7 @@ This file documents the contract that `wt create` and `wt init` honor when the i
 ### Init-failure banner
 
 - `internal/worktree/errors.go` exposes `PrintInitFailureBanner(wtPath, name string, err error)`.
-- Banner contents, in order: status line (with `*exec.ExitError` numeric code when available, generic phrasing otherwise) + reminder that init output streamed above; kept-worktree marker with absolute `wtPath`; retry hint `cd <wtPath> && wt init` (using `&&` so it parses in bash/zsh/fish); remove hint `wt delete <name>` (using the worktree name, not the absolute path, so it composes with `wt delete`'s name resolution).
+- Banner contents, in order: status line (with `*exec.ExitError` numeric code when available, generic phrasing otherwise) + reminder that init output streamed above; kept-worktree marker with absolute `wtPath`; retry hint `cd '<wtPath>' && wt init` (using `&&` so it parses in bash/zsh/fish); remove hint `wt delete '<name>'` (using the worktree name, not the absolute path, so it composes with `wt delete`'s name resolution). Path and name are both single-quoted via `shellQuoteSingle` so paths with spaces / shell metacharacters stay copy-paste-safe.
 - Uses existing `ColorRed` / `ColorBold` / `ColorReset` helpers. Labels are confined to this one helper — no duplication elsewhere.
 
 ### SIGINT during init: Option B (handler swap + Setpgid)
@@ -60,7 +61,8 @@ This file documents the contract that `wt create` and `wt init` honor when the i
 
 ### `RunWorktreeSetup` is thin (<50 lines)
 
-- After this change, `RunWorktreeSetup` does only: resolve → warn-and-return if not-found → confirm prompt (if `mode != "force"`) → wire `Dir`/`Stdout`/`Stderr`/`Stdin` → `cmd.Run()` and return error verbatim.
+- `RunWorktreeSetup(wtPath, initScript, repoRoot)` does only: resolve → warn-and-return if not-found → wire `Dir`/`Stdout`/`Stderr`/`Stdin` → `cmd.Run()` and return error verbatim.
+- The confirmation prompt was originally inside the runner (gated by a `mode` parameter) but was hoisted up to `cmd/wt/create.go` after the Copilot PR review on PR #7. Reason: the init-phase SIGINT handler must be installed AFTER the prompt completes — otherwise Ctrl-C during the prompt is consumed by the init handler with no init child to target (deadlock). Callers that want a prompt MUST call `ConfirmYesNo("Initialize worktree?")` themselves before invoking the runner.
 - All resolution/detection logic lives in `ResolveInitInvocation`.
 
 ### `WT_TEST_NO_LAUNCH=1` test seam in `OpenInApp`

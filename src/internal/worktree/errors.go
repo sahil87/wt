@@ -99,8 +99,10 @@ func PrintInitFailureBanner(wtPath, name string, err error) {
 	fmt.Fprintln(os.Stderr, statusLine)
 	fmt.Fprintf(os.Stderr, "  %s%s%s %s  %s\n",
 		ColorBold, bannerLabelWorktree, ColorReset, wtPath, bannerKeptNote)
-	fmt.Fprintf(os.Stderr, "  %s%s%s cd %s && wt init\n",
-		ColorBold, bannerLabelRetry, ColorReset, wtPath)
-	fmt.Fprintf(os.Stderr, "  %s%s%s wt delete %s\n",
-		ColorBold, bannerLabelRemove, ColorReset, name)
+	// Single-quote both path and name so the hints stay correct when they
+	// contain spaces or shell metacharacters (e.g. macOS dirs with spaces).
+	fmt.Fprintf(os.Stderr, "  %s%s%s cd '%s' && wt init\n",
+		ColorBold, bannerLabelRetry, ColorReset, shellQuoteSingle(wtPath))
+	fmt.Fprintf(os.Stderr, "  %s%s%s wt delete '%s'\n",
+		ColorBold, bannerLabelRemove, ColorReset, shellQuoteSingle(name))
 }

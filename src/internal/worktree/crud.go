@@ -121,13 +121,18 @@ func CreateExploratoryWorktree(name string, ctx *RepoContext, rb *Rollback, star
 
 // RunWorktreeSetup resolves the init script via ResolveInitInvocation and
 // runs it in the worktree directory.
-//   - mode: "force" runs without prompting; "" prompts for confirmation.
 //   - On structured not-found, prints the unified warning to stderr and
 //     returns nil (init step is treated as a no-op).
 //   - Returns the exec error verbatim on init-script non-zero exit so callers
 //     can extract *exec.ExitError via errors.As.
-func RunWorktreeSetup(wtPath, mode, initScript, repoRoot string) error {
-	return RunWorktreeSetupWithObserver(wtPath, mode, initScript, repoRoot, nil)
+//
+// Callers that want to confirm with the user before running MUST call
+// ConfirmYesNo themselves first — confirmation is no longer part of the
+// runner so wt create's SIGINT-during-init handler can be installed AFTER
+// the prompt completes (installing it before would consume Ctrl-C during
+// the prompt with no init child to target).
+func RunWorktreeSetup(wtPath, initScript, repoRoot string) error {
+	return RunWorktreeSetupWithObserver(wtPath, initScript, repoRoot, nil)
 }
 
 // RunWorktreeSetupWithObserver is like RunWorktreeSetup but invokes observer
@@ -135,17 +140,13 @@ func RunWorktreeSetup(wtPath, mode, initScript, repoRoot string) error {
 // lets wt create's SIGINT-during-init handler capture a reference to the
 // in-flight init child without growing the public API surface. Pass nil to
 // behave identically to RunWorktreeSetup.
-func RunWorktreeSetupWithObserver(wtPath, mode, initScript, repoRoot string, observer func(cmd *exec.Cmd)) error {
+func RunWorktreeSetupWithObserver(wtPath, initScript, repoRoot string, observer func(cmd *exec.Cmd)) error {
 	cmd, notFound, err := ResolveInitInvocation(initScript, repoRoot)
 	if err != nil {
 		return err
 	}
 	if notFound != nil {
 		fmt.Fprintln(os.Stderr, notFound.RenderWarning())
-		return nil
-	}
-
-	if mode != "force" && !ConfirmYesNo("Initialize worktree?") {
 		return nil
 	}
 

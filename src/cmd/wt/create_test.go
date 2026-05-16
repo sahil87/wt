@@ -622,7 +622,7 @@ func TestCreate_InitFailureBannerHasRetryHint(t *testing.T) {
 	// Banner contents — shape, not byte-equality per spec.
 	assertContains(t, r.Stderr, wtPath)
 	assertContains(t, r.Stderr, "wt init")
-	assertContains(t, r.Stderr, "wt delete banner-test")
+	assertContains(t, r.Stderr, "wt delete 'banner-test'")
 	assertContains(t, r.Stderr, "&&")
 }
 
