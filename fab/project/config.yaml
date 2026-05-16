@@ -2,14 +2,13 @@ agent:
     spawn_command: claude --dangerously-skip-permissions --effort xhigh -n "$(basename "$(pwd)")"
 checklist:
     extra_categories: []
-fab_version: 1.9.3
+fab_version: 1.9.5
 project:
     description: Git worktree management CLI — create, list, open, and delete worktrees with shell integration.
     name: worktree-cli
 source_paths:
     - src/cmd
     - src/internal
-true_impact_exclude: [fab/, docs/]
 stage_directives:
     apply: []
     hydrate: []
@@ -18,3 +17,6 @@ stage_directives:
     spec:
         - Use GIVEN/WHEN/THEN for scenarios
         - Mark ambiguities with [NEEDS CLARIFICATION]
+true_impact_exclude:
+    - fab/
+    - docs/
