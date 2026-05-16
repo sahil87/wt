@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,7 +135,7 @@ func TestList_JSONIncludesMainRepo(t *testing.T) {
 	}
 }
 
-func TestList_JSONAllFields(t *testing.T) {
+func TestList_JSONDefaultFields(t *testing.T) {
 	repo := createTestRepo(t)
 	createWorktreeViaWt(t, repo, "json-fields-test")
 
@@ -145,16 +146,46 @@ func TestList_JSONAllFields(t *testing.T) {
 	for _, e := range entries {
 		if name, ok := e["name"].(string); ok && name == "json-fields-test" {
 			found = true
-			// Check all required fields exist
-			requiredFields := []string{"name", "branch", "path", "is_main", "is_current", "dirty", "unpushed"}
+			// Default mode: only the non-status fields are present.
+			requiredFields := []string{"name", "branch", "path", "is_main", "is_current"}
 			for _, f := range requiredFields {
 				if _, ok := e[f]; !ok {
 					t.Errorf("missing field %q in JSON entry", f)
 				}
 			}
-			// Check types
 			if _, ok := e["is_main"].(bool); !ok {
 				t.Error("is_main should be boolean")
+			}
+			// dirty/unpushed must be absent without --status.
+			if _, ok := e["dirty"]; ok {
+				t.Error("dirty key should be absent without --status")
+			}
+			if _, ok := e["unpushed"]; ok {
+				t.Error("unpushed key should be absent without --status")
+			}
+		}
+	}
+	if !found {
+		t.Error("json-fields-test not found in JSON output")
+	}
+}
+
+func TestList_JSONStatusFields(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "json-status-test")
+
+	r := runWtSuccess(t, repo, nil, "list", "--status", "--json")
+	entries := parseJSONList(t, r.Stdout)
+
+	found := false
+	for _, e := range entries {
+		if name, ok := e["name"].(string); ok && name == "json-status-test" {
+			found = true
+			requiredFields := []string{"name", "branch", "path", "is_main", "is_current", "dirty", "unpushed"}
+			for _, f := range requiredFields {
+				if _, ok := e[f]; !ok {
+					t.Errorf("missing field %q in JSON entry under --status", f)
+				}
 			}
 			if _, ok := e["dirty"].(bool); !ok {
 				t.Error("dirty should be boolean")
@@ -165,7 +196,7 @@ func TestList_JSONAllFields(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("json-fields-test not found in JSON output")
+		t.Error("json-status-test not found in JSON output")
 	}
 }
 
@@ -176,13 +207,13 @@ func TestList_JSONDetectsDirty(t *testing.T) {
 	// Make the worktree dirty
 	os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("dirty"), 0644)
 
-	r := runWtSuccess(t, repo, nil, "list", "--json")
+	r := runWtSuccess(t, repo, nil, "list", "--status", "--json")
 	entries := parseJSONList(t, r.Stdout)
 
 	for _, e := range entries {
 		if name, ok := e["name"].(string); ok && name == "dirty-json-test" {
 			if dirty, ok := e["dirty"].(bool); !ok || !dirty {
-				t.Error("expected dirty=true for dirty worktree")
+				t.Error("expected dirty=true for dirty worktree under --status")
 			}
 			return
 		}
@@ -221,19 +252,41 @@ func TestList_PathAndJSONMutuallyExclusive(t *testing.T) {
 
 // dirty/status indicators
 
-func TestList_DirtyIndicator(t *testing.T) {
+func TestList_DefaultModeNoDirtyIndicator(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "dirty-default-test")
+
+	os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("dirty"), 0644)
+
+	r := runWtSuccess(t, repo, nil, "list")
+	assertContains(t, r.Stdout, "dirty-default-test")
+	// In default mode no `*` dirty indicator appears on the dirty worktree line.
+	// The leading current-worktree marker column is not on the data row, so a
+	// `*` on this line would be a status marker.
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		if !strings.Contains(line, "dirty-default-test") {
+			continue
+		}
+		if strings.Contains(line, "*") {
+			t.Errorf("expected NO dirty indicator '*' on default-mode line, got: %s", line)
+		}
+		return
+	}
+	t.Fatal("dirty-default-test line not found in output")
+}
+
+func TestList_StatusModeShowsDirty(t *testing.T) {
 	repo := createTestRepo(t)
 	wtPath := createWorktreeViaWt(t, repo, "dirty-status-test")
 
 	os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("dirty"), 0644)
 
-	r := runWtSuccess(t, repo, nil, "list")
+	r := runWtSuccess(t, repo, nil, "list", "--status")
 	assertContains(t, r.Stdout, "dirty-status-test")
-	// Should show * dirty indicator on the dirty worktree line
 	for _, line := range strings.Split(r.Stdout, "\n") {
 		if strings.Contains(line, "dirty-status-test") {
 			if !strings.Contains(line, "*") {
-				t.Errorf("expected dirty indicator '*' on dirty-status-test line, got: %s", line)
+				t.Errorf("expected dirty indicator '*' on dirty-status-test line under --status, got: %s", line)
 			}
 			return
 		}
@@ -243,30 +296,135 @@ func TestList_DirtyIndicator(t *testing.T) {
 
 // formatted output layout
 
-func TestList_Header(t *testing.T) {
+func TestList_DefaultHeader(t *testing.T) {
 	repo := createTestRepo(t)
 	createWorktreeViaWt(t, repo, "fmt-test")
 
 	r := runWtSuccess(t, repo, nil, "list")
-	// Header row must contain all column labels
+	// Default header must contain Name/Branch/Path but NOT Status.
 	assertContains(t, r.Stdout, "Name")
 	assertContains(t, r.Stdout, "Branch")
-	assertContains(t, r.Stdout, "Status")
 	assertContains(t, r.Stdout, "Path")
+	assertNotContains(t, r.Stdout, "Status")
 
-	// Separator row must be absent (was removed in this change)
+	// Separator row must be absent.
 	assertNotContains(t, r.Stdout, "----")
 
 	// Paths should be relative (contain ".worktrees/" segment, no leading "/")
 	for _, line := range strings.Split(r.Stdout, "\n") {
 		if strings.Contains(line, "fmt-test") && !strings.HasPrefix(line, "Worktrees") && !strings.HasPrefix(line, "Location") {
 			if strings.Contains(line, ".worktrees/") {
-				// Good — relative path uses .worktrees/ segment
 				return
 			}
 		}
 	}
 	t.Error("expected relative path with .worktrees/ segment for fmt-test worktree")
+}
+
+func TestList_StatusHeader(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "fmt-status-test")
+
+	r := runWtSuccess(t, repo, nil, "list", "--status")
+	assertContains(t, r.Stdout, "Name")
+	assertContains(t, r.Stdout, "Branch")
+	assertContains(t, r.Stdout, "Status")
+	assertContains(t, r.Stdout, "Path")
+}
+
+// --status flag tests
+
+func TestList_StatusFlagInHelp(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWtSuccess(t, repo, nil, "list", "--help")
+	assertContains(t, r.Stdout, "--status")
+}
+
+func TestList_StatusAndPathMutuallyExclusive(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWt(t, repo, nil, "list", "--status", "--path", "foo")
+	if r.ExitCode == 0 {
+		t.Error("expected failure for --status and --path together")
+	}
+	assertContains(t, r.Stderr, "mutually exclusive")
+}
+
+func TestList_StatusFlagShowsUnpushed(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "unpushed-test")
+
+	// Push the worktree branch to origin so it has an upstream, then commit
+	// locally without pushing to create unpushed commits.
+	gitRun(t, wtPath, "push", "-q", "-u", "origin", "unpushed-test")
+	os.WriteFile(filepath.Join(wtPath, "ahead1.txt"), []byte("ahead"), 0644)
+	gitRun(t, wtPath, "add", "ahead1.txt")
+	gitRun(t, wtPath, "commit", "-q", "-m", "first ahead commit")
+	os.WriteFile(filepath.Join(wtPath, "ahead2.txt"), []byte("ahead2"), 0644)
+	gitRun(t, wtPath, "add", "ahead2.txt")
+	gitRun(t, wtPath, "commit", "-q", "-m", "second ahead commit")
+
+	r := runWtSuccess(t, repo, nil, "list", "--status")
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		if strings.Contains(line, "unpushed-test") {
+			if !strings.Contains(line, "↑2") {
+				t.Errorf("expected '↑2' on unpushed-test line, got: %s", line)
+			}
+			return
+		}
+	}
+	t.Fatal("unpushed-test line not found in output")
+}
+
+func TestList_StatusOrderingPreserved(t *testing.T) {
+	repo := createTestRepo(t)
+	// Create several worktrees so parallel enrichment has work to spread across workers.
+	names := []string{"order-a", "order-b", "order-c", "order-d", "order-e"}
+	for _, n := range names {
+		createWorktreeViaWt(t, repo, n)
+	}
+
+	r := runWtSuccess(t, repo, nil, "list", "--status")
+
+	// Capture the order in which worktree names appear in stdout, comparing
+	// against the porcelain order (which lists main first, then others in
+	// the order git tracks them).
+	porcelainOut, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		t.Fatalf("git worktree list --porcelain: %v", err)
+	}
+	var expected []string
+	for _, line := range strings.Split(string(porcelainOut), "\n") {
+		if !strings.HasPrefix(line, "worktree ") {
+			continue
+		}
+		p := strings.TrimPrefix(line, "worktree ")
+		base := filepath.Base(p)
+		if base == filepath.Base(repo) {
+			expected = append(expected, "(main)")
+		} else {
+			expected = append(expected, base)
+		}
+	}
+
+	var got []string
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		for _, exp := range expected {
+			if strings.Contains(line, exp) && !strings.HasPrefix(line, "Worktrees") && !strings.HasPrefix(line, "Location") {
+				got = append(got, exp)
+				break
+			}
+		}
+	}
+
+	if len(got) != len(expected) {
+		t.Fatalf("expected %d rows, got %d (got=%v expected=%v)", len(expected), len(got), got, expected)
+	}
+	for i := range expected {
+		if got[i] != expected[i] {
+			t.Errorf("row %d: expected %q, got %q (full got=%v)", i, expected[i], got[i], got)
+		}
+	}
 }
 
 // NO_COLOR support

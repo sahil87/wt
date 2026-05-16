@@ -5,4 +5,4 @@
 
 | Domain | Description | Memory Files |
 |--------|-------------|------|
-| wt-cli | Behavior contracts for the `wt` CLI binary (commands, exit codes, signal handling, test seams). | [wt-cli/init-failure-contract.md](wt-cli/init-failure-contract.md) |
+| wt-cli | Behavior contracts for the `wt` CLI binary (commands, exit codes, signal handling, test seams). | [wt-cli/init-failure-contract.md](wt-cli/init-failure-contract.md), [wt-cli/list-status-contract.md](wt-cli/list-status-contract.md) |

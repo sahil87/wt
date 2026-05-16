@@ -55,9 +55,9 @@ $ wt list
 Worktrees for: wt
 Location: /Users/you/code/wt.worktrees
 
-  Name          Branch         Status   Path
-* (main)        main                    wt/
-  lively-otter  lively-otter            wt.worktrees/lively-otter/
+  Name          Branch         Path
+* (main)        main           wt/
+  lively-otter  lively-otter   wt.worktrees/lively-otter/
 
 $ wt open lively-otter        # menu → "Open here" cd's your shell
 $ wt delete lively-otter      # removes worktree (and optionally the branch)
@@ -68,7 +68,7 @@ $ wt delete lively-otter      # removes worktree (and optionally the branch)
 | Command | Summary |
 |---------|---------|
 | `wt create [branch]` | Create a worktree (random name + new branch, or named branch). Key flags: `--base <ref>`, `--reuse`, `--worktree-name`, `--non-interactive`. |
-| `wt list` | List all worktrees with branch, dirty/unpushed status, and path. `--path` and `--json` for scripting. |
+| `wt list` | List all worktrees with name, branch, and path. Add `--status` for dirty/unpushed indicators; `--path` and `--json` for scripting. |
 | `wt open [name\|path]` | Open a worktree in a detected app (editor, terminal, file manager). `--app` to skip the menu. |
 | `wt delete [names...]` | Delete one or more worktrees with optional branch cleanup. |
 | `wt init` | Run the worktree init script (default `fab sync`, override via `WORKTREE_INIT_SCRIPT`). |
