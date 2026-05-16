@@ -64,29 +64,14 @@ func runInitScript() error {
 	fmt.Println("Running worktree init...")
 	fmt.Println()
 
-	// Determine if it's a command (contains spaces) or a file path
-	var cmd *exec.Cmd
-	if strings.Contains(initScriptRel, " ") {
-		// Command invocation: check if the command is available
-		parts := strings.Fields(initScriptRel)
-		if _, err := exec.LookPath(parts[0]); err != nil {
-			fmt.Printf("Warning: %q not found on PATH, skipping init\n", parts[0])
-			fmt.Println("Install fab-kit or set WORKTREE_INIT_SCRIPT to a custom script.")
-			return nil
-		}
-		cmd = exec.Command(parts[0], parts[1:]...)
-	} else {
-		// File path: resolve relative to repo root
-		initScript := filepath.Join(repoRoot, initScriptRel)
-		if _, err := os.Stat(initScript); os.IsNotExist(err) {
-			fmt.Printf("No init script found at: %s\n", initScript)
-			fmt.Println()
-			fmt.Println("To add an init script:")
-			fmt.Printf("  mkdir -p %s\n", filepath.Dir(initScriptRel))
-			fmt.Printf("  touch %s\n", initScriptRel)
-			return nil
-		}
-		cmd = exec.Command("bash", initScript)
+	// Single resolution contract — same helper that wt create's init step uses.
+	cmd, notFound, err := wt.ResolveInitInvocation(initScriptRel, repoRoot)
+	if err != nil {
+		return fmt.Errorf("resolve init script: %w", err)
+	}
+	if notFound != nil {
+		fmt.Println(notFound.RenderWarning())
+		return nil
 	}
 
 	cmd.Dir = currentRoot
@@ -95,7 +80,13 @@ func runInitScript() error {
 	cmd.Stdin = os.Stdin
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("init script failed: %w", err)
+		// Use the typed ExitInitFailed exit code so operators / shell
+		// wrappers can distinguish "init script failed" from generic
+		// errors — matches the contract `wt create` uses. The actual
+		// init-script output streamed to stderr above; we add a one-line
+		// trailer with the underlying error and exit.
+		fmt.Fprintf(os.Stderr, "\nInit script failed: %v\n", err)
+		os.Exit(wt.ExitInitFailed)
 	}
 
 	fmt.Println()

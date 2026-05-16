@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -185,7 +186,7 @@ or creates a new branch.`,
 					// Non-fatal: reuse proceeds even if init fails (existing worktree may be functional).
 					if worktreeInit == "true" {
 						initScript := wt.InitScriptPath()
-						if err := wt.RunWorktreeSetup(existingWtPath, "force", initScript, ctx.RepoRoot); err != nil {
+						if err := wt.RunWorktreeSetup(existingWtPath, initScript, ctx.RepoRoot); err != nil {
 							fmt.Fprintf(os.Stderr, "Warning: worktree init failed for reused worktree %q: %v\n", finalName, err)
 						}
 					}
@@ -199,23 +200,33 @@ or creates a new branch.`,
 			}
 
 			// Create worktree
+			//
+			// Reinstall-window contract (spec § Signal Handling During Init):
+			// no I/O, user prompts, or nontrivial work between the worktree-add
+			// returning and the signal.Reset below. The "Created worktree:"
+			// summary lines and any --base warn-and-ignore notices are
+			// deferred until AFTER the signal swap. If init is disabled
+			// (worktreeInit != "true"), the summary still gets printed via the
+			// late-print path below.
 			var wtPath string
+			var createdSummaryBranch string // branch label shown in the summary
+			var baseWarnings []string       // --base ignored notices, printed after signal swap
 			if branchArg == "" {
 				wtPath, err = wt.CreateExploratoryWorktree(finalName, ctx, rb, base)
 				if err != nil {
 					wt.ExitWithError(wt.ExitGitError, "Failed to create worktree", err.Error(),
 						"Check if the branch already exists or if there are permission issues")
 				}
-				fmt.Fprintf(os.Stderr, "Created worktree: %s\nPath: %s\nBranch: %s\n", finalName, wtPath, finalName)
+				createdSummaryBranch = finalName
 			} else {
-				// Warn-and-ignore --base for existing branches
+				// Warn-and-ignore --base for existing branches; deferred to after signal swap.
 				effectiveBase := base
 				if base != "" {
 					if wt.BranchExistsLocally(branchArg) {
-						fmt.Fprintf(os.Stderr, "--base ignored: branch already exists locally\n")
+						baseWarnings = append(baseWarnings, "--base ignored: branch already exists locally")
 						effectiveBase = ""
 					} else if wt.BranchExistsRemotely(branchArg) {
-						fmt.Fprintf(os.Stderr, "--base ignored: fetching existing remote branch\n")
+						baseWarnings = append(baseWarnings, "--base ignored: fetching existing remote branch")
 						effectiveBase = ""
 					}
 				}
@@ -224,28 +235,73 @@ or creates a new branch.`,
 					wt.ExitWithError(wt.ExitGitError, "Failed to create worktree", err.Error(),
 						"The branch may already be checked out in another worktree")
 				}
-				fmt.Fprintf(os.Stderr, "Created worktree: %s\nPath: %s\nBranch: %s\n", finalName, wtPath, branchArg)
+				createdSummaryBranch = branchArg
 			}
 
 			// Setup
-			if worktreeInit == "true" {
+			//
+			// The init-phase signal handler MUST be installed AFTER any
+			// confirmation prompt completes (a SIGINT during the prompt
+			// would otherwise be consumed by the init handler with no init
+			// child to target — see Copilot review on PR #7). The flow:
+			//   1. While the rollback handler is still active, optionally
+			//      prompt the user (Ctrl-C during the prompt rolls back —
+			//      correct: init hasn't started, abort the whole creation).
+			//   2. Emit the deferred summary lines (still under the
+			//      rollback handler).
+			//   3. Swap to the init-phase handler with NO I/O in between.
+			//   4. Run init via RunWorktreeSetupWithObserver (no prompt
+			//      inside the runner).
+			runInit := worktreeInit == "true"
+			if runInit && !(nonInteractive || branchArg == "") {
+				runInit = wt.ConfirmYesNo("Initialize worktree?")
+			}
+
+			// Emit deferred summary (still under rollback handler).
+			for _, w := range baseWarnings {
+				fmt.Fprintln(os.Stderr, w)
+			}
+			fmt.Fprintf(os.Stderr, "Created worktree: %s\nPath: %s\nBranch: %s\n",
+				finalName, wtPath, createdSummaryBranch)
+
+			if runInit {
 				initScript := wt.InitScriptPath()
-				if nonInteractive || branchArg == "" {
-					// Auto-run init
-					if err := wt.RunWorktreeSetup(wtPath, "force", initScript, ctx.RepoRoot); err != nil {
-						// Init failure triggers rollback — must execute before os.Exit
-						rb.Execute()
-						wt.ExitWithError(wt.ExitGeneralError, "Init script failed", err.Error(),
-							"Check the init script for errors")
+
+				// SIGINT Option B: git ops are done AND any prompt has been
+				// accepted. Reinstall the signal handler so SIGINT/SIGTERM
+				// target the init child's process group (not rb.Execute) —
+				// Ctrl-C while init is running means "stop this script", not
+				// "nuke the worktree". Keep this window tight: NO I/O or user
+				// prompts between this point and the new handler being
+				// installed. The previous signal.Notify above is overridden
+				// by signal.Reset.
+				signal.Reset(syscall.SIGINT, syscall.SIGTERM)
+				var initCmdPtr atomic.Pointer[exec.Cmd]
+				initSigCh := make(chan os.Signal, 1)
+				signal.Notify(initSigCh, syscall.SIGINT, syscall.SIGTERM)
+				go func() {
+					if _, ok := <-initSigCh; !ok {
+						return
 					}
-				} else {
-					// Prompt for init
-					if err := wt.RunWorktreeSetup(wtPath, "", initScript, ctx.RepoRoot); err != nil {
-						rb.Execute()
-						wt.ExitWithError(wt.ExitGeneralError, "Init script failed", err.Error(),
-							"Check the init script for errors")
+					if c := initCmdPtr.Load(); c != nil && c.Process != nil {
+						signalInitProcessGroup(c)
 					}
+				}()
+				captureInit := func(c *exec.Cmd) { initCmdPtr.Store(c) }
+
+				if err := wt.RunWorktreeSetupWithObserver(wtPath, initScript, ctx.RepoRoot, captureInit); err != nil {
+					// Init-script non-zero exit: keep the worktree, print the
+					// structured banner, exit with ExitInitFailed so operators
+					// can distinguish "worktree exists, init didn't complete"
+					// from other failures.
+					signal.Stop(initSigCh)
+					close(initSigCh)
+					rb.Disarm()
+					wt.PrintInitFailureBanner(wtPath, finalName, err)
+					os.Exit(wt.ExitInitFailed)
 				}
+				signal.Stop(initSigCh)
+				close(initSigCh)
 			}
 
 			// Open

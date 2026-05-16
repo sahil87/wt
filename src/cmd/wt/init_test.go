@@ -3,7 +3,10 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	wt "github.com/sahil87/wt/internal/worktree"
 )
 
 func TestInit_RunsScriptWhenExists(t *testing.T) {
@@ -23,7 +26,8 @@ func TestInit_RunsScriptWhenExists(t *testing.T) {
 func TestInit_GuidanceWhenNoScript(t *testing.T) {
 	repo := createTestRepo(t)
 
-	// With WORKTREE_INIT_SCRIPT pointing to a non-existent file, shows guidance
+	// With WORKTREE_INIT_SCRIPT pointing to a non-existent file, shows guidance.
+	// Output now comes from the unified InitNotFound.RenderWarning() helper.
 	r := runWt(t, repo, []string{"WORKTREE_INIT_SCRIPT=scripts/worktree-init.sh"}, "init")
 	assertExitCode(t, r, 0)
 	combined := r.Stdout + r.Stderr
@@ -36,12 +40,50 @@ func TestInit_GuidanceWhenNoScript(t *testing.T) {
 func TestInit_SkipsWhenCommandNotOnPath(t *testing.T) {
 	repo := createTestRepo(t)
 
-	// Use an explicitly nonexistent command (fab-kit may be on PATH in dev envs)
+	// Use an explicitly nonexistent command (fab-kit may be on PATH in dev envs).
+	// Output now comes from the unified InitNotFound.RenderWarning() helper —
+	// it preserves the substrings the old bespoke message used.
 	r := runWt(t, repo, []string{"WORKTREE_INIT_SCRIPT=__nonexistent_cmd__ sync"}, "init")
 	assertExitCode(t, r, 0)
 	combined := r.Stdout + r.Stderr
 	assertContains(t, combined, "not found on PATH")
-	assertContains(t, combined, "skipping init")
+	assertContains(t, combined, "__nonexistent_cmd__")
+}
+
+// TestInit_WarningTextMatchesResolver asserts the warning printed by
+// wt init for a command-not-on-path init script is byte-identical (modulo
+// surrounding whitespace) to what InitNotFound.RenderWarning() returns.
+// This is the unified-resolver contract from the spec: both call sites
+// route through the same renderer.
+func TestInit_WarningTextMatchesResolver_CommandNotOnPath(t *testing.T) {
+	repo := createTestRepo(t)
+
+	cmdName := "__wt_test_missing_cmd_xyz__"
+	r := runWt(t, repo, []string{"WORKTREE_INIT_SCRIPT=" + cmdName + " sync"}, "init")
+	assertExitCode(t, r, 0)
+
+	expected := wt.InitNotFound{Kind: wt.CommandNotOnPath, Name: cmdName}.RenderWarning()
+	combined := r.Stdout + r.Stderr
+	if !strings.Contains(combined, expected) {
+		t.Errorf("expected output to contain the canonical RenderWarning text\nwant:\n%s\ngot:\n%s", expected, combined)
+	}
+}
+
+// TestInit_WarningTextMatchesResolver_FileNotFound: same byte-identity
+// assertion for the file-not-found branch.
+func TestInit_WarningTextMatchesResolver_FileNotFound(t *testing.T) {
+	repo := createTestRepo(t)
+
+	rel := "scripts/nonexistent.sh"
+	r := runWt(t, repo, []string{"WORKTREE_INIT_SCRIPT=" + rel}, "init")
+	assertExitCode(t, r, 0)
+
+	abs := filepath.Join(repo, rel)
+	expected := wt.InitNotFound{Kind: wt.FileNotFound, Path: abs, RelPath: rel}.RenderWarning()
+	combined := r.Stdout + r.Stderr
+	if !strings.Contains(combined, expected) {
+		t.Errorf("expected output to contain the canonical RenderWarning text\nwant:\n%s\ngot:\n%s", expected, combined)
+	}
 }
 
 func TestInit_ErrorOutsideGitRepo(t *testing.T) {

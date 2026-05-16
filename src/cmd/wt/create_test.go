@@ -557,6 +557,75 @@ func TestCreate_BaseDoesNotAffectExistingBehavior(t *testing.T) {
 	}
 }
 
+// createFailingInitScript writes a committed init script that streams a
+// marker line and exits 1. Returns the env override caller should pass to
+// runWt so WORKTREE_INIT_SCRIPT points at it.
+func createFailingInitScript(t *testing.T, repo string) []string {
+	t.Helper()
+	scriptDir := filepath.Join(repo, "scripts")
+	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	script := filepath.Join(scriptDir, "init-fail.sh")
+	content := "#!/usr/bin/env bash\necho 'INIT_FAIL_MARKER' >&2\nexit 1\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	gitRun(t, repo, "add", "scripts/init-fail.sh")
+	gitRun(t, repo, "commit", "-q", "-m", "Add failing init script")
+	return []string{"WORKTREE_INIT_SCRIPT=scripts/init-fail.sh"}
+}
+
+func TestCreate_InitFailureKeepsWorktree_Exploratory(t *testing.T) {
+	repo := createTestRepo(t)
+	env := createFailingInitScript(t, repo)
+
+	r := runWt(t, repo, env, "create", "--non-interactive",
+		"--worktree-name", "explore-fail",
+		"--worktree-open", "skip")
+
+	// Exit code must be ExitInitFailed (7), not the legacy ExitGeneralError (1).
+	assertExitCode(t, r, 7)
+	// Worktree directory survives.
+	assertWorktreeExists(t, repo, "explore-fail")
+	// Branch (matches worktree name for exploratory) survives.
+	assertBranchExists(t, repo, "explore-fail")
+}
+
+func TestCreate_InitFailureKeepsWorktree_ExistingBranch(t *testing.T) {
+	repo := createTestRepo(t)
+	env := createFailingInitScript(t, repo)
+
+	// Pre-create the branch so we go through the existing-local-branch path.
+	gitRun(t, repo, "branch", "feature/keep-on-fail")
+
+	r := runWt(t, repo, env, "create", "--non-interactive",
+		"--worktree-name", "branch-fail",
+		"--worktree-open", "skip",
+		"feature/keep-on-fail")
+
+	assertExitCode(t, r, 7)
+	assertWorktreeExists(t, repo, "branch-fail")
+	assertBranchExists(t, repo, "feature/keep-on-fail")
+}
+
+func TestCreate_InitFailureBannerHasRetryHint(t *testing.T) {
+	repo := createTestRepo(t)
+	env := createFailingInitScript(t, repo)
+
+	r := runWt(t, repo, env, "create", "--non-interactive",
+		"--worktree-name", "banner-test",
+		"--worktree-open", "skip")
+
+	assertExitCode(t, r, 7)
+	wtPath := worktreePath(repo, "banner-test")
+	// Banner contents — shape, not byte-equality per spec.
+	assertContains(t, r.Stderr, wtPath)
+	assertContains(t, r.Stderr, "wt init")
+	assertContains(t, r.Stderr, "wt delete 'banner-test'")
+	assertContains(t, r.Stderr, "&&")
+}
+
 func TestCreate_OpenHereSuppressesPath(t *testing.T) {
 	repo := createTestRepo(t)
 
@@ -602,4 +671,10 @@ func TestCreate_WorktreeOpenDefault(t *testing.T) {
 	if strings.Contains(r.Stderr, "app 'default' not found") {
 		t.Errorf("expected --worktree-open=default to use the default-app code path, got stderr: %q", r.Stderr)
 	}
+
+	// The default-app path must reach OpenInApp under the test launch guard.
+	// If a real launch ever leaks past the WT_TEST_NO_LAUNCH=1 seam, the
+	// marker will be missing and this test will fail — preventing the
+	// VSCode-during-test regression class.
+	assertContains(t, r.Stderr, "[wt-test-no-launch]")
 }

@@ -142,6 +142,13 @@ func runWt(t *testing.T, dir string, env []string, args ...string) wtResult {
 		// silently skipped. Empty string would fall through to the default
 		// "fab sync" which fails in non-fab-managed test repos.
 		"WORKTREE_INIT_SCRIPT=__wt_test_noinit__ noop",
+		// Prevent OpenInApp from launching real GUI/terminal/clipboard
+		// binaries (VSCode, iTerm, Finder, etc.) when tests exercise the
+		// default-app code path. The seam lives in
+		// internal/worktree/apps.go and short-circuits every appCmd except
+		// "open_here". Tests that legitimately need to exercise a real
+		// launch must opt out via the env parameter (last-wins).
+		"WT_TEST_NO_LAUNCH=1",
 		// Default-isolate launcher-affecting env so tests that invoke
 		// `wt create --worktree-open default` or `wt open --app default`
 		// do NOT shell out to tmux/byobu and leak real windows. Tests that

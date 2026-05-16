@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -198,6 +199,69 @@ func TestIntegration_LauncherContract_NonGitTempDir(t *testing.T) {
 	if strings.Contains(r.Stderr, "shell wrapper") {
 		t.Errorf("expected no shell-wrapper hint with WT_WRAPPER=1, got stderr: %q", r.Stderr)
 	}
+}
+
+// writeFailingInitScript writes a committed init script that exits 1 and
+// returns the env override pointing WORKTREE_INIT_SCRIPT at it. Mirrors the
+// helper in create_test.go but lives here so the integration tests stay
+// self-contained.
+func writeFailingInitScript(t *testing.T, repo string) []string {
+	t.Helper()
+	scriptDir := filepath.Join(repo, "scripts")
+	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	script := filepath.Join(scriptDir, "init-fail.sh")
+	content := "#!/usr/bin/env bash\necho 'INIT_FAIL_MARKER' >&2\nexit 1\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	gitRun(t, repo, "add", "scripts/init-fail.sh")
+	gitRun(t, repo, "commit", "-q", "-m", "Add failing init script")
+	return []string{"WORKTREE_INIT_SCRIPT=scripts/init-fail.sh"}
+}
+
+// TestIntegration_CreateInitFailure_KeepsWorktreeAndExits7 exercises the
+// full kept-worktree-on-init-failure contract end-to-end against the built
+// binary. Required by spec.md "Requirement: Integration test for init failure".
+func TestIntegration_CreateInitFailure_KeepsWorktreeAndExits7(t *testing.T) {
+	repo := createTestRepo(t)
+	env := writeFailingInitScript(t, repo)
+
+	r := runWt(t, repo, env, "create", "--non-interactive",
+		"--worktree-name", "testbranch",
+		"--worktree-open", "skip")
+
+	// 1. Process exit code is exactly 7 (ExitInitFailed).
+	assertExitCode(t, r, 7)
+
+	// 2. Worktree directory still exists on disk.
+	wtPath := worktreePath(repo, "testbranch")
+	assertDirExists(t, wtPath)
+
+	// 3. Branch still exists in the repository.
+	assertBranchExists(t, repo, "testbranch")
+
+	// 4. Worktree appears in `git worktree list`.
+	out, err := exec.Command("git", "-C", repo, "worktree", "list").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git worktree list: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), wtPath) {
+		t.Errorf("expected worktree %q in `git worktree list`:\n%s", wtPath, out)
+	}
+
+	// 5. Stderr contains the worktree path.
+	assertContains(t, r.Stderr, wtPath)
+
+	// 6. Stderr contains the `wt init` retry hint.
+	assertContains(t, r.Stderr, "wt init")
+
+	// 7. Stderr contains the `wt delete` remove hint.
+	assertContains(t, r.Stderr, "wt delete")
+
+	// 8. The failing init script's stderr marker streamed through.
+	assertContains(t, r.Stderr, "INIT_FAIL_MARKER")
 }
 
 func TestIntegration_WorktreeCommitIndependent(t *testing.T) {

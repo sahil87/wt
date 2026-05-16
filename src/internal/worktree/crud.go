@@ -119,32 +119,35 @@ func CreateExploratoryWorktree(name string, ctx *RepoContext, rb *Rollback, star
 	return wtPath, nil
 }
 
-// RunWorktreeSetup runs the init script/command in the worktree directory.
-// mode: "force" runs without prompting, "" prompts for confirmation.
-// initScript is either a relative path from repo root
-// or a command invocation (e.g., "fab sync").
-func RunWorktreeSetup(wtPath, mode, initScript string, repoRoot string) error {
-	// Determine if it's a command (contains spaces) or a file path
-	var cmd *exec.Cmd
-	if strings.Contains(initScript, " ") {
-		// Command invocation: check if the command is available
-		parts := strings.Fields(initScript)
-		if _, err := exec.LookPath(parts[0]); err != nil {
-			return nil // Command not available, silently skip
-		}
-		cmd = exec.Command(parts[0], parts[1:]...)
-	} else {
-		scriptPath := filepath.Join(repoRoot, initScript)
-		if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
-			return nil // No init script, silently skip
-		}
-		cmd = exec.Command("bash", scriptPath)
-	}
+// RunWorktreeSetup resolves the init script via ResolveInitInvocation and
+// runs it in the worktree directory.
+//   - On structured not-found, prints the unified warning to stderr and
+//     returns nil (init step is treated as a no-op).
+//   - Returns the exec error verbatim on init-script non-zero exit so callers
+//     can extract *exec.ExitError via errors.As.
+//
+// Callers that want to confirm with the user before running MUST call
+// ConfirmYesNo themselves first — confirmation is no longer part of the
+// runner so wt create's SIGINT-during-init handler can be installed AFTER
+// the prompt completes (installing it before would consume Ctrl-C during
+// the prompt with no init child to target).
+func RunWorktreeSetup(wtPath, initScript, repoRoot string) error {
+	return RunWorktreeSetupWithObserver(wtPath, initScript, repoRoot, nil)
+}
 
-	if mode != "force" {
-		if !ConfirmYesNo("Initialize worktree?") {
-			return nil
-		}
+// RunWorktreeSetupWithObserver is like RunWorktreeSetup but invokes observer
+// with the resolved *exec.Cmd immediately before cmd.Run(). The observer
+// lets wt create's SIGINT-during-init handler capture a reference to the
+// in-flight init child without growing the public API surface. Pass nil to
+// behave identically to RunWorktreeSetup.
+func RunWorktreeSetupWithObserver(wtPath, initScript, repoRoot string, observer func(cmd *exec.Cmd)) error {
+	cmd, notFound, err := ResolveInitInvocation(initScript, repoRoot)
+	if err != nil {
+		return err
+	}
+	if notFound != nil {
+		fmt.Fprintln(os.Stderr, notFound.RenderWarning())
+		return nil
 	}
 
 	fmt.Fprintln(os.Stderr, "Running worktree init...")
@@ -152,6 +155,9 @@ func RunWorktreeSetup(wtPath, mode, initScript string, repoRoot string) error {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
+	if observer != nil {
+		observer(cmd)
+	}
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("init script failed: %w", err)
 	}

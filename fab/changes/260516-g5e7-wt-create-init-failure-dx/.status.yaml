@@ -1,0 +1,42 @@
+id: g5e7
+name: 260516-g5e7-wt-create-init-failure-dx
+created: 2026-05-16T10:01:51Z
+created_by: sahil-noon
+change_type: fix
+issues: []
+progress:
+    intake: done
+    spec: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: done
+    review-pr: done
+plan:
+    generated: true
+    task_count: 20
+    acceptance_count: 51
+    acceptance_completed: 51
+confidence:
+    certain: 16
+    confident: 0
+    tentative: 0
+    unresolved: 0
+    score: 5.0
+    fuzzy: true
+    dimensions:
+        signal: 92.5
+        reversibility: 81.9
+        competence: 82.2
+        disambiguation: 77.2
+stage_metrics:
+    intake: {started_at: "2026-05-16T10:01:51Z", driver: fab-new, iterations: 1, completed_at: "2026-05-16T10:17:14Z"}
+    spec: {started_at: "2026-05-16T10:17:14Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T10:43:08Z"}
+    apply: {started_at: "2026-05-16T10:42:44Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T10:42:44Z"}
+    review: {started_at: "2026-05-16T10:42:44Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T10:54:26Z"}
+    hydrate: {started_at: "2026-05-16T10:54:26Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T10:56:41Z"}
+    ship: {started_at: "2026-05-16T10:56:41Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T10:59:41Z"}
+    review-pr: {started_at: "2026-05-16T10:59:41Z", driver: git-pr, iterations: 1, completed_at: "2026-05-16T11:00:56Z"}
+prs:
+    - https://github.com/sahil87/wt/pull/7
+last_updated: 2026-05-16T11:00:56Z
