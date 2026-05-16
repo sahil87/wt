@@ -189,7 +189,20 @@ func tabName(repoName, wtName string) string {
 }
 
 // OpenInApp opens the given path in the specified application.
+//
+// Test seam: when WT_TEST_NO_LAUNCH=1 is set in the environment, every appCmd
+// except "open_here" short-circuits — the function prints a marker line to
+// stderr and returns nil instead of exec'ing a GUI/terminal/clipboard binary.
+// Defaulted ON in cmd/wt's runWt test helper so `go test ./...` cannot leak
+// real VSCode/iTerm/etc. windows onto the developer's host. The "open_here"
+// case is exempt because it is cooperative (writes to WT_CD_FILE or stdout)
+// and has no host side effect.
 func OpenInApp(appCmd, path, repoName, wtName string) error {
+	if appCmd != "open_here" && os.Getenv("WT_TEST_NO_LAUNCH") == "1" {
+		fmt.Fprintf(os.Stderr, "[wt-test-no-launch] would open %q in %q (repo=%q wt=%q)\n",
+			path, appCmd, repoName, wtName)
+		return nil
+	}
 	switch appCmd {
 	case "open_here":
 		cdFile := os.Getenv("WT_CD_FILE")

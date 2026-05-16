@@ -186,9 +186,15 @@ func TestOpen_AppDefault(t *testing.T) {
 	r := runWt(t, repo, env, "open", "--app", "default", wtPath)
 	// Installed apps vary across environments (e.g., macOS always has Finder).
 	// Accept either outcome, but verify the "default" keyword was recognized:
-	// - exit 0: some default app resolved and opened
+	// - exit 0: some default app resolved and reached OpenInApp (under the
+	//   WT_TEST_NO_LAUNCH=1 guard, no real launch happens)
 	// - non-zero: no default detected — should show our error, not "Unknown app"
-	if r.ExitCode != 0 {
+	if r.ExitCode == 0 {
+		// A resolved default app MUST go through OpenInApp; the test launch
+		// guard emits the marker. Missing marker = a real launch leaked past
+		// the seam.
+		assertContains(t, r.Stderr, "[wt-test-no-launch]")
+	} else {
 		assertContains(t, r.Stderr, "No default app detected")
 	}
 	// "default" must never be treated as a literal app name

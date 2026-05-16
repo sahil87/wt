@@ -75,11 +75,58 @@ This means a freshly-cloned repo without an init script (and without
 fab-kit installed) silently no-ops on `wt init`, which is the desired
 behavior for the "I just want to use the worktree" path.
 
+## Resolution contract
+
+Both `wt init` and `wt create`'s init step route through a single resolver
+in `internal/worktree/`:
+
+```go
+func ResolveInitInvocation(initScript, repoRoot string) (*exec.Cmd, *InitNotFound, error)
+```
+
+- On success: returns a runnable `*exec.Cmd` (with `Setpgid: true` on Unix
+  so SIGINT can target the process group). Callers wire `cmd.Dir`/`Stdout`/
+  `Stderr`/`Stdin` themselves.
+- On structured not-found: returns `(nil, *InitNotFound, nil)`. The
+  `*InitNotFound`'s `RenderWarning()` method produces the canonical verbose
+  warning that both call sites print — they cannot drift.
+- On unexpected error: returns `(nil, nil, error)` for failures the caller
+  cannot recover from (e.g., an empty init-script string).
+
+No other code in the repository performs `exec.LookPath` or `os.Stat`
+parsing of the init-script string. `ResolveInitInvocation` is the canonical
+contract.
+
 ## Script failure semantics
 
-When the init script **is** found and executed but exits non-zero, `wt init`
-returns the error from `RunE`, which the root cobra handler maps to
-`ExitGeneralError` (1) via `os.Exit(wt.ExitGeneralError)`.
+When the init script **is** found and executed but exits non-zero, `wt`
+exits with `ExitInitFailed = 7` — a typed exit code distinct from
+`ExitGeneralError` (1) so operators (shell wrappers, fab-kit, `hop`) can
+programmatically detect "worktree exists, init didn't complete" and offer
+a retry-init affordance.
 
-For `wt create`, an init failure additionally triggers a rollback of the
-just-created worktree before exiting — see `internal/worktree/rollback.go`.
+For `wt create`, init failure does **not** roll back the just-created
+worktree. The git operations all succeeded; only the user-supplied script
+failed. The worktree directory, the branch, and any fetched refs are all
+kept. The user sees a structured banner containing:
+
+- A status line with the extracted exit code (or a generic phrase if the
+  underlying error does not unwrap to `*exec.ExitError`).
+- The absolute worktree path that was kept.
+- A copy-paste-ready retry hint: `cd <wtPath> && wt init` (uses `&&`, never
+  `;`, so it parses identically in bash/zsh/fish).
+- A remove hint: `wt delete <name>`.
+
+The `wt create --reuse` path is exempt from `ExitInitFailed`: a reused
+worktree is presumed functional pre-existing, so its init step is a refresh
+(warn-but-continue) rather than a gate. `wt init` also exits with
+`ExitInitFailed` when the init script it located exits non-zero.
+
+### SIGINT during init
+
+When the user sends SIGINT (or SIGTERM) after `wt create` has finished its
+git operations and while the init script is running, the signal is delivered
+to the init process group only (the script and any descendants it spawned).
+The worktree is kept and `wt` exits with `ExitInitFailed`, just like a
+natural init-script failure. SIGINT during the git-operations phase preserves
+the existing semantics (rollback + exit 130).
