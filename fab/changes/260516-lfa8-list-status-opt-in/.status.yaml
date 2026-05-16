@@ -1,0 +1,36 @@
+id: lfa8
+name: 260516-lfa8-list-status-opt-in
+created: 2026-05-16T12:00:18Z
+created_by: sahil-noon
+change_type: feat
+issues: []
+progress:
+    intake: ready
+    spec: pending
+    apply: pending
+    review: pending
+    hydrate: pending
+    ship: pending
+    review-pr: pending
+plan:
+    generated: false
+    task_count: 0
+    acceptance_count: 0
+    acceptance_completed: 0
+confidence:
+    certain: 3
+    confident: 7
+    tentative: 3
+    unresolved: 0
+    score: 0.0
+    indicative: true
+    fuzzy: true
+    dimensions:
+        signal: 76.2
+        reversibility: 80.4
+        competence: 82.7
+        disambiguation: 79.2
+stage_metrics:
+    intake: {started_at: "2026-05-16T12:00:18Z", driver: fab-new, iterations: 1}
+prs: []
+last_updated: 2026-05-16T12:02:28Z
