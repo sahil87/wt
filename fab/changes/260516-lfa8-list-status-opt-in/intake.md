@@ -113,9 +113,9 @@ When `--status` is **not** passed, omit `dirty` and `unpushed` from each JSON ob
 ]
 ```
 
-Alternative (decide during spec): always include `dirty: false, unpushed: 0` as defaults when `--status` is absent. Tradeoff is between "easier to consume" (always-present fields) and "explicit about what wasn't computed" (omitted fields). **Currently Unresolved — see Assumptions.**
+**Resolved**: when `--status` is absent, the `dirty` and `unpushed` keys are **omitted entirely** from each JSON object (not defaulted to `false`/`0`). Honest about what wasn't computed; consumers detect absence and either re-invoke with `--status` or treat the values as unknown. <!-- clarified: omit fields entirely (vs. default zero or split struct) — explicit about uncomputed state, prevents misinterpretation of false-y values as "clean" -->
 
-The `listEntry` struct in [src/cmd/wt/list.go:22-30](src/cmd/wt/list.go#L22-L30) needs `omitempty` tags on `Dirty` and `Unpushed`, or a different shape entirely (e.g., a separate `*listEntryWithStatus`).
+The `listEntry` struct in [src/cmd/wt/list.go:22-30](src/cmd/wt/list.go#L22-L30) needs `omitempty` tags on `Dirty` and `Unpushed`. A split struct (`listEntry` vs `listEntryWithStatus`) was considered and rejected as overkill for two optional fields.
 
 ### 4. `--path` lookup mode
 
@@ -190,10 +190,36 @@ Also flags an update (not a memory file, but a spec): [docs/specs/cli-surface.md
 
 ## Open Questions
 
-- `--json` output: omit `dirty`/`unpushed` fields when `--status` is absent, or include them with default zero values? Tradeoffs: clarity (omit) vs. ease of consumption (always-present). User mentioned deciding during spec.
-- Flag naming: `--status`, `-l`, `--long`, or `--verbose`? `--status` is the most semantically precise. `-l` mirrors `ls -l` but conflates "status" with "long format." Spec should pick one.
-- Worker pool size for parallel enrichment: `min(NumCPU, 8)` is a reasonable default. Should this be configurable via flag (e.g., `--concurrency N`) or env var? Likely no — overkill for a list command.
-- Should default output include a hint when worktrees are dirty? (e.g., a footer: "Run `wt list --status` for dirty/unpushed indicators.") Or just leave it silent? Spec should decide.
+*(All resolved during clarification — see `## Clarifications` and `## Assumptions`.)*
+
+- ~~`--json` field shape when `--status` absent~~ → **Omit `dirty`/`unpushed` entirely** (Assumption #9).
+- ~~Flag naming~~ → **`--status`** (Assumption #7).
+- ~~Worker pool configurability~~ → **Hardcoded `min(NumCPU, 8)`**, no flag/env var (Assumption #11).
+- ~~Footer hint about `--status`~~ → **No footer; rely on `--help` for discoverability** (Assumption #10).
+
+## Clarifications
+
+### Session 2026-05-16
+
+Tentative resolution (interactive):
+
+| # | Action | Detail |
+|---|--------|--------|
+| 9 | Confirmed | `--json` omits `dirty`/`unpushed` keys when `--status` absent (no default-zero, no split struct) |
+| 10 | Confirmed | No footer hint in default output — discoverability via `--help` |
+| 11 | Confirmed | Worker pool size hardcoded `min(NumCPU, 8)`; no flag, no env var |
+
+Bulk confirm:
+
+| # | Action | Detail |
+|---|--------|--------|
+| 4 | Confirmed | — |
+| 5 | Confirmed | — |
+| 6 | Confirmed | — |
+| 7 | Confirmed | — |
+| 8 | Confirmed | — |
+| 12 | Confirmed | — |
+| 13 | Confirmed | — |
 
 ## Assumptions
 
@@ -202,15 +228,15 @@ Also flags an update (not a memory file, but a spec): [docs/specs/cli-surface.md
 | 1 | Certain | Drop the Status column from default `wt list` output. | Discussed and confirmed by user — the core design call of the change. | S:95 R:60 A:90 D:90 |
 | 2 | Certain | Add `--status` flag to opt back into dirty/unpushed enrichment. | Discussed and confirmed — the mechanism for retaining the dashboard view on demand. | S:95 R:70 A:90 D:90 |
 | 3 | Certain | Ship as a breaking change to default output without a compatibility flag or v2 gate. | Discussed — CLI is pre-1.0, user explicitly OK'd this. | S:90 R:50 A:85 D:85 |
-| 4 | Confident | When `--status` is set, parallelize enrichment with a bounded worker pool (default ~8). | Standard concurrency pattern; consistent with Go idioms. Reversible — pool size is internal. | S:75 R:85 A:85 D:75 |
-| 5 | Confident | Replace 3-call `checkDirty` with single `git status --porcelain` invocation. | One call captures staged/unstaged/untracked; well-known git idiom. Behaviorally equivalent. | S:85 R:90 A:90 D:90 |
-| 6 | Confident | Collapse `getUnpushedInDir` to single `git rev-list --count @{u}..HEAD`; drop upstream lookup. | `@{u}` resolves upstream inline; error → 0 unpushed (no upstream configured). Cheaper and equivalent. | S:80 R:90 A:85 D:85 |
-| 7 | Confident | Flag name is `--status` (not `-l`/`--long`/`--verbose`). | Most semantically precise; matches the output it gates. | S:70 R:90 A:80 D:80 |
-| 8 | Confident | `--path` lookup mode remains unchanged. | Already uses raw `listWorktreeEntries`, no enrichment. Verified by code read. | S:90 R:95 A:95 D:95 |
-| 9 | Tentative | `--json` output omits `dirty`/`unpushed` fields when `--status` is absent (vs. defaulting to false/0). | Both options valid; omission is more honest about what wasn't computed, but breaks downstream consumers that expect always-present fields. Lean toward omission but flag for spec discussion. | S:55 R:65 A:60 D:50 |
-| 10 | Tentative | Default output includes no footer hint about `--status` availability. | Cleaner output; help text covers discoverability. Could revisit if users miss the feature. | S:50 R:90 A:70 D:60 |
-| 11 | Tentative | Worker pool size is `min(runtime.NumCPU(), 8)`, not configurable. | Defaults are fine for the expected scale (≤100 worktrees). Adding a flag would be premature. | S:55 R:85 A:75 D:70 |
-| 12 | Confident | Add new memory file `wt-cli/list-status-contract.md` during hydrate to document the post-change contract. | Long-term invariant worth capturing; matches the pattern of `wt-cli/init-failure-contract.md`. | S:75 R:95 A:90 D:85 |
-| 13 | Confident | Performance target: default mode ≤100ms, `--status` mode ≤1s, both measured on a 25-worktree repo. | Conservative target based on current bottleneck analysis (5 git calls × 25 worktrees serial); a single `git worktree list --porcelain` plus minimal processing is well under 100ms on a warm cache. | S:75 R:80 A:80 D:75 |
+| 4 | Certain | When `--status` is set, parallelize enrichment with a bounded worker pool (default ~8). | Clarified — user confirmed. Standard concurrency pattern; consistent with Go idioms. Reversible — pool size is internal. | S:95 R:85 A:85 D:75 |
+| 5 | Certain | Replace 3-call `checkDirty` with single `git status --porcelain` invocation. | Clarified — user confirmed. One call captures staged/unstaged/untracked; well-known git idiom. Behaviorally equivalent. | S:95 R:90 A:90 D:90 |
+| 6 | Certain | Collapse `getUnpushedInDir` to single `git rev-list --count @{u}..HEAD`; drop upstream lookup. | Clarified — user confirmed. `@{u}` resolves upstream inline; error → 0 unpushed (no upstream configured). Cheaper and equivalent. | S:95 R:90 A:85 D:85 |
+| 7 | Certain | Flag name is `--status` (not `-l`/`--long`/`--verbose`). | Clarified — user confirmed. Most semantically precise; matches the output it gates. | S:95 R:90 A:80 D:80 |
+| 8 | Certain | `--path` lookup mode remains unchanged. | Clarified — user confirmed. Already uses raw `listWorktreeEntries`, no enrichment. Verified by code read. | S:95 R:95 A:95 D:95 |
+| 9 | Certain | `--json` output omits `dirty`/`unpushed` fields when `--status` is absent (vs. defaulting to false/0). | Clarified — user confirmed omission; explicit about uncomputed state, prevents misinterpretation of false-y values as "clean". | S:95 R:65 A:60 D:50 |
+| 10 | Certain | Default output includes no footer hint about `--status` availability. | Clarified — user confirmed silent default; discoverability via `--help` is sufficient, matches `ls` convention. | S:95 R:90 A:70 D:60 |
+| 11 | Certain | Worker pool size is `min(runtime.NumCPU(), 8)`, not configurable (no flag, no env var). | Clarified — user confirmed hardcoded; sensible default for ≤100 worktrees, no premature configuration surface. | S:95 R:85 A:75 D:70 |
+| 12 | Certain | Add new memory file `wt-cli/list-status-contract.md` during hydrate to document the post-change contract. | Clarified — user confirmed. Long-term invariant worth capturing; matches the pattern of `wt-cli/init-failure-contract.md`. | S:95 R:95 A:90 D:85 |
+| 13 | Certain | Performance target: default mode ≤100ms, `--status` mode ≤1s, both measured on a 25-worktree repo. | Clarified — user confirmed. Conservative target based on current bottleneck analysis; single `git worktree list --porcelain` plus minimal processing is well under 100ms on warm cache. | S:95 R:80 A:80 D:75 |
 
-13 assumptions (3 certain, 7 confident, 3 tentative, 0 unresolved).
+13 assumptions (13 certain, 0 confident, 0 tentative, 0 unresolved).

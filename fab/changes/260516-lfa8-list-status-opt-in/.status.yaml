@@ -2,35 +2,41 @@ id: lfa8
 name: 260516-lfa8-list-status-opt-in
 created: 2026-05-16T12:00:18Z
 created_by: sahil-noon
-change_type: feat
+change_type: refactor
 issues: []
 progress:
-    intake: ready
-    spec: pending
-    apply: pending
-    review: pending
-    hydrate: pending
-    ship: pending
-    review-pr: pending
+    intake: done
+    spec: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: done
+    review-pr: done
 plan:
-    generated: false
-    task_count: 0
-    acceptance_count: 0
-    acceptance_completed: 0
+    generated: true
+    task_count: 13
+    acceptance_count: 35
+    acceptance_completed: 1
 confidence:
-    certain: 3
-    confident: 7
-    tentative: 3
+    certain: 17
+    confident: 1
+    tentative: 0
     unresolved: 0
-    score: 0.0
-    indicative: true
+    score: 4.7
     fuzzy: true
     dimensions:
-        signal: 76.2
-        reversibility: 80.4
-        competence: 82.7
-        disambiguation: 79.2
+        signal: 93.1
+        reversibility: 83.1
+        competence: 89.2
+        disambiguation: 88.6
 stage_metrics:
-    intake: {started_at: "2026-05-16T12:00:18Z", driver: fab-new, iterations: 1}
-prs: []
-last_updated: 2026-05-16T12:02:28Z
+    intake: {started_at: "2026-05-16T12:00:18Z", driver: fab-new, iterations: 1, completed_at: "2026-05-16T13:03:27Z"}
+    spec: {started_at: "2026-05-16T13:03:27Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T13:05:01Z"}
+    apply: {started_at: "2026-05-16T13:04:53Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T13:10:05Z"}
+    review: {started_at: "2026-05-16T13:10:05Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T13:15:28Z"}
+    hydrate: {started_at: "2026-05-16T13:15:28Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T13:16:29Z"}
+    ship: {started_at: "2026-05-16T13:16:29Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T13:20:42Z"}
+    review-pr: {started_at: "2026-05-16T13:20:42Z", driver: git-pr, iterations: 1, completed_at: "2026-05-16T13:23:17Z"}
+prs:
+    - https://github.com/sahil87/wt/pull/9
+last_updated: 2026-05-16T13:23:17Z

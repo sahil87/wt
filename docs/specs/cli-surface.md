@@ -55,15 +55,22 @@ List all worktrees for the current repository.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--path <name>` | (none) | Print only the absolute path for the named worktree. Mutually exclusive with `--json`. |
-| `--json` | `false` | Emit a JSON array of worktree records (`name`, `branch`, `path`, `is_main`, `is_current`, `dirty`, `unpushed`). Mutually exclusive with `--path`. |
+| `--path <name>` | (none) | Print only the absolute path for the named worktree. Mutually exclusive with `--json` and `--status`. |
+| `--json` | `false` | Emit a JSON array of worktree records. Always emits `name`, `branch`, `path`, `is_main`, `is_current`. The `dirty` and `unpushed` keys are present only when `--status` is set. Mutually exclusive with `--path`. |
+| `--status` | `false` | Compute and display dirty/unpushed status per worktree. Slower (forks 2 git subprocesses per worktree; parallelized). Mutually exclusive with `--path`. |
 
-Default human output: a table with name, branch, dirty/unpushed status, and a
-short relative path. The current worktree is marked with a green asterisk.
+Default human output: a table with Name, Branch, and Path columns. The current
+worktree is marked with a green asterisk. No per-worktree git invocations
+occur — discovery is O(1) regardless of worktree count.
 
-Exit codes: `ExitInvalidArgs` if `--path` and `--json` are combined;
-`ExitGitError` if `git worktree list --porcelain` fails; `ExitGeneralError` if
-`--path` cannot resolve the name.
+With `--status`: the table gains a Status column. Dirty worktrees show `*`,
+unpushed commits show `↑N`. Enrichment uses a bounded worker pool of
+`min(runtime.NumCPU(), 8)` workers; output ordering matches the porcelain
+ordering regardless of parallelism.
+
+Exit codes: `ExitInvalidArgs` if `--path` is combined with `--json` or
+`--status`; `ExitGitError` if `git worktree list --porcelain` fails;
+`ExitGeneralError` if `--path` cannot resolve the name.
 
 ## `wt open [name|path]`
 
