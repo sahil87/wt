@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -188,6 +189,7 @@ const (
 
 	// Highlight / marker visuals.
 	ansiReverseVideo = "\x1b[7m"
+	ansiBoldOff      = "\x1b[22m" // turns off bold/dim without clearing reverse video
 	ansiResetSGR     = "\x1b[0m"
 	gutterHighlight  = "›"
 	gutterPlain      = " "
@@ -344,45 +346,90 @@ type byteReader interface {
 	readByteWithin(timeout time.Duration) (byte, bool)
 }
 
-// blockingByteReader wraps a bufio.Reader with a "wait at most N ms" read,
-// implemented via a goroutine + channel select. Used for the live read loop.
+// blockingByteReader wraps a bufio.Reader behind a single pump goroutine that
+// reads one byte at a time and forwards it through `bytes`. Both
+// readByteBlocking and readByteWithin consume from that channel — so the
+// underlying reader has exactly one outstanding ReadByte() in flight at any
+// moment. On a bare-Esc timeout, the pump goroutine remains blocked on its
+// pending read, but the next call (timed or blocking) drains the same channel
+// rather than spawning a new reader. This avoids two goroutines racing on the
+// same bufio.Reader and prevents stolen / interleaved bytes after a timeout.
 type blockingByteReader struct {
-	src *bufio.Reader
+	src   *bufio.Reader
+	bytes chan readPumpResult
+	once  sync.Once
+}
+
+type readPumpResult struct {
+	bt    byte
+	err   error
+	panic any // non-nil if the pump goroutine recovered a panic from the reader
 }
 
 func newBlockingByteReader(r io.Reader) *blockingByteReader {
-	return &blockingByteReader{src: bufio.NewReader(r)}
+	return &blockingByteReader{
+		src:   bufio.NewReader(r),
+		bytes: make(chan readPumpResult, 1),
+	}
+}
+
+// startPump launches the single byte-pump goroutine on first use. It reads
+// one byte, sends it (or its error) to `bytes`, then loops. On error/EOF the
+// goroutine sends the error result and exits — subsequent receives on the
+// channel will block, but `readByteWithin` always pairs the receive with a
+// timer and `readByteBlocking` will simply return (0, false) as soon as the
+// error result has been delivered (the channel is buffered with capacity 1).
+//
+// If the underlying reader panics (e.g., a test seam injects a panicking
+// reader), the pump recovers the panic value and forwards it via the
+// `panic` field. The consumer (readByteBlocking / readByteWithin) re-raises
+// the panic on the caller's goroutine so deferred cleanup — most importantly
+// the raw-mode restore in runInteractiveMenuCore — still runs.
+func (b *blockingByteReader) startPump() {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				b.bytes <- readPumpResult{panic: r}
+			}
+		}()
+		for {
+			bt, err := b.src.ReadByte()
+			b.bytes <- readPumpResult{bt: bt, err: err}
+			if err != nil {
+				return
+			}
+		}
+	}()
 }
 
 // readByteBlocking reads one byte, blocking until one is available or EOF.
 // Used for the first byte of every key (no timeout there — we're waiting for
 // the user to type something).
 func (b *blockingByteReader) readByteBlocking() (byte, bool) {
-	bt, err := b.src.ReadByte()
-	if err != nil {
+	b.once.Do(b.startPump)
+	r := <-b.bytes
+	if r.panic != nil {
+		panic(r.panic)
+	}
+	if r.err != nil {
 		return 0, false
 	}
-	return bt, true
+	return r.bt, true
 }
 
-// readByteWithin reads one byte with a deadline. The bufio.Reader does not
-// expose a deadline, so we run the read on a goroutine and race it against
-// a timer. On timeout the goroutine is left to drain; the next call will
-// observe its byte (or EOF). This is acceptable for the bare-Esc case where
-// the leftover goroutine, if any, completes within microseconds of a real
-// follow-up byte being typed.
+// readByteWithin reads one byte with a deadline. Because all reads flow
+// through the single pump goroutine (see blockingByteReader doc comment),
+// timing out here leaves at most one pending read in flight on the underlying
+// bufio.Reader — that read's result is delivered to the next caller of
+// readByteBlocking / readByteWithin, never lost and never racing a second
+// reader on the same stream.
 func (b *blockingByteReader) readByteWithin(timeout time.Duration) (byte, bool) {
-	type readResult struct {
-		bt  byte
-		err error
-	}
-	ch := make(chan readResult, 1)
-	go func() {
-		bt, err := b.src.ReadByte()
-		ch <- readResult{bt: bt, err: err}
-	}()
+	b.once.Do(b.startPump)
 	select {
-	case r := <-ch:
+	case r := <-b.bytes:
+		if r.panic != nil {
+			panic(r.panic)
+		}
 		if r.err != nil {
 			return 0, false
 		}
@@ -626,9 +673,14 @@ func redrawMenu(w io.Writer, prompt string, options []string, st menuState, rows
 // is the source of truth for menu row layout so paintMenu and redrawMenu
 // cannot drift apart on formatting (Acceptance A-033: no unnecessary
 // duplication; code-quality.md anti-pattern: duplicating existing utilities).
+//
+// Every row is terminated with `\r\n`. The interactive renderer runs while
+// the terminal is in raw mode (ONLCR disabled), so a plain `\n` does not
+// imply a carriage return and rows would stair-step across the screen.
 func renderRows(w io.Writer, prompt string, options []string, st menuState, linePrefix string) {
 	fmt.Fprint(w, linePrefix)
-	fmt.Fprintln(w, prompt)
+	fmt.Fprint(w, prompt)
+	fmt.Fprint(w, "\r\n")
 	for i, opt := range options {
 		row := i + 1
 		fmt.Fprint(w, linePrefix)
@@ -641,6 +693,11 @@ func renderRows(w io.Writer, prompt string, options []string, st menuState, line
 // finalizeMenu wipes the menu region and writes a single summary line:
 //   - On submit (choice >= 1): "<prompt> <option-text>"
 //   - On Cancel (choice == 0): "<prompt> (cancelled)"
+//
+// All line terminators are `\r\n` because this runs while the terminal is
+// still in raw mode (ONLCR disabled). A plain `\n` would leave the cursor at
+// the current column when advancing to the next line and the post-menu shell
+// prompt could appear stair-stepped.
 func finalizeMenu(w io.Writer, prompt string, options []string, choice, rowsRendered int) {
 	// Reposition to the top of the menu region.
 	fmt.Fprint(w, ansiCarriageRet)
@@ -649,7 +706,7 @@ func finalizeMenu(w io.Writer, prompt string, options []string, choice, rowsRend
 	for i := 0; i < rowsRendered; i++ {
 		fmt.Fprint(w, ansiClearLine)
 		if i < rowsRendered-1 {
-			fmt.Fprintln(w)
+			fmt.Fprint(w, "\r\n")
 		}
 	}
 	// After the loop the cursor is on the last cleared line; move back to
@@ -658,19 +715,32 @@ func finalizeMenu(w io.Writer, prompt string, options []string, choice, rowsRend
 	fmt.Fprintf(w, ansiCursorUpFmt, rowsRendered-1)
 	fmt.Fprint(w, ansiClearLine)
 	if choice == 0 {
-		fmt.Fprintf(w, "%s (cancelled)\n", prompt)
+		fmt.Fprintf(w, "%s (cancelled)\r\n", prompt)
 		return
 	}
 	// choice in 1..len(options)
-	fmt.Fprintf(w, "%s %s\n", prompt, options[choice-1])
+	fmt.Fprintf(w, "%s %s\r\n", prompt, options[choice-1])
 }
 
 // writeOptionRow renders one numbered option line. The gutter shows `›` on
-// the currently highlighted row (per intake §2); the option text itself is
-// rendered in reverse video on the highlighted row so the selection is
-// visible even when the gutter character is not perceptible (e.g., terminals
-// rendering combining marks oddly). The `(default)` green marker is
+// the currently highlighted row (per intake §2); the entire row (number AND
+// label) is rendered in reverse video on the highlighted row so the selection
+// is visible even when the gutter character is not perceptible (e.g.,
+// terminals rendering combining marks oddly). The `(default)` green marker is
 // preserved on the default row regardless of highlight state.
+//
+// Highlighted row composition:
+//
+//	gutter + ' ' + REV + BOLD + 'N)' + BOLDOFF + ' ' + label + RESET + defaultMarker
+//
+// `\x1b[22m` (bold off) is used instead of `\x1b[0m` after the number so
+// reverse video stays active across the label. The full SGR reset comes once
+// at the end of the row, after the label.
+//
+// Lines are terminated with `\r\n` because the interactive renderer runs while
+// the terminal is in raw mode (ONLCR is disabled), so a plain `\n` does not
+// implicitly return the cursor to column 0 and rows would stair-step on
+// redraw / final output.
 func writeOptionRow(w io.Writer, num int, label string, isDefault, isHighlighted bool) {
 	gutter := gutterPlain
 	if isHighlighted {
@@ -681,19 +751,21 @@ func writeOptionRow(w io.Writer, num int, label string, isDefault, isHighlighted
 		defaultMarker = " " + ColorGreen + "(default)" + ColorReset
 	}
 	if isHighlighted {
-		fmt.Fprintf(w, "%s %s%s%d)%s %s%s%s\n",
+		fmt.Fprintf(w, "%s %s%s%d)%s %s%s%s\r\n",
 			gutter,
-			ansiReverseVideo, ColorBold, num, ColorReset,
+			ansiReverseVideo, ColorBold, num, ansiBoldOff,
 			label, ansiResetSGR,
 			defaultMarker)
 		return
 	}
-	fmt.Fprintf(w, "%s %s%d)%s %s%s\n",
+	fmt.Fprintf(w, "%s %s%d)%s %s%s\r\n",
 		gutter, ColorBold, num, ColorReset, label, defaultMarker)
 }
 
 // writeCancelRow renders the Cancel row. Mirrors writeOptionRow's structure
-// so highlight/default visuals stay consistent.
+// so highlight/default visuals stay consistent (including the reverse-video
+// across the `Cancel` label on the highlighted row and the raw-mode-safe
+// `\r\n` line terminator).
 func writeCancelRow(w io.Writer, isDefault, isHighlighted bool) {
 	gutter := gutterPlain
 	if isHighlighted {
@@ -704,13 +776,13 @@ func writeCancelRow(w io.Writer, isDefault, isHighlighted bool) {
 		defaultMarker = " " + ColorGreen + "(default)" + ColorReset
 	}
 	if isHighlighted {
-		fmt.Fprintf(w, "%s %s%s0)%s Cancel%s%s\n",
+		fmt.Fprintf(w, "%s %s%s0)%s Cancel%s%s\r\n",
 			gutter,
-			ansiReverseVideo, ColorBold, ColorReset,
+			ansiReverseVideo, ColorBold, ansiBoldOff,
 			ansiResetSGR,
 			defaultMarker)
 		return
 	}
-	fmt.Fprintf(w, "%s %s0)%s Cancel%s\n",
+	fmt.Fprintf(w, "%s %s0)%s Cancel%s\r\n",
 		gutter, ColorBold, ColorReset, defaultMarker)
 }

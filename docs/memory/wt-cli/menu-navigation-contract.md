@@ -24,7 +24,7 @@ This file documents the contract that `ShowMenu` honors after the arrow-key navi
 - `defaultIdx == 0` → the renderer pre-highlights the `Cancel` row.
 - `defaultIdx == -1` (no default) → the renderer pre-highlights row 1.
 - The existing green `(default)` marker is still rendered on the `defaultIdx` row, visually distinct from the moving reverse-video highlight. A row may carry both at once (default row when highlighted = green marker + reverse video + `›` gutter).
-- The seeding rule lives in `initialHighlight(numOptions, defaultIdx)` and is exercised by `nextMenuState` seeding tests — it is verified without opening a real terminal.
+- The seeding rule lives in `initialHighlight(defaultIdx, numOptions)` and is exercised by `nextMenuState` seeding tests — it is verified without opening a real terminal.
 
 ### Key bindings in the interactive path
 
