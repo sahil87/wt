@@ -2,10 +2,10 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestList_ShowsRepoNameAndLocation(t *testing.T) {
@@ -376,36 +376,27 @@ func TestList_StatusFlagShowsUnpushed(t *testing.T) {
 	t.Fatal("unpushed-test line not found in output")
 }
 
+// TestList_StatusOrderingPreserved verifies that under a STABLE sort mode
+// (--status --sort=name), parallel enrichment does not reorder rows relative to
+// the chosen order. With the audience-split default now in effect, the stable
+// order is asserted explicitly via --sort=name (main pinned first, then names
+// ascending) rather than against raw porcelain order. The worker-pool indexed-
+// write invariant is the property under test: the deterministic post-enrichment
+// sort must produce the same order on every run.
 func TestList_StatusOrderingPreserved(t *testing.T) {
 	repo := createTestRepo(t)
-	// Create several worktrees so parallel enrichment has work to spread across workers.
-	names := []string{"order-a", "order-b", "order-c", "order-d", "order-e"}
+	// Create several worktrees so parallel enrichment has work to spread across
+	// workers. Create them in non-sorted order to prove the sort, not creation
+	// order, decides the output.
+	names := []string{"order-c", "order-a", "order-e", "order-b", "order-d"}
 	for _, n := range names {
 		createWorktreeViaWt(t, repo, n)
 	}
 
-	r := runWtSuccess(t, repo, nil, "list", "--status")
+	// Stable mode: main pinned first, then non-main entries name-ascending.
+	expected := []string{"(main)", "order-a", "order-b", "order-c", "order-d", "order-e"}
 
-	// Capture the order in which worktree names appear in stdout, comparing
-	// against the porcelain order (which lists main first, then others in
-	// the order git tracks them).
-	porcelainOut, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").Output()
-	if err != nil {
-		t.Fatalf("git worktree list --porcelain: %v", err)
-	}
-	var expected []string
-	for _, line := range strings.Split(string(porcelainOut), "\n") {
-		if !strings.HasPrefix(line, "worktree ") {
-			continue
-		}
-		p := strings.TrimPrefix(line, "worktree ")
-		base := filepath.Base(p)
-		if base == filepath.Base(repo) {
-			expected = append(expected, "(main)")
-		} else {
-			expected = append(expected, base)
-		}
-	}
+	r := runWtSuccess(t, repo, nil, "list", "--status", "--sort=name")
 
 	var got []string
 	for _, line := range strings.Split(r.Stdout, "\n") {
@@ -425,6 +416,274 @@ func TestList_StatusOrderingPreserved(t *testing.T) {
 			t.Errorf("row %d: expected %q, got %q (full got=%v)", i, expected[i], got[i], got)
 		}
 	}
+}
+
+// ---------- --sort flag + audience-split default ----------
+
+// chtimesWt sets a controlled mtime on a named worktree directory so recency
+// ordering is deterministic in list tests.
+func chtimesWt(t *testing.T, repo, name string, mtime time.Time) {
+	t.Helper()
+	p := worktreePath(repo, name)
+	if err := os.Chtimes(p, mtime, mtime); err != nil {
+		t.Fatalf("Chtimes %s: %v", name, err)
+	}
+}
+
+// jsonNonMainOrder returns the non-main worktree names from --json output in
+// the order they appear in the array.
+func jsonNonMainOrder(t *testing.T, jsonStr string) []string {
+	t.Helper()
+	entries := parseJSONList(t, jsonStr)
+	var names []string
+	for _, e := range entries {
+		isMain, _ := e["is_main"].(bool)
+		if isMain {
+			continue
+		}
+		if n, ok := e["name"].(string); ok {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
+// humanNonMainOrder returns the non-main worktree names from human list output
+// in the order their rows appear, given the set of names to look for.
+func humanNonMainOrder(stdout string, candidates []string) []string {
+	var order []string
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, "Worktrees") || strings.HasPrefix(line, "Location") || strings.HasPrefix(line, "Total") {
+			continue
+		}
+		for _, c := range candidates {
+			if strings.Contains(line, c) {
+				order = append(order, c)
+				break
+			}
+		}
+	}
+	return order
+}
+
+func assertOrder(t *testing.T, got, want []string, ctx string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s: expected %v, got %v", ctx, want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s: expected %v, got %v", ctx, want, got)
+		}
+	}
+}
+
+func TestList_SortRecent(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"alpha", "bravo", "charlie"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	chtimesWt(t, repo, "alpha", base)
+	chtimesWt(t, repo, "bravo", base.Add(time.Hour))
+	chtimesWt(t, repo, "charlie", base.Add(2*time.Hour))
+
+	r := runWtSuccess(t, repo, nil, "list", "--sort=recent")
+	got := humanNonMainOrder(r.Stdout, []string{"alpha", "bravo", "charlie"})
+	assertOrder(t, got, []string{"charlie", "bravo", "alpha"}, "--sort=recent")
+}
+
+func TestList_SortName(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"charlie", "alpha", "bravo"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	r := runWtSuccess(t, repo, nil, "list", "--sort=name")
+	got := humanNonMainOrder(r.Stdout, []string{"alpha", "bravo", "charlie"})
+	assertOrder(t, got, []string{"alpha", "bravo", "charlie"}, "--sort=name")
+}
+
+func TestList_SortBranch(t *testing.T) {
+	repo := createTestRepo(t)
+	// Branch names sort in a different order than the worktree (creation) names:
+	// worktrees wt-x/wt-y/wt-z carry branches charlie/alpha/bravo, so
+	// branch-ascending order is wt-y(alpha), wt-z(bravo), wt-x(charlie).
+	for _, b := range []string{"charlie", "alpha", "bravo"} {
+		gitRun(t, repo, "branch", b)
+	}
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "wt-x", "--worktree-init", "false", "charlie")
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "wt-y", "--worktree-init", "false", "alpha")
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "wt-z", "--worktree-init", "false", "bravo")
+
+	r := runWtSuccess(t, repo, nil, "list", "--sort=branch")
+	got := humanNonMainOrder(r.Stdout, []string{"wt-x", "wt-y", "wt-z"})
+	assertOrder(t, got, []string{"wt-y", "wt-z", "wt-x"}, "--sort=branch")
+}
+
+func TestList_SortInvalidValue(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWt(t, repo, nil, "list", "--sort=bogus")
+	assertExitCode(t, r, 2) // ExitInvalidArgs
+	assertContains(t, r.Stderr, "recent")
+	assertContains(t, r.Stderr, "name")
+	assertContains(t, r.Stderr, "branch")
+}
+
+func TestList_SortAndPathMutuallyExclusive(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWt(t, repo, nil, "list", "--path", "foo", "--sort=recent")
+	assertExitCode(t, r, 2) // ExitInvalidArgs
+	assertContains(t, r.Stderr, "--path and --sort are mutually exclusive")
+}
+
+func TestList_MainPinnedFirstUnderRecency(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"alpha", "bravo"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	// Make the non-main worktrees newer than main so a naive recency sort would
+	// push main down; it must still be first.
+	future := time.Now().Add(48 * time.Hour)
+	chtimesWt(t, repo, "alpha", future)
+	chtimesWt(t, repo, "bravo", future.Add(time.Hour))
+
+	r := runWtSuccess(t, repo, nil, "list", "--sort=recent")
+	// The first data row (after the header) must be (main).
+	var dataRows []string
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		if strings.HasPrefix(line, "Worktrees") || strings.HasPrefix(line, "Location") ||
+			strings.HasPrefix(line, "Total") || strings.TrimSpace(line) == "" {
+			continue
+		}
+		if strings.Contains(line, "Name") && strings.Contains(line, "Branch") && strings.Contains(line, "Path") {
+			continue // header
+		}
+		dataRows = append(dataRows, line)
+	}
+	if len(dataRows) == 0 || !strings.Contains(dataRows[0], "(main)") {
+		t.Fatalf("expected (main) as first data row under --sort=recent, got rows:\n%v", dataRows)
+	}
+}
+
+func TestList_JSONDefaultIsStableName(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"alpha", "bravo", "charlie"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	// Recency that would invert name order if recency leaked into JSON default.
+	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	chtimesWt(t, repo, "alpha", base.Add(2*time.Hour)) // newest
+	chtimesWt(t, repo, "bravo", base.Add(time.Hour))
+	chtimesWt(t, repo, "charlie", base) // oldest
+
+	r := runWtSuccess(t, repo, nil, "list", "--json")
+	got := jsonNonMainOrder(t, r.Stdout)
+	assertOrder(t, got, []string{"alpha", "bravo", "charlie"}, "--json default (stable name)")
+}
+
+func TestList_JSONExplicitSortOverridesDefault(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"alpha", "bravo", "charlie"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	chtimesWt(t, repo, "alpha", base)
+	chtimesWt(t, repo, "bravo", base.Add(time.Hour))
+	chtimesWt(t, repo, "charlie", base.Add(2*time.Hour)) // newest
+
+	r := runWtSuccess(t, repo, nil, "list", "--json", "--sort=recent")
+	got := jsonNonMainOrder(t, r.Stdout)
+	assertOrder(t, got, []string{"charlie", "bravo", "alpha"}, "--json --sort=recent")
+}
+
+func TestList_NonInteractiveDefaultIsStableName(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"alpha", "bravo", "charlie"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	chtimesWt(t, repo, "alpha", base.Add(2*time.Hour)) // newest
+	chtimesWt(t, repo, "bravo", base.Add(time.Hour))
+	chtimesWt(t, repo, "charlie", base)
+
+	r := runWtSuccess(t, repo, nil, "list", "--non-interactive")
+	got := humanNonMainOrder(r.Stdout, []string{"alpha", "bravo", "charlie"})
+	assertOrder(t, got, []string{"alpha", "bravo", "charlie"}, "--non-interactive default (stable name)")
+}
+
+func TestList_HumanDefaultIsRecency(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"alpha", "bravo", "charlie"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	chtimesWt(t, repo, "alpha", base)
+	chtimesWt(t, repo, "bravo", base.Add(time.Hour))
+	chtimesWt(t, repo, "charlie", base.Add(2*time.Hour)) // newest
+
+	r := runWtSuccess(t, repo, nil, "list")
+	got := humanNonMainOrder(r.Stdout, []string{"alpha", "bravo", "charlie"})
+	assertOrder(t, got, []string{"charlie", "bravo", "alpha"}, "human default (recency)")
+}
+
+// ---------- --status last_active column ----------
+
+func TestList_LastActiveOmittedInDefaultMode(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "la-default")
+
+	r := runWtSuccess(t, repo, nil, "list", "--json")
+	entries := parseJSONList(t, r.Stdout)
+	for _, e := range entries {
+		if _, ok := e["last_active"]; ok {
+			t.Errorf("last_active key should be absent without --status, entry: %v", e)
+		}
+	}
+}
+
+func TestList_LastActivePresentUnderStatus(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "la-status")
+
+	r := runWtSuccess(t, repo, nil, "list", "--status", "--json")
+	entries := parseJSONList(t, r.Stdout)
+	if len(entries) == 0 {
+		t.Fatal("no entries in JSON output")
+	}
+	for _, e := range entries {
+		v, ok := e["last_active"]
+		if !ok {
+			t.Errorf("last_active key missing under --status for entry: %v", e)
+			continue
+		}
+		ts, ok := v.(string)
+		if !ok {
+			t.Errorf("last_active should be a string timestamp, got %T", v)
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339, ts); err != nil {
+			t.Errorf("last_active %q is not RFC3339: %v", ts, err)
+		}
+	}
+}
+
+func TestList_LastActiveRelativeTimeInHumanStatus(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "la-rel")
+	// ~2 hours ago.
+	chtimesWt(t, repo, "la-rel", time.Now().Add(-2*time.Hour))
+
+	r := runWtSuccess(t, repo, nil, "list", "--status")
+	assertContains(t, r.Stdout, "Last Active")
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		if strings.Contains(line, "la-rel") {
+			if !strings.Contains(line, "2h ago") {
+				t.Errorf("expected '2h ago' on la-rel row, got: %s", line)
+			}
+			return
+		}
+	}
+	t.Fatal("la-rel row not found")
 }
 
 // NO_COLOR support
