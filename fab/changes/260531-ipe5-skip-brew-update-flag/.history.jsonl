@@ -1,0 +1,20 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-05-31T05:19:25Z"}
+{"args":"Add a boolean --skip-brew-update flag to the update command. When set, skip ONLY the internal brew update tap-metadata refresh; brew info version check, up-to-date short-circuit, and brew upgrade are unchanged. Default preserves current behavior exactly. Thread skipBrewUpdate bool through update.Run; wire a cobra bool flag in cmd/wt/update.go. Match existing subprocess convention, no refactor. Add a test asserting the flag omits brew update but still runs brew upgrade.","cmd":"fab-new","event":"command","ts":"2026-05-31T05:19:25Z"}
+{"cmd":"fab-new","event":"command","ts":"2026-05-31T05:19:28Z"}
+{"delta":"+3.1","event":"confidence","score":3.1,"trigger":"calc-score","ts":"2026-05-31T05:20:37Z"}
+{"delta":"+0.0","event":"confidence","score":3.1,"trigger":"calc-score","ts":"2026-05-31T05:20:52Z"}
+{"cmd":"fab-fff","event":"command","ts":"2026-05-31T05:21:35Z"}
+{"delta":"+0.0","event":"confidence","score":3.1,"trigger":"calc-score","ts":"2026-05-31T05:22:27Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"spec","ts":"2026-05-31T05:22:31Z"}
+{"delta":"+0.0","event":"confidence","score":3.1,"trigger":"calc-score","ts":"2026-05-31T05:24:01Z"}
+{"delta":"+0.0","event":"confidence","score":3.1,"trigger":"calc-score","ts":"2026-05-31T05:24:08Z"}
+{"delta":"+0.0","event":"confidence","score":3.1,"trigger":"calc-score","ts":"2026-05-31T05:24:12Z"}
+{"delta":"+1.0","event":"confidence","score":4.1,"trigger":"calc-score","ts":"2026-05-31T05:24:21Z"}
+{"delta":"+0.0","event":"confidence","score":4.1,"trigger":"calc-score","ts":"2026-05-31T05:24:28Z"}
+{"delta":"+0.0","event":"confidence","score":4.1,"trigger":"calc-score","ts":"2026-05-31T05:24:56Z"}
+{"delta":"+0.0","event":"confidence","score":4.1,"trigger":"calc-score","ts":"2026-05-31T05:25:07Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-05-31T05:28:52Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-05-31T05:28:56Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-05-31T05:30:52Z"}
+{"event":"review","result":"passed","ts":"2026-05-31T05:30:52Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-05-31T05:32:56Z"}

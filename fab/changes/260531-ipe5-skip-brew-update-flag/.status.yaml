@@ -1,0 +1,51 @@
+id: ipe5
+name: 260531-ipe5-skip-brew-update-flag
+created: 2026-05-31T05:19:25Z
+created_by: sahil87
+change_type: feat
+issues: []
+progress:
+    intake: done
+    spec: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: active
+    review-pr: pending
+plan:
+    generated: true
+    task_count: 7
+    acceptance_count: 12
+    acceptance_completed: 0
+confidence:
+    certain: 4
+    confident: 3
+    tentative: 0
+    unresolved: 0
+    score: 4.1
+    fuzzy: true
+    dimensions:
+        signal: 88.3
+        reversibility: 81.9
+        competence: 85.3
+        disambiguation: 81.6
+stage_metrics:
+    intake: {started_at: "2026-05-31T05:19:25Z", driver: fab-new, iterations: 1, completed_at: "2026-05-31T05:22:31Z"}
+    spec: {started_at: "2026-05-31T05:22:31Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-31T05:28:52Z"}
+    apply: {started_at: "2026-05-31T05:28:52Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-31T05:28:56Z"}
+    review: {started_at: "2026-05-31T05:28:56Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-31T05:30:52Z"}
+    hydrate: {started_at: "2026-05-31T05:30:52Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-31T05:32:56Z"}
+    ship: {started_at: "2026-05-31T05:32:56Z", driver: fab-fff, iterations: 1}
+prs: []
+true_impact:
+    added: 0
+    deleted: 0
+    net: 0
+    excluding:
+        added: 0
+        deleted: 0
+        net: 0
+    computed_at: "2026-05-31T05:32:56Z"
+    computed_at_stage: hydrate
+# true_impact: lazily created on first apply-finish (no placeholder here).
+last_updated: 2026-05-31T05:32:56Z
