@@ -197,21 +197,33 @@ func sortEntries(entries []listEntry, mode sortMode) {
 	case sortRecent:
 		// Prefer the already-computed LastActive (set under --status) as the
 		// recency key over a fresh os.Stat: this keeps the sort key consistent
-		// with the displayed value (no TOCTOU) and avoids O(N log N) redundant
-		// stats on the --status path. In default/basic mode LastActive is nil,
-		// so we fall back to RecencyOf(e.Path) — the non-status path still stats.
-		recencyKey := func(e listEntry) time.Time {
+		// with the displayed value (no TOCTOU) and avoids redundant stats on the
+		// --status path. In default/basic mode LastActive is nil, so we fall back
+		// to RecencyOf(e.Path) — the non-status path still stats, but exactly
+		// once per entry here, before sorting. Computing the key inside the
+		// comparator would re-stat each path O(log n) times and let the
+		// comparator observe a changing mtime mid-sort.
+		keys := make([]time.Time, len(rest))
+		for i, e := range rest {
 			if e.LastActive != nil {
-				return *e.LastActive
+				keys[i] = *e.LastActive
+			} else {
+				keys[i] = wt.RecencyOf(e.Path)
 			}
-			return wt.RecencyOf(e.Path)
 		}
-		sort.SliceStable(rest, func(i, j int) bool {
-			return wt.RecencyLess(
-				recencyKey(rest[i]), rest[i].Name,
-				recencyKey(rest[j]), rest[j].Name,
-			)
+		order := make([]int, len(rest))
+		for i := range order {
+			order[i] = i
+		}
+		sort.SliceStable(order, func(i, j int) bool {
+			a, b := order[i], order[j]
+			return wt.RecencyLess(keys[a], rest[a].Name, keys[b], rest[b].Name)
 		})
+		sorted := make([]listEntry, len(rest))
+		for i, idx := range order {
+			sorted[i] = rest[idx]
+		}
+		copy(rest, sorted)
 	}
 }
 
