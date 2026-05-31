@@ -9,23 +9,23 @@ import (
 
 // Exit codes matching the bash wt scripts.
 const (
-	ExitSuccess          = 0
-	ExitGeneralError     = 1
-	ExitInvalidArgs      = 2
-	ExitGitError         = 3
-	ExitRetryExhausted   = 4
-	ExitByobuTabError    = 5
-	ExitTmuxWindowError  = 6
-	ExitInitFailed       = 7
+	ExitSuccess         = 0
+	ExitGeneralError    = 1
+	ExitInvalidArgs     = 2
+	ExitGitError        = 3
+	ExitRetryExhausted  = 4
+	ExitByobuTabError   = 5
+	ExitTmuxWindowError = 6
+	ExitInitFailed      = 7
 )
 
 // ANSI color codes, disabled when NO_COLOR is set.
 var (
-	ColorRed   = "\033[0;31m"
+	ColorRed    = "\033[0;31m"
 	ColorYellow = "\033[0;33m"
-	ColorGreen = "\033[0;32m"
-	ColorBold  = "\033[1m"
-	ColorReset = "\033[0m"
+	ColorGreen  = "\033[0;32m"
+	ColorBold   = "\033[1m"
+	ColorReset  = "\033[0m"
 )
 
 func init() {

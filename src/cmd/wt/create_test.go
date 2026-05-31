@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -655,10 +656,38 @@ func TestCreate_OpenHereSuppressesPath(t *testing.T) {
 func TestCreate_WorktreeOpenDefault(t *testing.T) {
 	repo := createTestRepo(t)
 
-	// --worktree-open default should resolve via DetectDefaultApp.
-	// In this test environment, the resolved app may vary, but the command
-	// should not panic or treat "default" as a literal app name.
-	r := runWt(t, repo, []string{"HOME=" + t.TempDir()}, "create", "--non-interactive",
+	// Seed a default app deterministically so this test does not depend on
+	// what happens to be installed on the host (a bare CI runner has no
+	// editor/terminal/clipboard, so DetectDefaultApp would otherwise return
+	// "no default app detected" and the marker assertion below would fail).
+	//
+	// On Linux, appAvailable() treats an app as installed when a matching
+	// .desktop file exists under $HOME/.local/share/applications. We point
+	// HOME at a temp dir and plant code.desktop there, making VSCode the
+	// resolved default regardless of the real environment. The WT_TEST_NO_LAUNCH
+	// seam (default-on in runWt) still prevents any real launch.
+	//
+	// On macOS the .desktop seam does not apply (detection uses mdfind on a
+	// bundle ID); developer machines there generally have a real editor
+	// installed, so the default resolves anyway. If no default can be resolved
+	// on any platform, the test skips rather than producing a misleading
+	// failure — the marker assertion only carries weight once a default exists.
+	fakeHome := t.TempDir()
+	if runtime.GOOS != "windows" {
+		appsDir := filepath.Join(fakeHome, ".local", "share", "applications")
+		if err := os.MkdirAll(appsDir, 0o755); err != nil {
+			t.Fatalf("seed apps dir: %v", err)
+		}
+		desktop := "[Desktop Entry]\nName=Visual Studio Code\nExec=code\nType=Application\n"
+		if err := os.WriteFile(filepath.Join(appsDir, "code.desktop"), []byte(desktop), 0o644); err != nil {
+			t.Fatalf("seed code.desktop: %v", err)
+		}
+	}
+
+	// --worktree-open default should resolve via DetectDefaultApp and reach
+	// OpenInApp under the launch guard — it must not panic or treat "default"
+	// as a literal app name.
+	r := runWt(t, repo, []string{"HOME=" + fakeHome}, "create", "--non-interactive",
 		"--worktree-name", "default-open-test",
 		"--worktree-init", "false",
 		"--worktree-open", "default")
@@ -670,6 +699,13 @@ func TestCreate_WorktreeOpenDefault(t *testing.T) {
 	// literal app name and produce a ResolveApp warning
 	if strings.Contains(r.Stderr, "app 'default' not found") {
 		t.Errorf("expected --worktree-open=default to use the default-app code path, got stderr: %q", r.Stderr)
+	}
+
+	// If no default app could be resolved on this platform, the marker
+	// assertion is meaningless — skip rather than fail. On Linux/CI the seeded
+	// code.desktop guarantees a default, so this skip should not trigger there.
+	if strings.Contains(r.Stderr, "no default app detected") {
+		t.Skip("no default app resolvable on this platform; skipping launch-guard marker assertion")
 	}
 
 	// The default-app path must reach OpenInApp under the test launch guard.

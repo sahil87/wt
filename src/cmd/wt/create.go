@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/spf13/cobra"
 	wt "github.com/sahil87/wt/internal/worktree"
+	"github.com/spf13/cobra"
 )
 
 func createCmd() *cobra.Command {
