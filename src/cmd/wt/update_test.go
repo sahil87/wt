@@ -46,3 +46,38 @@ func TestUpdate_AppearsInHelp(t *testing.T) {
 		t.Fatalf("expected `update` in --help output, got:\n%s", r.Stdout)
 	}
 }
+
+// TestUpdate_SkipBrewUpdateFlagInHelp asserts the --skip-brew-update flag is
+// registered on the subcommand and visible in `wt update --help`. This guards
+// the cobra plumbing end-to-end — a misspelled flag name or a flag that was
+// never registered would be caught here, whereas the internal/update.Run tests
+// exercise Run directly and cannot see the cobra wiring.
+func TestUpdate_SkipBrewUpdateFlagInHelp(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWt(t, repo, nil, "update", "--help")
+	if r.ExitCode != 0 {
+		t.Fatalf("wt update --help failed (exit %d)\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+	if !strings.Contains(r.Stdout, "--skip-brew-update") {
+		t.Fatalf("expected `--skip-brew-update` in `wt update --help` output, got:\n%s", r.Stdout)
+	}
+}
+
+// TestUpdate_SkipBrewUpdateFlagAccepted asserts that `wt update
+// --skip-brew-update` is parsed and accepted by cobra (no unknown-flag error),
+// reaching the internal/update.Run code path. As with TestUpdate_NonBrewBranch,
+// the `go test` binary does not live under /Cellar/, so Run short-circuits to
+// the "not installed via Homebrew" branch — confirming the parsed flag value is
+// threaded into Run without hitting brew.
+func TestUpdate_SkipBrewUpdateFlagAccepted(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWt(t, repo, nil, "update", "--skip-brew-update")
+	if r.ExitCode != 0 {
+		t.Fatalf("wt update --skip-brew-update failed (exit %d)\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+	if !strings.Contains(r.Stdout, "was not installed via Homebrew") {
+		t.Fatalf("expected non-brew hint in stdout (flag accepted, Run reached), got:\n%s", r.Stdout)
+	}
+}
