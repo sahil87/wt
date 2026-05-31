@@ -37,6 +37,12 @@ var ErrBrewNotFound = errors.New("brew not found on PATH")
 
 // Run self-updates the wt binary via Homebrew.
 //
+// skipBrewUpdate, when true, skips ONLY the internal `brew update` tap-metadata
+// refresh. Everything else is unchanged: the `brew info` version check, the
+// up-to-date short-circuit, and the interactive `brew upgrade` all run exactly
+// as in the default path. When false (the default, flag absent) Run behaves as
+// it did before this flag existed.
+//
 // currentVersion is the binary's reported version (e.g. "v0.1.0"). The leading
 // "v" is stripped before comparison since `brew info` reports the bare form.
 //
@@ -54,7 +60,7 @@ var ErrBrewNotFound = errors.New("brew not found on PATH")
 // Returns ErrBrewNotFound when brew is missing on PATH (callers should map
 // this to a typed exit so cobra does not double-print). Returns a wrapped
 // error for other brew failures.
-func Run(currentVersion string, out, errOut io.Writer) error {
+func Run(skipBrewUpdate bool, currentVersion string, out, errOut io.Writer) error {
 	if !isBrewInstalled() {
 		fmt.Fprintf(out, "wt %s was not installed via Homebrew.\n", currentVersion)
 		fmt.Fprintln(out, "Update manually, or reinstall with: brew install "+brewFormula)
@@ -64,17 +70,19 @@ func Run(currentVersion string, out, errOut io.Writer) error {
 	fmt.Fprintf(out, "Current version: %s\n", currentVersion)
 	fmt.Fprintln(out, "Checking for updates...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), brewUpdateTimeout)
-	cmd := exec.CommandContext(ctx, "brew", "update", "--quiet")
-	cmd.Stderr = os.Stderr
-	_, err := cmd.Output()
-	cancel()
-	if err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			fmt.Fprintln(errOut, "wt update: brew not found on PATH.")
-			return ErrBrewNotFound
+	if !skipBrewUpdate {
+		ctx, cancel := context.WithTimeout(context.Background(), brewUpdateTimeout)
+		cmd := exec.CommandContext(ctx, "brew", "update", "--quiet")
+		cmd.Stderr = os.Stderr
+		_, err := cmd.Output()
+		cancel()
+		if err != nil {
+			if errors.Is(err, exec.ErrNotFound) {
+				fmt.Fprintln(errOut, "wt update: brew not found on PATH.")
+				return ErrBrewNotFound
+			}
+			return fmt.Errorf("brew update failed: %w", err)
 		}
-		return fmt.Errorf("brew update failed: %w", err)
 	}
 
 	latest, err := brewLatestVersion()
@@ -147,7 +155,16 @@ func brewLatestVersion() (string, error) {
 // directory, which is the canonical signature of a Homebrew install. The
 // symlink at /opt/homebrew/bin/wt (or /usr/local/bin/wt on Intel) resolves
 // through to .../Cellar/wt/<version>/bin/wt.
+//
+// Test seam: when WT_TEST_FORCE_BREW=1 is set in the environment, this returns
+// true unconditionally so tests can exercise the brew code paths without a real
+// Homebrew install (the `go test` binary never lives under /Cellar/). Mirrors
+// the WT_TEST_NO_LAUNCH=1 seam at internal/worktree/apps.go. The env var is
+// never set in production, so production behavior is unchanged.
 func isBrewInstalled() bool {
+	if os.Getenv("WT_TEST_FORCE_BREW") == "1" {
+		return true
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return false
