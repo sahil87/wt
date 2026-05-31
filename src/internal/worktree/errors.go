@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
+	"unicode/utf8"
 )
 
 // Exit codes matching the bash wt scripts.
@@ -36,6 +38,58 @@ func init() {
 		ColorBold = ""
 		ColorReset = ""
 	}
+}
+
+// phaseSeparatorWidth is the fixed total visible width (label + glyphs +
+// spaces) of a phase separator line. The separator does NOT query the
+// terminal size — a fixed width keeps output deterministic for tests and is
+// consistent with the single-binary / no-hidden-state posture.
+const phaseSeparatorWidth = 40
+
+// PhaseSeparator returns a labeled rule line for stderr (no trailing newline —
+// callers add it via the Fprintln they already use). It frames a bold label
+// with a fixed-width rule so phase boundaries (Git, Init, Open) are
+// attributable in captured logs.
+//
+// Layout: two leading glyphs, a space, the label, a space, then enough
+// trailing glyphs to fill phaseSeparatorWidth VISIBLE columns (ANSI escapes
+// around the label are not counted). When color is enabled the rule uses the
+// unicode box-drawing glyph and the label is wrapped in ColorBold:
+//
+//	── Git ──────────────────────────────
+//
+// When NO_COLOR is set, the package init() blanks ColorBold/ColorReset; the
+// separator detects that (via the blanked vars, not a fresh os.Getenv) and
+// emits a plain-ASCII rule with no ANSI escapes:
+//
+//	-- Git ------------------------------
+func PhaseSeparator(label string) string {
+	colorEnabled := ColorReset != ""
+
+	glyph := "-"
+	if colorEnabled {
+		glyph = "─" // ─ U+2500 BOX DRAWINGS LIGHT HORIZONTAL
+	}
+
+	const leading = 2
+	// Visible width = leading glyphs + space + label + space + trailing glyphs.
+	// Count the label in runes (visible columns), not bytes, so a label with
+	// multi-byte runes (e.g. a non-ASCII WORKTREE_INIT_SCRIPT path) still
+	// renders at the fixed visible width.
+	trailing := phaseSeparatorWidth - leading - 1 - utf8.RuneCountInString(label) - 1
+	if trailing < 0 {
+		trailing = 0
+	}
+
+	renderedLabel := label
+	if colorEnabled {
+		renderedLabel = ColorBold + label + ColorReset
+	}
+
+	return fmt.Sprintf("%s %s %s",
+		strings.Repeat(glyph, leading),
+		renderedLabel,
+		strings.Repeat(glyph, trailing))
 }
 
 // WtError formats a structured error message and writes it to stderr.

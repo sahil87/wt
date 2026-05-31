@@ -1,0 +1,51 @@
+id: pnmi
+name: 260531-pnmi-add-phase-separators
+created: 2026-05-31T08:58:05Z
+created_by: sahil87
+change_type: feat
+issues: []
+progress:
+    intake: done
+    spec: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: active
+    review-pr: pending
+plan:
+    generated: true
+    task_count: 7
+    acceptance_count: 13
+    acceptance_completed: 13
+confidence:
+    certain: 10
+    confident: 0
+    tentative: 1
+    unresolved: 0
+    score: 4.0
+    fuzzy: true
+    dimensions:
+        signal: 93.5
+        reversibility: 78.6
+        competence: 88.7
+        disambiguation: 84.3
+stage_metrics:
+    intake: {started_at: "2026-05-31T08:58:05Z", driver: fab-new, iterations: 1, completed_at: "2026-05-31T15:50:55Z"}
+    spec: {started_at: "2026-05-31T15:50:55Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-31T15:53:02Z"}
+    apply: {started_at: "2026-05-31T15:53:02Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-31T15:57:35Z"}
+    review: {started_at: "2026-05-31T15:57:35Z", driver: fab-continue, iterations: 1, completed_at: "2026-05-31T16:03:08Z"}
+    hydrate: {started_at: "2026-05-31T16:03:08Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-31T16:05:42Z"}
+    ship: {started_at: "2026-05-31T16:05:42Z", driver: fab-continue, iterations: 1}
+prs: []
+true_impact:
+    added: 0
+    deleted: 0
+    net: 0
+    excluding:
+        added: 0
+        deleted: 0
+        net: 0
+    computed_at: "2026-05-31T16:05:42Z"
+    computed_at_stage: hydrate
+# true_impact: lazily created on first apply-finish (no placeholder here).
+last_updated: 2026-05-31T16:05:42Z

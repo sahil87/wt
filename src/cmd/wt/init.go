@@ -61,21 +61,26 @@ func runInitScript() error {
 
 	initScriptRel := wt.InitScriptPath()
 
-	fmt.Println("Running worktree init...")
-	fmt.Println()
-
 	// Single resolution contract — same helper that wt create's init step uses.
 	cmd, notFound, err := wt.ResolveInitInvocation(initScriptRel, repoRoot)
 	if err != nil {
 		return fmt.Errorf("resolve init script: %w", err)
 	}
 	if notFound != nil {
-		fmt.Println(notFound.RenderWarning())
+		// No command to label — emit the canonical warning, no separator.
+		fmt.Fprintln(os.Stderr, notFound.RenderWarning())
 		return nil
 	}
 
+	// wt init has no machine-readable result, so all of its output is
+	// diagnostic and belongs on stderr (matching wt create's init runner).
+	// The Init separator is labeled with the resolved init-script value.
+	fmt.Fprintln(os.Stderr, wt.PhaseSeparator("Init ("+initScriptRel+")"))
+	fmt.Fprintln(os.Stderr, "Running worktree init...")
+	fmt.Fprintln(os.Stderr)
+
 	cmd.Dir = currentRoot
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
@@ -89,7 +94,7 @@ func runInitScript() error {
 		os.Exit(wt.ExitInitFailed)
 	}
 
-	fmt.Println()
-	fmt.Println("Worktree init complete.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Worktree init complete.")
 	return nil
 }

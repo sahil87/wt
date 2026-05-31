@@ -15,7 +15,7 @@ This file documents the contract that `wt create` and `wt init` honor when the i
   ```
 - Both `cmd/wt/init.go` (the `wt init` subcommand) and `src/internal/worktree/crud.go` (the `wt create` init step, via `RunWorktreeSetup`) consume this resolver.
 - No other code may re-implement the command-vs-path detection, `exec.LookPath` check, or file-existence check. Duplicating this logic is an explicit anti-pattern.
-- The resolver leaves `Dir`, `Stdout`, `Stderr` unset on the returned `*exec.Cmd` — callers wire those because `wt init` and `wt create` use different working directories and different streaming setups.
+- The resolver leaves `Dir`, `Stdout`, `Stderr` unset on the returned `*exec.Cmd` — callers wire those themselves because `wt init` and `wt create` use different working directories; as of `260531-pnmi` both now stream init diagnostics uniformly to stderr (`cmd.Stdout = cmd.Stderr = os.Stderr`), so only the working directory still differs between them (see `create-output-phases.md`).
 
 ### Not-found is non-fatal and uniformly warned
 
@@ -98,6 +98,7 @@ Tests assert presence of the worktree path, the `wt init` retry hint, and the `w
 | Change | Date | Summary |
 |--------|------|---------|
 | `260516-g5e7-wt-create-init-failure-dx` | 2026-05-16 | Established kept-worktree contract, `ExitInitFailed = 7`, unified `ResolveInitInvocation`, `PrintInitFailureBanner`, SIGINT Option B, and the `WT_TEST_NO_LAUNCH=1` test seam. |
+| `260531-pnmi-add-phase-separators` | 2026-05-31 | Corrected the resolver note: callers' streaming setups are no longer different — both `wt init` and `wt create` now wire init `cmd.Stdout`/`cmd.Stderr` to `os.Stderr`; only the working directory still differs. See `create-output-phases.md`. |
 
 ## Cross-references
 

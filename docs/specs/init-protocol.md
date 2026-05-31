@@ -47,8 +47,26 @@ init scripts mutate the active worktree (install dependencies, sync
 templates, set up symlinks) without needing to know which worktree they are
 in.
 
-`stdin`, `stdout`, and `stderr` are inherited from `wt init`'s parent process,
-so interactive scripts (prompts, password reads) work normally.
+The init script's `stdin` is inherited from the parent process, so interactive
+scripts (prompts, password reads) work normally. Its `stdout` and `stderr` are
+both wired to the parent's **stderr** — init output is diagnostic, and the
+parent's stdout is reserved for machine-readable results (e.g. `wt create`'s
+final worktree-path line). This holds for both `wt create`'s init step and
+standalone `wt init`; the two were aligned so init diagnostics always go to
+stderr regardless of which command runs the script.
+
+## Phase separators
+
+Both `wt create` and `wt init` frame the init step with a phase separator
+written to **stderr** — a labeled rule of the form `── Init (<cmd>) ──…`
+(unicode) or `-- Init (<cmd>) --…` (plain, when `NO_COLOR` is set), where
+`<cmd>` is the resolved init command (e.g. `fab sync`, or a script path). The
+separator is emitted by the init runner only when a command is actually
+resolved and run; on the not-found path (`*InitNotFound`) the canonical
+`RenderWarning()` is printed and **no** separator is emitted. `wt create`
+additionally frames its git and open phases with `── Git ──…` and `── Open ──…`
+separators on stderr; the stdout final-path line is never touched. The
+separator helper (`PhaseSeparator`) lives in `internal/worktree/errors.go`.
 
 ## Graceful skip behavior
 
