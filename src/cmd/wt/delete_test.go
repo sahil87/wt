@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDelete_ByName(t *testing.T) {
@@ -390,4 +391,40 @@ func TestDelete_MultipleWithStash(t *testing.T) {
 	stashOut := gitRun(t, repo, "stash", "list")
 	assertContains(t, stashOut, "stash-alpha")
 	assertContains(t, stashOut, "stash-bravo")
+}
+
+// TestDelete_MenuOrdersNewestFirst verifies the delete selection menu lists
+// non-main worktrees newest-first (after the prepended "All" entry), mirroring
+// the open menu. Empty stdin makes ShowMenu print the menu then return on EOF;
+// we assert only on the printed ordering and delete nothing.
+func TestDelete_MenuOrdersNewestFirst(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "alpha")
+	createWorktreeViaWt(t, repo, "bravo")
+	createWorktreeViaWt(t, repo, "charlie")
+
+	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	chtimesWorktree(t, repo, "alpha", base)
+	chtimesWorktree(t, repo, "bravo", base.Add(time.Hour))
+	chtimesWorktree(t, repo, "charlie", base.Add(2*time.Hour))
+
+	r := runWt(t, repo, nil, "delete")
+	got := menuOrder(r.Stdout, []string{"alpha", "bravo", "charlie"})
+	want := []string{"charlie", "bravo", "alpha"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %v in menu, got %v\nstdout:\n%s", want, got, r.Stdout)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("delete menu order = %v, want %v", got, want)
+			break
+		}
+	}
+	// The newest worktree must be the marked default (offset by the "All" entry).
+	assertContains(t, r.Stdout, "charlie (charlie) (default)")
+
+	// Nothing was deleted (menu was cancelled via EOF).
+	assertWorktreeExists(t, repo, "alpha")
+	assertWorktreeExists(t, repo, "bravo")
+	assertWorktreeExists(t, repo, "charlie")
 }

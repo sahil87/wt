@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOpen_ErrorNonexistentWorktree(t *testing.T) {
@@ -204,6 +205,69 @@ func TestOpen_AppDefault(t *testing.T) {
 	if strings.Contains(r.Stderr, "panic") {
 		t.Errorf("command panicked: %s", r.Stderr)
 	}
+}
+
+// menuOrder returns the worktree names from a selection-menu stdout in the
+// order they were listed. It scans numbered menu lines ("  N) name (...)"),
+// skipping the synthetic "All (...)" entry that the delete menu prepends.
+func menuOrder(stdout string, want []string) []string {
+	wantSet := make(map[string]bool, len(want))
+	for _, w := range want {
+		wantSet[w] = true
+	}
+	var got []string
+	for _, line := range strings.Split(stdout, "\n") {
+		for w := range wantSet {
+			// Menu entries render as "name (branch)"; match the leading token.
+			if strings.Contains(line, ") "+w+" (") {
+				got = append(got, w)
+				break
+			}
+		}
+	}
+	return got
+}
+
+// chtimesWorktree sets a controlled mtime on a named worktree's directory so
+// recency ordering is deterministic regardless of creation timing.
+func chtimesWorktree(t *testing.T, repo, name string, mtime time.Time) {
+	t.Helper()
+	p := worktreePath(repo, name)
+	if err := os.Chtimes(p, mtime, mtime); err != nil {
+		t.Fatalf("Chtimes %s: %v", name, err)
+	}
+}
+
+// TestOpen_MenuOrdersNewestFirst verifies the open selection menu lists
+// non-main worktrees newest-first (newest at top, still the default). Empty
+// stdin makes ShowMenu print the menu then return on EOF; we assert only on
+// the printed ordering and do not exercise any app launch.
+func TestOpen_MenuOrdersNewestFirst(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "alpha")
+	createWorktreeViaWt(t, repo, "bravo")
+	createWorktreeViaWt(t, repo, "charlie")
+
+	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	// charlie newest, then bravo, then alpha oldest.
+	chtimesWorktree(t, repo, "alpha", base)
+	chtimesWorktree(t, repo, "bravo", base.Add(time.Hour))
+	chtimesWorktree(t, repo, "charlie", base.Add(2*time.Hour))
+
+	r := runWt(t, repo, nil, "open")
+	got := menuOrder(r.Stdout, []string{"alpha", "bravo", "charlie"})
+	want := []string{"charlie", "bravo", "alpha"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %v in menu, got %v\nstdout:\n%s", want, got, r.Stdout)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("open menu order = %v, want %v", got, want)
+			break
+		}
+	}
+	// The newest worktree must also be the marked default.
+	assertContains(t, r.Stdout, "charlie (charlie) (default)")
 }
 
 // NOTE: Testing actual app opening (code, cursor, etc.) requires mock binaries

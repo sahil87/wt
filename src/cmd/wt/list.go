@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	wt "github.com/sahil87/wt/internal/worktree"
@@ -20,18 +22,19 @@ import (
 // ansiPattern matches ANSI escape sequences for display width calculation.
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-// listEntry holds worktree info for the list command. Dirty and Unpushed are
-// pointer types so JSON output can distinguish "status not computed" (nil →
-// key omitted via omitempty) from "status computed and clean / 0 unpushed"
-// (non-nil → key present with the explicit value).
+// listEntry holds worktree info for the list command. Dirty, Unpushed, and
+// LastActive are pointer types so JSON output can distinguish "status not
+// computed" (nil → key omitted via omitempty) from "status computed" (non-nil →
+// key present with the explicit value, including zero/clean values).
 type listEntry struct {
-	Name      string `json:"name"`
-	Branch    string `json:"branch"`
-	Path      string `json:"path"`
-	IsMain    bool   `json:"is_main"`
-	IsCurrent bool   `json:"is_current"`
-	Dirty     *bool  `json:"dirty,omitempty"`
-	Unpushed  *int   `json:"unpushed,omitempty"`
+	Name       string     `json:"name"`
+	Branch     string     `json:"branch"`
+	Path       string     `json:"path"`
+	IsMain     bool       `json:"is_main"`
+	IsCurrent  bool       `json:"is_current"`
+	Dirty      *bool      `json:"dirty,omitempty"`
+	Unpushed   *int       `json:"unpushed,omitempty"`
+	LastActive *time.Time `json:"last_active,omitempty"`
 }
 
 // maxListConcurrency caps the worker pool for --status enrichment regardless of
@@ -40,9 +43,11 @@ const maxListConcurrency = 8
 
 func listCmd() *cobra.Command {
 	var (
-		pathName   string
-		jsonOut    bool
-		statusFlag bool
+		pathName       string
+		jsonOut        bool
+		statusFlag     bool
+		sortFlag       string
+		nonInteractive bool
 	)
 
 	cmd := &cobra.Command{
@@ -68,6 +73,18 @@ it forks 2 git subprocesses per worktree (parallelized).`,
 				wt.ExitWithError(wt.ExitInvalidArgs,
 					"--path and --status are mutually exclusive",
 					"--path skips enrichment; --status forces it",
+					"Run 'wt list --help' for usage information")
+			}
+			if pathName != "" && sortFlag != "" {
+				wt.ExitWithError(wt.ExitInvalidArgs,
+					"--path and --sort are mutually exclusive",
+					"--path is a single-worktree lookup; ordering is meaningless",
+					"Run 'wt list --help' for usage information")
+			}
+			if sortFlag != "" && !isValidSort(sortFlag) {
+				wt.ExitWithError(wt.ExitInvalidArgs,
+					fmt.Sprintf("Invalid --sort value: %q", sortFlag),
+					"--sort accepts: recent, name, branch",
 					"Run 'wt list --help' for usage information")
 			}
 
@@ -97,6 +114,14 @@ it forks 2 git subprocesses per worktree (parallelized).`,
 				wt.ExitWithError(wt.ExitGitError, "Cannot list worktrees", err.Error(), "")
 			}
 
+			// Ordering is a deterministic post-step applied to the final slice,
+			// independent of enrichment (which preserves porcelain order via
+			// indexed writes). Default order is audience-split by flag: recent
+			// for human output, stable name order for --json/--non-interactive;
+			// an explicit --sort overrides in any mode. The main worktree is
+			// always pinned to the first row.
+			sortEntries(entries, resolveSort(sortFlag, jsonOut, nonInteractive))
+
 			if jsonOut {
 				return handleJSONOutput(entries)
 			}
@@ -108,8 +133,98 @@ it forks 2 git subprocesses per worktree (parallelized).`,
 	cmd.Flags().StringVar(&pathName, "path", "", "Output just the absolute path for a named worktree")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output worktree data as a JSON array")
 	cmd.Flags().BoolVar(&statusFlag, "status", false, "Show dirty/unpushed status for each worktree (slower)")
+	cmd.Flags().StringVar(&sortFlag, "sort", "", "Order non-main worktrees by: recent, name, or branch")
+	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "Use stable (name) default ordering for scripts")
 
 	return cmd
+}
+
+// sortMode is the resolved ordering applied to non-main list entries.
+type sortMode int
+
+const (
+	sortRecent sortMode = iota
+	sortName
+	sortBranch
+)
+
+// isValidSort reports whether s is an accepted --sort value.
+func isValidSort(s string) bool {
+	switch s {
+	case "recent", "name", "branch":
+		return true
+	}
+	return false
+}
+
+// resolveSort maps the --sort flag and output-mode flags to the effective
+// ordering. An explicit --sort always wins. Otherwise the default is recent for
+// human output and stable name order whenever --json or --non-interactive is
+// set, preserving deterministic machine-readable output (Constitution VI).
+func resolveSort(sortFlag string, jsonOut, nonInteractive bool) sortMode {
+	switch sortFlag {
+	case "recent":
+		return sortRecent
+	case "name":
+		return sortName
+	case "branch":
+		return sortBranch
+	}
+	if jsonOut || nonInteractive {
+		return sortName
+	}
+	return sortRecent
+}
+
+// sortEntries reorders entries in place per mode, pinning the main worktree to
+// the first row and reordering only the non-main entries below it. The main
+// worktree is the porcelain-first entry (IsMain); its position is stable across
+// all sort modes per the recency-ordering contract.
+func sortEntries(entries []listEntry, mode sortMode) {
+	// Partition out the main worktree (always first per porcelain convention)
+	// so only non-main entries are reordered.
+	start := 0
+	if len(entries) > 0 && entries[0].IsMain {
+		start = 1
+	}
+	rest := entries[start:]
+
+	switch mode {
+	case sortName:
+		sort.SliceStable(rest, func(i, j int) bool { return rest[i].Name < rest[j].Name })
+	case sortBranch:
+		sort.SliceStable(rest, func(i, j int) bool { return rest[i].Branch < rest[j].Branch })
+	case sortRecent:
+		// Prefer the already-computed LastActive (set under --status) as the
+		// recency key over a fresh os.Stat: this keeps the sort key consistent
+		// with the displayed value (no TOCTOU) and avoids redundant stats on the
+		// --status path. In default/basic mode LastActive is nil, so we fall back
+		// to RecencyOf(e.Path) — the non-status path still stats, but exactly
+		// once per entry here, before sorting. Computing the key inside the
+		// comparator would re-stat each path O(log n) times and let the
+		// comparator observe a changing mtime mid-sort.
+		keys := make([]time.Time, len(rest))
+		for i, e := range rest {
+			if e.LastActive != nil {
+				keys[i] = *e.LastActive
+			} else {
+				keys[i] = wt.RecencyOf(e.Path)
+			}
+		}
+		order := make([]int, len(rest))
+		for i := range order {
+			order[i] = i
+		}
+		sort.SliceStable(order, func(i, j int) bool {
+			a, b := order[i], order[j]
+			return wt.RecencyLess(keys[a], rest[a].Name, keys[b], rest[b].Name)
+		})
+		sorted := make([]listEntry, len(rest))
+		for i, idx := range order {
+			sorted[i] = rest[idx]
+		}
+		copy(rest, sorted)
+	}
 }
 
 func handlePathLookup(name string, ctx *wt.RepoContext) error {
@@ -149,6 +264,31 @@ func displayWidth(s string) int {
 	return utf8.RuneCountInString(ansiPattern.ReplaceAllString(s, ""))
 }
 
+// relativeTime renders a worktree's last-active time as a coarse, human-
+// friendly relative string (e.g. "just now", "2h ago", "3d ago"). A zero time
+// (vanished worktree, never stat'd) renders as "-" so the column stays aligned
+// without implying a real timestamp. JSON output never uses this — it emits the
+// raw RFC3339 timestamp via the *time.Time field.
+func relativeTime(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	d := time.Since(t)
+	switch {
+	case d < 0:
+		// Clock skew or a future mtime; treat as current.
+		return "just now"
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours())/24)
+	}
+}
+
 // relativePath computes a short relative path for display.
 // Main worktree: "{repoName}/"
 // Other worktrees: "{repoName}.worktrees/{wtName}/"
@@ -166,10 +306,11 @@ func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus 
 	fmt.Printf("Location: %s\n\n", ctx.WorktreesDir)
 
 	type displayRow struct {
-		name   string
-		branch string
-		status string
-		path   string
+		name       string
+		branch     string
+		status     string
+		lastActive string
+		path       string
 	}
 	rows := make([]displayRow, len(entries))
 	for i, e := range entries {
@@ -178,7 +319,7 @@ func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus 
 			name = wt.ColorBold + "(main)" + wt.ColorReset
 		}
 
-		var status string
+		var status, lastActive string
 		if showStatus {
 			var dirtyMarker, unpushedMarker string
 			if e.Dirty != nil && *e.Dirty {
@@ -195,19 +336,23 @@ func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus 
 			case unpushedMarker != "":
 				status = unpushedMarker
 			}
+			if e.LastActive != nil {
+				lastActive = relativeTime(*e.LastActive)
+			}
 		}
 
 		rows[i] = displayRow{
-			name:   name,
-			branch: e.Branch,
-			status: status,
-			path:   relativePath(e.Path, ctx),
+			name:       name,
+			branch:     e.Branch,
+			status:     status,
+			lastActive: lastActive,
+			path:       relativePath(e.Path, ctx),
 		}
 	}
 
 	if showStatus {
-		headers := [4]string{"Name", "Branch", "Status", "Path"}
-		colWidths := [4]int{len(headers[0]), len(headers[1]), len(headers[2]), len(headers[3])}
+		headers := [5]string{"Name", "Branch", "Status", "Last Active", "Path"}
+		colWidths := [5]int{len(headers[0]), len(headers[1]), len(headers[2]), len(headers[3]), len(headers[4])}
 		for _, r := range rows {
 			if w := displayWidth(r.name); w > colWidths[0] {
 				colWidths[0] = w
@@ -218,16 +363,20 @@ func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus 
 			if w := displayWidth(r.status); w > colWidths[2] {
 				colWidths[2] = w
 			}
-			if w := displayWidth(r.path); w > colWidths[3] {
+			if w := displayWidth(r.lastActive); w > colWidths[3] {
 				colWidths[3] = w
+			}
+			if w := displayWidth(r.path); w > colWidths[4] {
+				colWidths[4] = w
 			}
 		}
 
-		fmt.Printf("  %-*s  %-*s  %-*s  %s\n",
+		fmt.Printf("  %-*s  %-*s  %-*s  %-*s  %s\n",
 			colWidths[0], headers[0],
 			colWidths[1], headers[1],
 			colWidths[2], headers[2],
-			headers[3])
+			colWidths[3], headers[3],
+			headers[4])
 
 		for i, r := range rows {
 			marker := "  "
@@ -237,11 +386,12 @@ func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus 
 			namePad := colWidths[0] - displayWidth(r.name)
 			statusPad := colWidths[2] - displayWidth(r.status)
 
-			fmt.Printf("%s%s%s  %-*s  %s%s  %s\n",
+			fmt.Printf("%s%s%s  %-*s  %s%s  %-*s  %s\n",
 				marker,
 				r.name, strings.Repeat(" ", namePad),
 				colWidths[1], r.branch,
 				r.status, strings.Repeat(" ", statusPad),
+				colWidths[3], r.lastActive,
 				r.path)
 		}
 	} else {
@@ -358,9 +508,10 @@ func listEntriesBasic(ctx *wt.RepoContext) ([]listEntry, error) {
 	return entries, nil
 }
 
-// listEntriesEnriched returns worktree entries with dirty/unpushed status
-// computed in parallel via a bounded worker pool. Output order matches the
-// porcelain ordering.
+// listEntriesEnriched returns worktree entries with dirty/unpushed/last_active
+// status computed in parallel via a bounded worker pool. The slice is returned
+// in porcelain order; the worker pool preserves that order via indexed writes.
+// Final display ordering is applied separately by sortEntries in listCmd.
 func listEntriesEnriched(ctx *wt.RepoContext) ([]listEntry, error) {
 	raw, err := listWorktreeEntries()
 	if err != nil {
@@ -391,18 +542,25 @@ func listEntriesEnriched(ctx *wt.RepoContext) ([]listEntry, error) {
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	for i, r := range raw {
-		// Initialize pointer fields so JSON output emits dirty/unpushed keys
-		// even when enrichment is skipped (vanished worktree) or all-zero
-		// (clean and up-to-date). The contract for --status is "keys present
-		// regardless of value".
+		// Initialize pointer fields so JSON output emits dirty/unpushed/
+		// last_active keys even when enrichment is skipped (vanished worktree)
+		// or all-zero (clean and up-to-date). The contract for --status is
+		// "keys present regardless of value"; a vanished worktree keeps the
+		// zero time.Time as its last_active.
 		zeroDirty := false
 		zeroUnpushed := 0
+		var zeroActive time.Time
 		entries[i].Dirty = &zeroDirty
 		entries[i].Unpushed = &zeroUnpushed
+		entries[i].LastActive = &zeroActive
 
-		if _, statErr := os.Stat(r.path); statErr != nil {
+		info, statErr := os.Stat(r.path)
+		if statErr != nil {
 			continue
 		}
+		// Reuse the gate's stat result for recency — no extra os.Stat and never
+		// a git subprocess (preserves the single-subprocess list contract).
+		*entries[i].LastActive = info.ModTime()
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(i int, r rawEntry) {

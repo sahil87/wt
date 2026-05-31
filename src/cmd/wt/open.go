@@ -263,8 +263,6 @@ func selectAndOpen(ctx *wt.RepoContext) error {
 	}
 
 	var options []wtOption
-	var newestPath string
-	var newestTime int64
 
 	for _, e := range entries {
 		if e.path == ctx.RepoRoot {
@@ -272,15 +270,6 @@ func selectAndOpen(ctx *wt.RepoContext) error {
 		}
 		name := filepath.Base(e.path)
 		options = append(options, wtOption{path: e.path, name: name})
-
-		// Track most recently modified
-		if info, err := os.Stat(e.path); err == nil {
-			mtime := info.ModTime().Unix()
-			if mtime > newestTime {
-				newestTime = mtime
-				newestPath = e.path
-			}
-		}
 	}
 
 	if len(options) == 0 {
@@ -288,14 +277,14 @@ func selectAndOpen(ctx *wt.RepoContext) error {
 		return nil
 	}
 
-	// Find default index
+	// Order newest-first via the shared recency comparator. The newest worktree
+	// lands at the top and stays the pre-selected default (behavior-preserving
+	// for the default selection; the item ordering is the intentional change).
+	wt.SortByRecency(options,
+		func(o wtOption) string { return o.path },
+		func(o wtOption) string { return o.name },
+	)
 	defaultIdx := 1
-	for i, o := range options {
-		if o.path == newestPath {
-			defaultIdx = i + 1
-			break
-		}
-	}
 
 	// Build menu
 	menuNames := make([]string, len(options))

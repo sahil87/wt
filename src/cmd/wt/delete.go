@@ -463,8 +463,6 @@ func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch
 	}
 
 	var options []wtOption
-	var newestPath string
-	var newestTime int64
 
 	for _, e := range entries {
 		if e.path == ctx.RepoRoot {
@@ -472,14 +470,6 @@ func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch
 		}
 		name := filepath.Base(e.path)
 		options = append(options, wtOption{name: name, path: e.path, branch: e.branch})
-
-		if info, err := os.Stat(e.path); err == nil {
-			mtime := info.ModTime().Unix()
-			if mtime > newestTime {
-				newestTime = mtime
-				newestPath = e.path
-			}
-		}
 	}
 
 	if len(options) == 0 {
@@ -487,14 +477,14 @@ func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch
 		return nil
 	}
 
-	// Find default index (offset by 1 for "All" option)
+	// Order newest-first via the shared recency comparator, matching the
+	// wt open menu. The newest worktree lands first among worktrees and stays
+	// the pre-selected default (offset by 1 for the prepended "All" entry).
+	wt.SortByRecency(options,
+		func(o wtOption) string { return o.path },
+		func(o wtOption) string { return o.name },
+	)
 	defaultIdx := 2
-	for i, o := range options {
-		if o.path == newestPath {
-			defaultIdx = i + 2
-			break
-		}
-	}
 
 	// Prepend "All" option
 	allLabel := fmt.Sprintf("All (%d worktrees)", len(options))
