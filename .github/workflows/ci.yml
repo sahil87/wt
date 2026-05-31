@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Cancel superseded runs on the same ref (PR branch or main).
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          # Single source of truth for the Go version — same as release.yml.
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+
+      - name: gofmt
+        working-directory: src
+        run: |
+          # gofmt -l prints files that are NOT formatted. Any output ⇒ fail.
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-clean:" >&2
+            echo "$unformatted" >&2
+            echo "Run: (cd src && gofmt -w .)" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        working-directory: src
+        run: go vet ./...
+
+      - name: go test
+        working-directory: src
+        run: go test ./...

@@ -335,7 +335,8 @@ func appAvailable(cli, bundleID, desktopFile, osType string) bool {
 
 // shellQuoteSingle escapes a string for use inside shell single quotes.
 // Single quotes prevent all shell expansion ($, `, \, etc.).
-// The only character that needs escaping is ' itself, replaced with '\''.
+// The only character needing escaping is the single quote itself, which is
+// replaced with the standard close-quote/escaped-quote/reopen-quote sequence.
 func shellQuoteSingle(s string) string {
 	return strings.ReplaceAll(s, "'", `'\''`)
 }

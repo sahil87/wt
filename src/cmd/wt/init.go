@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/cobra"
 	wt "github.com/sahil87/wt/internal/worktree"
+	"github.com/spf13/cobra"
 )
 
 func initCmd() *cobra.Command {
