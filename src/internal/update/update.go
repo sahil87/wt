@@ -50,12 +50,17 @@ var ErrBrewNotFound = errors.New("brew not found on PATH")
 // os.Stdout / os.Stderr to keep the wrapper messages consistent with the
 // subprocess streams.
 //
+// skipBrewUpdate skips ONLY the internal `brew update --quiet` tap-metadata
+// refresh. The `brew info` version check, the "already up to date"
+// short-circuit, and `brew upgrade` all run unchanged. This is a cross-toolkit
+// contract surfaced as the `--skip-brew-update` flag.
+//
 // Returns nil on success or no-op (not a brew install, already up to date).
 // Returns ErrBrewNotFound when brew is missing on PATH (callers should map
 // this to a typed exit so cobra does not double-print). Returns a wrapped
 // error for other brew failures.
-func Run(currentVersion string, out, errOut io.Writer) error {
-	if !isBrewInstalled() {
+func Run(currentVersion string, skipBrewUpdate bool, out, errOut io.Writer) error {
+	if !brewInstalled() {
 		fmt.Fprintf(out, "wt %s was not installed via Homebrew.\n", currentVersion)
 		fmt.Fprintln(out, "Update manually, or reinstall with: brew install "+brewFormula)
 		return nil
@@ -64,17 +69,19 @@ func Run(currentVersion string, out, errOut io.Writer) error {
 	fmt.Fprintf(out, "Current version: %s\n", currentVersion)
 	fmt.Fprintln(out, "Checking for updates...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), brewUpdateTimeout)
-	cmd := exec.CommandContext(ctx, "brew", "update", "--quiet")
-	cmd.Stderr = os.Stderr
-	_, err := cmd.Output()
-	cancel()
-	if err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			fmt.Fprintln(errOut, "wt update: brew not found on PATH.")
-			return ErrBrewNotFound
+	if !skipBrewUpdate {
+		ctx, cancel := context.WithTimeout(context.Background(), brewUpdateTimeout)
+		cmd := exec.CommandContext(ctx, "brew", "update", "--quiet")
+		cmd.Stderr = os.Stderr
+		_, err := cmd.Output()
+		cancel()
+		if err != nil {
+			if errors.Is(err, exec.ErrNotFound) {
+				fmt.Fprintln(errOut, "wt update: brew not found on PATH.")
+				return ErrBrewNotFound
+			}
+			return fmt.Errorf("brew update failed: %w", err)
 		}
-		return fmt.Errorf("brew update failed: %w", err)
 	}
 
 	latest, err := brewLatestVersion()
@@ -142,6 +149,12 @@ func brewLatestVersion() (string, error) {
 	}
 	return info.Formulae[0].Versions.Stable, nil
 }
+
+// brewInstalled is the brew-install detection gate Run consults. It is a
+// package-level var (defaulting to isBrewInstalled) so tests can exercise the
+// brew code path without the test binary living under /Cellar/. Production
+// code never reassigns it.
+var brewInstalled = isBrewInstalled
 
 // isBrewInstalled checks whether the running binary lives under a Cellar
 // directory, which is the canonical signature of a Homebrew install. The

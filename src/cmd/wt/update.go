@@ -11,12 +11,14 @@ import (
 )
 
 func updateCmd() *cobra.Command {
-	return &cobra.Command{
+	var skipBrewUpdate bool
+
+	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "self-update the wt binary via Homebrew",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			err := update.Run(version, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			err := update.Run(version, skipBrewUpdate, cmd.OutOrStdout(), cmd.ErrOrStderr())
 			// internal/update writes its own "brew not found" hint to errOut
 			// before returning ErrBrewNotFound. Exit directly with the typed
 			// exit code so the user sees only the single hint — bypassing both
@@ -29,4 +31,9 @@ func updateCmd() *cobra.Command {
 			return err
 		},
 	}
+
+	cmd.Flags().BoolVar(&skipBrewUpdate, "skip-brew-update", false,
+		"Skip the internal `brew update` tap-metadata refresh (still runs the version check and brew upgrade)")
+
+	return cmd
 }

@@ -46,3 +46,32 @@ func TestUpdate_AppearsInHelp(t *testing.T) {
 		t.Fatalf("expected `update` in --help output, got:\n%s", r.Stdout)
 	}
 }
+
+// TestUpdate_SkipBrewUpdateFlagInHelp asserts the --skip-brew-update flag is
+// wired into the cobra command and documented in `wt update --help`.
+func TestUpdate_SkipBrewUpdateFlagInHelp(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWt(t, repo, nil, "update", "--help")
+	if r.ExitCode != 0 {
+		t.Fatalf("wt update --help failed (exit %d)\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+	if !strings.Contains(r.Stdout, "--skip-brew-update") {
+		t.Fatalf("expected `--skip-brew-update` in `wt update --help`, got:\n%s", r.Stdout)
+	}
+}
+
+// TestUpdate_AcceptsSkipBrewUpdateFlag verifies the flag parses and the command
+// still reaches the non-brew short-circuit (the test binary is not under
+// /Cellar/), confirming cobra accepts the boolean flag without error.
+func TestUpdate_AcceptsSkipBrewUpdateFlag(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWt(t, repo, nil, "update", "--skip-brew-update")
+	if r.ExitCode != 0 {
+		t.Fatalf("wt update --skip-brew-update failed (exit %d)\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+	if !strings.Contains(r.Stdout, "was not installed via Homebrew") {
+		t.Fatalf("expected non-brew hint in stdout, got:\n%s", r.Stdout)
+	}
+}

@@ -147,7 +147,11 @@ formula (`sahil87/tap/wt`) for its latest stable version, and invokes
 `brew upgrade` when a newer version is available. Implementation lives under
 `src/internal/update/`.
 
-No flags. No positional args.
+| Flag | Default | Behavior |
+|------|---------|----------|
+| `--skip-brew-update` | `false` | Skip ONLY the internal `brew update --quiet` tap-metadata refresh. The `brew info` version check, the "already up to date" short-circuit, and `brew upgrade` all still run unchanged. Useful when the tap is already current and the refresh is redundant. Cross-toolkit contract: the flag name is exactly `--skip-brew-update` (boolean) and is shared with other tools. |
+
+No positional args.
 
 User-facing outcomes:
 
@@ -157,6 +161,10 @@ User-facing outcomes:
   v<latest>.`
 - **Already up to date**: prints `Already up to date (<currentVersion>).` and
   exits without invoking `brew upgrade`.
+- **`--skip-brew-update` set**: identical to the above outcomes, except the
+  internal `brew update --quiet` step is not invoked. The version check via
+  `brew info` and the conditional `brew upgrade` run exactly as they would
+  without the flag.
 - **Not installed via Homebrew** (e.g., `just local-install` builds in
   `~/.local/bin`): prints `wt <version> was not installed via Homebrew.` and
   `Update manually, or reinstall with: brew install sahil87/tap/wt`. No
