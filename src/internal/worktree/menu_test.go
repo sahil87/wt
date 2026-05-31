@@ -22,11 +22,11 @@ func TestNextMenuState(t *testing.T) {
 	}
 
 	cases := []struct {
-		name         string
-		prev         menuState
-		key          keyEvent
-		wantHL       int
-		wantSubmit   bool
+		name       string
+		prev       menuState
+		key        keyEvent
+		wantHL     int
+		wantSubmit bool
 	}{
 		// --- Up navigation ---
 		{"Up from row 2 → row 1", st3(2), keyEvent{kind: keyUp}, 1, false},
@@ -490,9 +490,9 @@ func (panickingReader) Read(_ []byte) (int, error) {
 // TestRunInteractiveMenuCore_PanicRestore asserts that when the byte-read
 // step panics mid-loop:
 //
-//   (a) The panic propagates out of runInteractiveMenuCore (caller-visible).
-//   (b) The deferred restoreFn was invoked exactly once before unwind, so
-//       cooked mode would be reinstated in production.
+//	(a) The panic propagates out of runInteractiveMenuCore (caller-visible).
+//	(b) The deferred restoreFn was invoked exactly once before unwind, so
+//	    cooked mode would be reinstated in production.
 //
 // Together these resolve Acceptance A-011 ("Raw-mode restore … verified by a
 // test") and A-028 ("Panic in read loop … assert the deferred term.Restore
@@ -515,11 +515,12 @@ func TestRunInteractiveMenuCore_PanicRestore(t *testing.T) {
 		defer func() {
 			recovered = recover()
 		}()
-		// Use a panic-on-read source. runInteractiveMenuCore wraps it in
-		// a bufio.Reader, whose first ReadByte triggers the panic.
+		// Use a panic-on-read source wrapped in the shared reader type; its
+		// pump goroutine's first ReadByte triggers the panic, which the pump
+		// recovers and forwards so the consumer re-raises it on this goroutine.
 		_, _ = runInteractiveMenuCore(
 			&stdout,
-			panickingReader{},
+			newBlockingByteReader(panickingReader{}),
 			"Pick:",
 			[]string{"a", "b"},
 			-1,

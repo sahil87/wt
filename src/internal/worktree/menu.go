@@ -54,11 +54,98 @@ import (
 // See docs/memory/wt-cli/menu-navigation-contract.md (created during hydrate)
 // for the full contract.
 func ShowMenu(prompt string, options []string, defaultIdx int) (int, error) {
-	if isInteractiveTTY() {
-		return runInteractiveMenu(prompt, options, defaultIdx)
-	}
-	return runFallbackMenu(prompt, options, defaultIdx)
+	s := NewMenuSession()
+	defer s.Close()
+	return s.Show(prompt, options, defaultIdx)
 }
+
+// MenuSession owns the single stdin reader shared across one or more menus
+// shown back to back — most importantly the multi-menu flows of `wt open`
+// (worktree selection → "Open in:") and `wt delete` (selection →
+// uncommitted-changes → unpushed-commits → confirm).
+//
+// Why this exists: each interactive menu reads stdin through a pump goroutine
+// that reads one byte ahead. If every menu built its own reader over os.Stdin,
+// the first menu's pump would be left parked inside a blocking read on the
+// shared fd after it submitted — an orphan that then steals the next menu's
+// first keystroke (see TestUnderlyingReadAhead_DemonstratesTheft and the
+// TestMenuSession_SharesReaderAcrossMenus regression guard). Sharing one
+// reader across Show() calls means there is never more than one reader on the
+// stream, so no keystroke is stolen between menus.
+//
+// Raw mode is entered and restored *per Show() call*, not held across the
+// whole session. This is deliberate: the delete flow exits the process
+// (os.Exit) between menus on cancel paths, and a session that held raw mode
+// across menus would leave the terminal in raw mode on those exits. Restoring
+// after each menu means the terminal is always in cooked mode between menus,
+// so process exit is safe with no special-casing. The byte-theft fix only
+// requires a shared *reader*; it does not require continuously-held raw mode.
+//
+// Single-menu callers do not need to touch this type: ShowMenu wraps a
+// one-shot session for them.
+type MenuSession struct {
+	interactive bool
+	reader      *blockingByteReader // shared stdin reader (nil in fallback mode)
+}
+
+// NewMenuSession detects whether the terminal supports the interactive
+// arrow-key path and, if so, creates the single shared stdin reader reused by
+// every Show() call. If the terminal is not an interactive TTY, the session
+// degrades to the fallback numbered-prompt path (each Show call reads a line
+// from os.Stdin as before).
+//
+// Callers SHOULD Close the session when the interaction ends. Close is a no-op
+// today (raw mode is managed per Show), but calling it keeps the lifecycle
+// explicit and future-proofs the type against holding OS resources.
+func NewMenuSession() *MenuSession {
+	s := &MenuSession{}
+	if !isInteractiveTTY() {
+		return s // fallback mode
+	}
+	s.interactive = true
+	s.reader = newBlockingByteReader(os.Stdin)
+	return s
+}
+
+// Show renders one menu against the session's shared reader and returns the
+// selected index (0 = Cancel, 1..len(options) = option). Raw mode is entered
+// and restored within this call.
+func (s *MenuSession) Show(prompt string, options []string, defaultIdx int) (int, error) {
+	if !s.interactive {
+		return runFallbackMenu(prompt, options, defaultIdx)
+	}
+
+	stdinFd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(stdinFd)
+	if err != nil {
+		// Cannot enter raw mode — degrade to the fallback prompt rather than
+		// dying. Same return-value contract either way.
+		return runFallbackMenu(prompt, options, defaultIdx)
+	}
+	// The restore is the safety net for every exit path of the read loop —
+	// submit, Cancel, error, even a panic — so cooked mode is reinstated
+	// before this call returns. runInteractiveMenuCore defers it.
+	restoreFn := func() {
+		// Ignore the Restore error: nothing useful can be done at process
+		// scope, and the terminal is either restored or the process is dying.
+		_ = term.Restore(stdinFd, oldState)
+	}
+	return s.showInteractive(os.Stdout, prompt, options, defaultIdx, restoreFn)
+}
+
+// showInteractive runs one interactive menu against the session's shared
+// reader and the given writer. It is the seam below the raw-mode setup in
+// Show, isolated so reader-sharing across menus can be tested without a real
+// TTY (which term.MakeRaw requires). restoreFn is the raw-mode restore (a
+// no-op in tests).
+func (s *MenuSession) showInteractive(w io.Writer, prompt string, options []string, defaultIdx int, restoreFn func()) (int, error) {
+	return runInteractiveMenuCore(w, s.reader, prompt, options, defaultIdx, restoreFn)
+}
+
+// Close ends the session. It is currently a no-op (raw mode is managed per
+// Show), kept so callers can express the session lifecycle with a deferred
+// Close and so the contract survives future changes that acquire resources.
+func (s *MenuSession) Close() {}
 
 // runFallbackMenu is the historical numbered-prompt body, preserved verbatim
 // so the byte-for-byte output contract holds for piped/redirected callers.
@@ -183,9 +270,9 @@ const (
 	byteCSI   = '['  // CSI introducer following ESC
 
 	// Terminal control sequences used for in-place redraw.
-	ansiClearLine    = "\x1b[2K"
-	ansiCarriageRet  = "\r"
-	ansiCursorUpFmt  = "\x1b[%dA" // moves cursor up N rows
+	ansiClearLine   = "\x1b[2K"
+	ansiCarriageRet = "\r"
+	ansiCursorUpFmt = "\x1b[%dA" // moves cursor up N rows
 
 	// Highlight / marker visuals.
 	ansiReverseVideo = "\x1b[7m"
@@ -247,7 +334,7 @@ type keyEvent struct {
 //   - defaultIdx >= 1               → that option row.
 //   - defaultIdx == 0               → the Cancel row (highlight = 0).
 //   - defaultIdx == -1 (no default) → the first option (highlight = 1) when
-//                                     options exist; otherwise Cancel.
+//     options exist; otherwise Cancel.
 //
 // Any defaultIdx that is out of range (e.g., > numOptions) falls through to
 // the "no default" behavior so a misuse from a caller does not crash.
@@ -546,60 +633,27 @@ func isInteractiveTTY() bool {
 // Raw-mode I/O shell
 // =============================================================================
 
-// runInteractiveMenu is the raw-mode shell that composes parseKey and
-// nextMenuState. It:
-//
-//   1. Enters raw mode on stdin and defers a Restore so cooked mode is
-//      reinstated on submit, Cancel, error, and panic (Constitution
-//      Principle: never leave the user's terminal in raw mode).
-//   2. Paints the menu once.
-//   3. Loops: read a byte → parseKey → nextMenuState → redraw or finalize.
-//   4. On exit, clears the menu region and writes a single summary line
-//      (`<prompt> <option-text>` on submit, `<prompt> (cancelled)` on Cancel).
-//
-// SIGINT handling: raw mode delivers Ctrl-C as a raw \x03 byte rather than
-// generating a SIGINT, so no signal escapes mid-menu and the deferred
-// Restore always runs. There is no separate signal.Notify in this function;
-// the term.MakeRaw contract is sufficient.
-func runInteractiveMenu(prompt string, options []string, defaultIdx int) (int, error) {
-	stdinFd := int(os.Stdin.Fd())
-	oldState, err := term.MakeRaw(stdinFd)
-	if err != nil {
-		// If we cannot enter raw mode (e.g., something unusual about the
-		// fd), fall back to the numbered prompt rather than dying. The
-		// caller gets the same return-value contract either way.
-		return runFallbackMenu(prompt, options, defaultIdx)
-	}
-	// The restore callback is the safety net for every exit path — submit,
-	// Cancel, panic in the read loop, even a runtime fault. It is wired into
-	// runInteractiveMenuCore so the deferred restore lives next to the loop
-	// (and can be exercised by a panicking-reader test seam).
-	restoreFn := func() {
-		// Ignore the Restore error because there is nothing useful we can do
-		// with it at process scope; the terminal is either restored or the
-		// process is dying anyway.
-		_ = term.Restore(stdinFd, oldState)
-	}
-	return runInteractiveMenuCore(os.Stdout, os.Stdin, prompt, options, defaultIdx, restoreFn)
-}
-
-// runInteractiveMenuCore is the testable core of runInteractiveMenu. It owns
-// the paint/read/redraw/finalize loop and the deferred raw-mode restore. The
-// caller provides:
+// runInteractiveMenuCore is the testable core of the interactive renderer. It
+// owns the paint/read/redraw/finalize loop. The caller provides:
 //
 //   - w         : output sink (os.Stdout in production).
-//   - stdin     : byte source (os.Stdin in production, a panicking reader in
-//                 the panic-restore test).
-//   - restoreFn : cooked-mode restore callback (term.Restore wrapper in
-//                 production, a counter-incrementing fake in tests). MUST be
-//                 invoked exactly once before this function returns, even on
-//                 panic — that contract is what guarantees the user's
-//                 terminal is never left in raw mode.
+//   - reader    : the SHARED stdin reader for this terminal session. Reusing
+//     one reader across consecutive menus is what prevents an
+//     orphaned read-ahead pump from stealing the next menu's first
+//     keystroke (see MenuSession). In tests this is a reader over a
+//     pipe or a panicking source.
+//   - restoreFn : raw-mode restore safety net, deferred so cooked mode is
+//     reinstated if the read loop panics mid-menu. In production
+//     the owning MenuSession also restores on Close; restoring
+//     twice is harmless. In tests it is a counter-incrementing fake.
+//     MUST be invoked exactly once before this function returns,
+//     even on panic — that contract guarantees the user's terminal
+//     is never left in raw mode.
 //
 // SIGINT handling: raw mode delivers Ctrl-C as a raw \x03 byte rather than
 // generating a SIGINT, so no signal escapes mid-menu. The deferred restoreFn
 // always runs.
-func runInteractiveMenuCore(w io.Writer, stdin io.Reader, prompt string, options []string, defaultIdx int, restoreFn func()) (int, error) {
+func runInteractiveMenuCore(w io.Writer, reader *blockingByteReader, prompt string, options []string, defaultIdx int, restoreFn func()) (int, error) {
 	defer restoreFn()
 
 	state := menuState{
@@ -613,8 +667,6 @@ func runInteractiveMenuCore(w io.Writer, stdin io.Reader, prompt string, options
 	// The menu region is: 1 prompt line + len(options) option rows +
 	// 1 Cancel row = len(options) + 2 lines.
 	rowsRendered := paintMenu(w, prompt, options, state)
-
-	reader := newBlockingByteReader(stdin)
 
 	for {
 		first, ok := reader.readByteBlocking()

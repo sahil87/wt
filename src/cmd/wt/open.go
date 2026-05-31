@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/cobra"
 	wt "github.com/sahil87/wt/internal/worktree"
+	"github.com/spf13/cobra"
 )
 
 func openCmd() *cobra.Command {
@@ -201,6 +201,17 @@ func resolveWorktreeByName(name string, ctx *wt.RepoContext) (string, error) {
 }
 
 func handleAppMenu(wtPath, repoName, wtName string) error {
+	session := wt.NewMenuSession()
+	defer session.Close()
+	return handleAppMenuWithSession(session, wtPath, repoName, wtName)
+}
+
+// handleAppMenuWithSession renders the "Open in:" menu against an existing
+// terminal session. selectAndOpen passes the same session it used for the
+// worktree-selection menu so the two menus share one stdin reader — see
+// MenuSession for why a shared reader is required (otherwise the first menu's
+// orphaned read steals this menu's first keystroke).
+func handleAppMenuWithSession(session *wt.MenuSession, wtPath, repoName, wtName string) error {
 	apps := wt.BuildAvailableApps()
 	if len(apps) == 0 {
 		fmt.Println("No supported applications detected.")
@@ -213,7 +224,7 @@ func handleAppMenu(wtPath, repoName, wtName string) error {
 		appNames[i] = a.Name
 	}
 
-	choice, err := wt.ShowMenu("Open in:", appNames, defaultIdx)
+	choice, err := session.Show("Open in:", appNames, defaultIdx)
 	if err != nil {
 		return err
 	}
@@ -294,7 +305,14 @@ func selectAndOpen(ctx *wt.RepoContext) error {
 		menuNames[i] = fmt.Sprintf("%s (%s)", o.name, branch)
 	}
 
-	choice, err := wt.ShowMenu("Select worktree to open:", menuNames, defaultIdx)
+	// One terminal session spans both menus ("Select worktree to open:" then
+	// "Open in:") so they share a single stdin reader. Without this, the first
+	// menu's read-ahead pump is left orphaned on stdin and steals the second
+	// menu's first keystroke (see wt.MenuSession).
+	session := wt.NewMenuSession()
+	defer session.Close()
+
+	choice, err := session.Show("Select worktree to open:", menuNames, defaultIdx)
 	if err != nil {
 		return err
 	}
@@ -304,7 +322,7 @@ func selectAndOpen(ctx *wt.RepoContext) error {
 	}
 
 	selected := options[choice-1]
-	return handleAppMenu(selected.path, ctx.RepoName, selected.name)
+	return handleAppMenuWithSession(session, selected.path, ctx.RepoName, selected.name)
 }
 
 func getBranchForPath(wtPath string) string {

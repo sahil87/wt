@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/spf13/cobra"
 	wt "github.com/sahil87/wt/internal/worktree"
+	"github.com/spf13/cobra"
 )
 
 func deleteCmd() *cobra.Command {
@@ -61,8 +61,16 @@ Resolution order: --delete-all, positional args, --worktree-name (deprecated), c
 				stashMode = "stash"
 			}
 
+			// One terminal session spans every menu this invocation shows. The
+			// delete flow chains menus (e.g. selection → uncommitted-changes →
+			// unpushed-commits → final confirm), and a fresh reader per menu
+			// would leave the previous menu's read-ahead pump orphaned on stdin,
+			// stealing the next menu's first keystroke (see wt.MenuSession).
+			session := wt.NewMenuSession()
+			defer session.Close()
+
 			if deleteAll {
-				return handleDeleteAll(nonInteractive, deleteBranch, deleteRemote, stashMode)
+				return handleDeleteAll(session, nonInteractive, deleteBranch, deleteRemote, stashMode)
 			}
 
 			if len(args) > 0 && worktreeName != "" {
@@ -73,15 +81,15 @@ Resolution order: --delete-all, positional args, --worktree-name (deprecated), c
 			}
 
 			if len(args) > 0 {
-				return handleDeleteMultiple(args, nonInteractive, deleteBranch, deleteRemote, stashMode)
+				return handleDeleteMultiple(session, args, nonInteractive, deleteBranch, deleteRemote, stashMode)
 			}
 
 			if worktreeName != "" {
-				return handleDeleteByName(worktreeName, nonInteractive, deleteBranch, deleteRemote, stashMode, rb)
+				return handleDeleteByName(session, worktreeName, nonInteractive, deleteBranch, deleteRemote, stashMode, rb)
 			}
 
 			if wt.IsWorktree() {
-				return handleDeleteCurrent(nonInteractive, deleteBranch, deleteRemote, stashMode, rb)
+				return handleDeleteCurrent(session, nonInteractive, deleteBranch, deleteRemote, stashMode, rb)
 			}
 
 			if nonInteractive {
@@ -91,7 +99,7 @@ Resolution order: --delete-all, positional args, --worktree-name (deprecated), c
 					"Example: wt delete my-feature --non-interactive")
 			}
 
-			return handleDeleteMenu(nonInteractive, deleteBranch, deleteRemote, stashMode)
+			return handleDeleteMenu(session, nonInteractive, deleteBranch, deleteRemote, stashMode)
 		},
 	}
 
@@ -107,7 +115,7 @@ Resolution order: --delete-all, positional args, --worktree-name (deprecated), c
 	return cmd
 }
 
-func handleDeleteCurrent(nonInteractive bool, deleteBranch, deleteRemote, stashMode string, rb *wt.Rollback) error {
+func handleDeleteCurrent(session *wt.MenuSession, nonInteractive bool, deleteBranch, deleteRemote, stashMode string, rb *wt.Rollback) error {
 	if !wt.IsWorktree() {
 		wt.ExitWithError(wt.ExitGeneralError,
 			"Not in a worktree",
@@ -137,21 +145,21 @@ func handleDeleteCurrent(nonInteractive bool, deleteBranch, deleteRemote, stashM
 
 	// Handle uncommitted changes
 	if wt.HasUncommittedChanges() || wt.HasUntrackedFiles() {
-		if err := handleUncommittedChanges(wtName, stashMode, nonInteractive, rb); err != nil {
+		if err := handleUncommittedChanges(session, wtName, stashMode, nonInteractive, rb); err != nil {
 			return err
 		}
 	}
 
 	// Check for unpushed commits
 	if wt.HasUnpushedCommits(branch) {
-		if err := handleUnpushedCommits(branch, nonInteractive); err != nil {
+		if err := handleUnpushedCommits(session, branch, nonInteractive); err != nil {
 			return err
 		}
 	}
 
 	// Confirmation
 	if !nonInteractive {
-		choice, err := wt.ShowMenu("Delete this worktree?", []string{"Yes, delete"}, 0)
+		choice, err := session.Show("Delete this worktree?", []string{"Yes, delete"}, 0)
 		if err != nil {
 			return err
 		}
@@ -183,7 +191,7 @@ func handleDeleteCurrent(nonInteractive bool, deleteBranch, deleteRemote, stashM
 	return nil
 }
 
-func handleDeleteByName(name string, nonInteractive bool, deleteBranch, deleteRemote, stashMode string, rb *wt.Rollback) error {
+func handleDeleteByName(session *wt.MenuSession, name string, nonInteractive bool, deleteBranch, deleteRemote, stashMode string, rb *wt.Rollback) error {
 	if err := wt.ValidateGitRepo(); err != nil {
 		wt.ExitWithError(wt.ExitGitError, "Not a git repository", err.Error(), "")
 	}
@@ -221,7 +229,7 @@ func handleDeleteByName(name string, nonInteractive bool, deleteBranch, deleteRe
 
 	// Confirmation
 	if !nonInteractive {
-		choice, err := wt.ShowMenu("Delete this worktree?", []string{"Yes, delete"}, 0)
+		choice, err := session.Show("Delete this worktree?", []string{"Yes, delete"}, 0)
 		if err != nil {
 			return err
 		}
@@ -242,7 +250,7 @@ func handleDeleteByName(name string, nonInteractive bool, deleteBranch, deleteRe
 	return nil
 }
 
-func handleDeleteMultiple(names []string, nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
+func handleDeleteMultiple(session *wt.MenuSession, names []string, nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
 	ctx, err := wt.GetRepoContext()
 	if err != nil {
 		wt.ExitWithError(wt.ExitGeneralError, "Cannot get repo context", err.Error(), "")
@@ -320,7 +328,7 @@ func handleDeleteMultiple(names []string, nonInteractive bool, deleteBranch, del
 
 	// Single confirmation prompt
 	if !nonInteractive {
-		choice, err := wt.ShowMenu(
+		choice, err := session.Show(
 			fmt.Sprintf("Delete these %d worktrees?", len(resolved)),
 			[]string{"Yes, delete all"},
 			0)
@@ -357,7 +365,7 @@ func handleDeleteMultiple(names []string, nonInteractive bool, deleteBranch, del
 	return nil
 }
 
-func handleDeleteAll(nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
+func handleDeleteAll(session *wt.MenuSession, nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
 	ctx, err := wt.GetRepoContext()
 	if err != nil {
 		wt.ExitWithError(wt.ExitGeneralError, "Cannot get repo context", err.Error(), "")
@@ -406,7 +414,7 @@ func handleDeleteAll(nonInteractive bool, deleteBranch, deleteRemote, stashMode 
 
 	// Confirmation
 	if !nonInteractive {
-		choice, err := wt.ShowMenu(
+		choice, err := session.Show(
 			fmt.Sprintf("Delete ALL %d worktree(s)?", len(worktrees)),
 			[]string{"Yes, delete all"},
 			0)
@@ -437,7 +445,7 @@ func handleDeleteAll(nonInteractive bool, deleteBranch, deleteRemote, stashMode 
 	return nil
 }
 
-func handleDeleteMenu(nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
+func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
 	ctx, err := wt.GetRepoContext()
 	if err != nil {
 		wt.ExitWithError(wt.ExitGeneralError, "Cannot get repo context", err.Error(), "")
@@ -495,7 +503,7 @@ func handleDeleteMenu(nonInteractive bool, deleteBranch, deleteRemote, stashMode
 		menuNames = append(menuNames, fmt.Sprintf("%s (%s)", o.name, o.branch))
 	}
 
-	choice, err := wt.ShowMenu("Select worktree to delete:", menuNames, defaultIdx)
+	choice, err := session.Show("Select worktree to delete:", menuNames, defaultIdx)
 	if err != nil {
 		return err
 	}
@@ -505,15 +513,15 @@ func handleDeleteMenu(nonInteractive bool, deleteBranch, deleteRemote, stashMode
 	}
 
 	if choice == 1 {
-		return handleDeleteAll(nonInteractive, deleteBranch, deleteRemote, stashMode)
+		return handleDeleteAll(session, nonInteractive, deleteBranch, deleteRemote, stashMode)
 	}
 
 	selected := options[choice-2]
 	rb := wt.NewRollback()
-	return handleDeleteByName(selected.name, nonInteractive, deleteBranch, deleteRemote, stashMode, rb)
+	return handleDeleteByName(session, selected.name, nonInteractive, deleteBranch, deleteRemote, stashMode, rb)
 }
 
-func handleUncommittedChanges(wtName, stashMode string, nonInteractive bool, rb *wt.Rollback) error {
+func handleUncommittedChanges(session *wt.MenuSession, wtName, stashMode string, nonInteractive bool, rb *wt.Rollback) error {
 	dateStr := time.Now().Format("2006-01-02")
 
 	if stashMode == "stash" {
@@ -535,7 +543,7 @@ func handleUncommittedChanges(wtName, stashMode string, nonInteractive bool, rb 
 
 	fmt.Printf("\n%sWarning:%s Worktree has uncommitted changes\n\n", wt.ColorYellow, wt.ColorReset)
 
-	choice, err := wt.ShowMenu("What would you like to do?", []string{
+	choice, err := session.Show("What would you like to do?", []string{
 		"Stash changes and delete (Recommended)",
 		"Discard changes and delete",
 	}, 1)
@@ -562,7 +570,7 @@ func handleUncommittedChanges(wtName, stashMode string, nonInteractive bool, rb 
 	return nil
 }
 
-func handleUnpushedCommits(branch string, nonInteractive bool) error {
+func handleUnpushedCommits(session *wt.MenuSession, branch string, nonInteractive bool) error {
 	if nonInteractive {
 		return nil
 	}
@@ -580,7 +588,7 @@ func handleUnpushedCommits(branch string, nonInteractive bool) error {
 	}
 	fmt.Println()
 
-	choice, err := wt.ShowMenu("Continue anyway?", []string{
+	choice, err := session.Show("Continue anyway?", []string{
 		"Yes, delete (commits will be lost)",
 	}, 0)
 	if err != nil {
