@@ -195,6 +195,55 @@ This file documents the contract that `wt list` honors after the status-opt-in c
   Status / Last Active / Path); the recent-mode human table renders 4 columns (Name /
   Branch / Last Active / Path).
 
+### `idle` opt-in pointer field (`260530-5fyu`)
+
+- `listEntry` has `Idle *bool` with the `json:"idle,omitempty"` tag — the **same
+  opt-in pointer shape** as `Dirty *bool` / `Unpushed *int` / `LastActive
+  *time.Time`. This extends the existing pointer-field/omitempty contract; it does
+  not contradict it.
+- **Set iff `LastActive` is non-nil.** `populateIdle(entries, now)` (called in
+  `listCmd` right after `sortEntries`) sets `Idle` non-nil **exactly when
+  `LastActive` is non-nil** — it `continue`s past any entry whose `LastActive` is
+  nil. So the `idle` JSON key is present precisely when `last_active` is present
+  (i.e. under `--status`), and **absent on the plain `--json` and `--json
+  --sort=recent` paths** (where `persistKey == false` leaves `LastActive` nil →
+  `omitempty` omits both keys). This preserves the Constitution VI machine-output
+  stability contract: default JSON output stays byte-for-byte stable; the `idle`
+  field is purely additive and opt-in via `--status`.
+- **No new stat or subprocess.** `populateIdle` reads the recency value already in
+  hand (`*entries[i].LastActive`, set by `--status` enrichment or recent-mode
+  `sortEntries`) — it adds **no** `os.Stat` and **no** `git` subprocess. Idleness
+  is evaluated against the built-in `wt.DefaultIdleThreshold`; `wt list` has no
+  per-invocation threshold override (that lives on `wt delete --stale`).
+- **Main worktree → false.** When the field is present, the main worktree's `idle`
+  is forced to `false` (`!entries[i].IsMain && wt.IsIdle(...)`). The main worktree
+  is never idle in any layout.
+- Consumers MUST treat an absent `idle` key as "idleness was not computed" (no
+  `--status`), NOT as "not idle" — the same present-vs-uncomputed discipline as
+  `dirty`/`unpushed`/`last_active`.
+
+### `⚠ idle` marker on the `Last Active` cell (`260530-5fyu`)
+
+- In the human layouts that display `Last Active`, an idle non-main worktree gets a
+  trailing ` ⚠ idle` marker appended to its `Last Active` cell: `relativeTime(t) + "
+  " + ColorYellow + "⚠ idle" + ColorReset`. The marker is emitted in BOTH the
+  **4-column recent** layout (`recentLayout == true`) and the **5-column
+  `--status`** layout, driven by `e.Idle != nil && *e.Idle` in the shared
+  `displayRow` preparation loop. The **3-column `name`/`branch`** human modes show
+  NO marker and add no stat (their `LastActive` stays nil → `Idle` stays nil).
+- The word is **"idle"**, not "stale" — the framing is "untouched on disk," not a
+  verdict that the work is dead (see Design Decisions in
+  `wt-cli/idle-staleness-contract.md`).
+- **Manual displayWidth padding for the `Last Active` cell.** Because the cell may
+  now carry the multi-byte `⚠` glyph plus ANSI color codes, both the 4-column and
+  5-column branches pad it **manually by `displayWidth`** (`lastActivePad :=
+  colWidths[…] - displayWidth(r.lastActive)`, then `strings.Repeat(" ",
+  lastActivePad)`) rather than via `%-*s`. `%-*s` pads by **byte count**, so the
+  glyph + ANSI would over-count the width and leave the `Path` column ragged. This
+  is the **same technique the `Status` column already uses** (`statusPad`) for its
+  ANSI/multi-byte `*`/`↑` markers. The non-marker cells in those branches (`Branch`)
+  still use `%-*s` since they carry no wide/ANSI content.
+
 ## Design Decisions
 
 ### Pointer fields over plain `bool`/`int` for JSON shape
@@ -244,6 +293,21 @@ pattern exists to avoid. The field is computed inside the existing
 `listEntriesEnriched` pass by reusing the stat-gate's `os.Stat` result, so it adds
 no new `os.Stat` and no new `git` subprocess.
 
+### `Idle *bool` opt-in pointer, tied to `LastActive` presence (`260530-5fyu`)
+
+Same opt-in pointer shape as `Dirty`/`Unpushed`/`LastActive`: nil → key omitted
+("idleness not computed"); non-nil → key present (including `false`). `Idle` is set
+by `populateIdle` exactly when `LastActive` is non-nil, deliberately tying the
+`idle` JSON key's presence to `last_active`'s — both appear only under `--status`,
+keeping the default `--json`/`--json --sort=recent` output byte-for-byte stable
+(Constitution VI). Reusing the already-persisted `LastActive` as the idleness input
+avoids any new `os.Stat` or `git` subprocess on the list path. A plain `bool` was
+rejected for the same present-vs-uncomputed reason as the sibling fields; a glyph in
+JSON was rejected because machine consumers want a boolean, not display text. The
+idle predicate itself (`wt.IsIdle`, `wt.DefaultIdleThreshold`) lives in
+`internal/worktree` and is shared with `wt delete` — see
+`wt-cli/idle-staleness-contract.md`.
+
 ### Persist the discarded recency key vs. re-stat in the render path (`260601-73cv`)
 
 The recent-mode `Last Active` column displays the recency key `sortEntries` already
@@ -282,17 +346,18 @@ relative buckets).
 ## Cross-references
 
 - Spec doc: `docs/specs/cli-surface.md` — `wt list` section (lines ~52-73, flag table + prose).
-- Source: `src/cmd/wt/list.go` — `listEntry` (now with `LastActive *time.Time`), `listCmd`, `listEntriesBasic`, `listEntriesEnriched`, `buildBaseEntry`, `checkDirty`, `getUnpushedInDir`, `maxListConcurrency`, plus the `260530-rtmf` additions: `sortMode`, `isValidSort`, `resolveSort`, `sortEntries`, `relativeTime`. `260601-73cv` changed `sortEntries(entries, mode, persistKey bool)` and `handleFormattedOutput(entries, ctx, showStatus, mode sortMode)`, and added the 4-column recent-layout rendering branch in `handleFormattedOutput`.
+- Source: `src/cmd/wt/list.go` — `listEntry` (now with `LastActive *time.Time` and `Idle *bool`), `listCmd`, `listEntriesBasic`, `listEntriesEnriched`, `buildBaseEntry`, `checkDirty`, `getUnpushedInDir`, `maxListConcurrency`, plus the `260530-rtmf` additions: `sortMode`, `isValidSort`, `resolveSort`, `sortEntries`, `relativeTime`. `260601-73cv` changed `sortEntries(entries, mode, persistKey bool)` and `handleFormattedOutput(entries, ctx, showStatus, mode sortMode)`, and added the 4-column recent-layout rendering branch in `handleFormattedOutput`. `260530-5fyu` added the `Idle *bool` field, `populateIdle`, and the `⚠ idle` marker (with displayWidth-based `lastActivePad`) in the 4-column and 5-column branches.
 - Source: `src/internal/worktree/recency.go` — `RecencyOf`, `RecencyLess`, `SortByRecency` (the shared comparator consumed by `sortEntries`).
 - Tests: `src/cmd/wt/list_test.go` — default-mode coverage (`TestList_DefaultHeader`, `TestList_DefaultModeNoDirtyIndicator`, `TestList_JSONDefaultFields`), `--status`-mode coverage (`TestList_StatusHeader`, `TestList_StatusModeShowsDirty`, `TestList_StatusFlagShowsUnpushed`, `TestList_JSONStatusFields`, `TestList_StatusAndPathMutuallyExclusive`, `TestList_StatusOrderingPreserved`), `260530-rtmf` ordering/last-active coverage (recency/name/invalid-sort/main-pinned/`--path`+`--sort` mutex, JSON-default-stable, `last_active` key presence/absence), and `260601-73cv` recent-column coverage (updated `TestList_HumanDefaultIsRecency` and `TestList_LastActiveRelativeTimeInHumanStatus`; new 4-column `Last Active` header + relative-time value in the default human view, `name`/`branch` modes stay 3-column, `--json`/`--json --sort=recent` omit `last_active`, main-worktree shows its own relative time, vanished worktree renders `-`, and a main-only repo renders the 4-column header without misalignment).
 - Constitution: Principle II (Cobra command surface), III (Typed exit codes — `ExitInvalidArgs` for the new mutex check), IV (test coverage split per mode).
 - Sibling memory: `wt-cli/init-failure-contract.md` — same pattern of post-change invariant capture for a different `wt` subcommand.
 - Sibling memory: `wt-cli/recency-ordering-contract.md` — the shared `RecencyOf`/`RecencyLess`/`SortByRecency` definition that this file's `--sort`/`recent` ordering and `last_active` field consume; also covers the `wt open`/`wt delete` menu ordering.
+- Sibling memory: `wt-cli/idle-staleness-contract.md` — the `wt.IsIdle` predicate, `DefaultIdleThreshold`, and `wt delete --stale` selector that the `Idle *bool` field and `⚠ idle` marker documented here consume. That file is the authoritative cross-command (list + delete) idle contract; this file documents only the `wt list` display/JSON surface of it.
 
 ## Open follow-ups (not in scope for this change)
 
 - `src/internal/worktree/git.go` still hosts the OLD slow patterns (`HasUncommittedChanges` + `HasUntrackedFiles`, and `HasUnpushedCommits` + `GetUnpushedCount` with a separate upstream lookup). These are consumed by `wt create` / `wt delete`, not `wt list`, so they were intentionally left untouched. A future change SHOULD unify them with the faster patterns from this change. (Note: `260530-rtmf` consolidated only the *inline mtime/recency loops* in `open.go`/`delete.go` into `wt.SortByRecency` — these slow dirty/unpushed `git.go` patterns are a separate concern and remain unchanged.)
-- The worktree-directory `mtime` recency signal is noisy (moves on any file write). The follow-up `260530-5fyu-stale-worktree-hints` will revisit signal quality for staleness detection; see `wt-cli/recency-ordering-contract.md`.
+- ~~The worktree-directory `mtime` recency signal is noisy (moves on any file write). The follow-up `260530-5fyu-stale-worktree-hints` will revisit signal quality for staleness detection.~~ **Resolved by `260530-5fyu`**: the signal-quality question was settled as **keep dir-mtime + honest "idle / untouched on disk" framing** (option b — no second/cleaner staleness signal). The idle predicate built on `RecencyOf` now powers the `idle` field / `⚠ idle` marker here and the `wt delete --stale` selector. See `wt-cli/idle-staleness-contract.md`.
 
 ## Changelog
 
@@ -301,3 +366,4 @@ relative buckets).
 | `260516-lfa8-list-status-opt-in` | 2026-05-16 | Established default `wt list` as enrichment-free (Name/Branch/Path), introduced `--status` opt-in flag for the dashboard view, replaced 3-call `checkDirty` with single `git status --porcelain`, replaced 2-call `getUnpushedInDir` with single `git rev-list --count @{u}..HEAD`, parallelized `--status` enrichment with bounded worker pool, pointer-field JSON shape for present-vs-absent semantics. |
 | `260530-rtmf-recency-aware-listing` | 2026-05-31 | Added `--sort <recent\|name\|branch>` and a `--non-interactive` BoolVar to `wt list`; audience-split default ordering (human→recent, `--json`/`--non-interactive`→stable name) decided purely by flags (no isatty); `--path`↔`--sort` mutex (`ExitInvalidArgs`, "mutually exclusive"); main worktree pinned first under all sort modes; sorting is a deterministic post-enrichment step that does not disturb the worker-pool indexed-write ordering. Added the `LastActive *time.Time` opt-in pointer (`last_active,omitempty`): nil/key-omitted in default mode, non-nil under `--status` (zero time for vanished worktrees → `"0001-01-01T00:00:00Z"`), computed from the enrichment stat-gate's own `os.Stat` (no new git subprocess, no new stat); human `--status` output gains a relative `Last Active` column via `relativeTime`. |
 | `260601-73cv-list-recency-column` | 2026-06-01 | **Intentional amendment** to the default-human-output invariant: the recency-ordered human view (default human mode + explicit `--sort=recent`) now renders a 4-column `Name / Branch / Last Active / Path` table; `name`/`branch` human modes stay 3-column, `--status` stays 5-column. `relativeTime` rendering and `LastActive` population are no longer exclusive to `--status`. `sortEntries(entries, mode, persistKey bool)` gained a `persistKey` param (caller passes `!jsonOut`); recent mode now persists the previously-discarded recency key into each non-nil-only `entries[i].LastActive` (reusing the already-paid stat — no second `os.Stat`, no git subprocess) and populates the pinned main entry's nil `LastActive` via a single `wt.RecencyOf`. `handleFormattedOutput(entries, ctx, showStatus, mode sortMode)` gained the `mode` param and keys layout on `recentLayout := mode == sortRecent && !showStatus` (no longer on `showStatus` alone), with a new 4-column rendering branch. **JSON unchanged**: `persistKey == false` on the `--json` path leaves `LastActive` nil so `omitempty` keeps `last_active` out of `--json`/`--json --sort=recent`; machine modes keep their stable `name` default. |
+| `260530-5fyu-stale-worktree-hints` | 2026-06-01 | Added the `Idle *bool` opt-in pointer field (`json:"idle,omitempty"`), set by `populateIdle` exactly when `LastActive` is non-nil (so present only under `--status`; absent on `--json`/`--json --sort=recent`, preserving the Constitution VI machine-output stability), with the main worktree forced to `false`. Reuses the already-persisted `LastActive` as the idleness input — no new `os.Stat`, no git subprocess. Added the `⚠ idle` marker on the `Last Active` cell in BOTH the 4-column recent and 5-column `--status` layouts (3-column `name`/`branch` modes show no marker, add no stat); the cell is padded manually by `displayWidth` (`lastActivePad`) because the `⚠` glyph + ANSI would break `%-*s` byte-padding — the same technique the `Status` column uses. The idle predicate (`wt.IsIdle`, `wt.DefaultIdleThreshold`) lives in `internal/worktree` and is shared with `wt delete`; see `wt-cli/idle-staleness-contract.md`. Extends the existing pointer-field/omitempty contract — no contradiction. |

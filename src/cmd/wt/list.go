@@ -35,6 +35,7 @@ type listEntry struct {
 	Dirty      *bool      `json:"dirty,omitempty"`
 	Unpushed   *int       `json:"unpushed,omitempty"`
 	LastActive *time.Time `json:"last_active,omitempty"`
+	Idle       *bool      `json:"idle,omitempty"`
 }
 
 // maxListConcurrency caps the worker pool for --status enrichment regardless of
@@ -128,6 +129,14 @@ it forks 2 git subprocesses per worktree (parallelized).`,
 			// out of --json --sort=recent (Constitution VI machine-output contract).
 			mode := resolveSort(sortFlag, jsonOut, nonInteractive)
 			sortEntries(entries, mode, !jsonOut)
+
+			// Derive the idle marker from the recency key already persisted into
+			// LastActive (by --status enrichment or recent-mode sortEntries) — no
+			// new os.Stat, no git subprocess. The Idle pointer is set non-nil
+			// exactly when LastActive is non-nil, so JSON emits "idle" only when
+			// last_active is present (i.e. under --status); the main worktree is
+			// never idle.
+			populateIdle(entries, time.Now())
 
 			if jsonOut {
 				return handleJSONOutput(entries)
@@ -264,6 +273,24 @@ func sortEntries(entries []listEntry, mode sortMode, persistKey bool) {
 	}
 }
 
+// populateIdle sets the Idle pointer on each entry whose LastActive is non-nil,
+// reusing the already-computed recency value as the idleness input (no new
+// os.Stat, no git subprocess). Idle is set non-nil exactly when LastActive is
+// non-nil, so JSON output emits the "idle" key only when "last_active" is also
+// present (i.e. under --status). The main worktree is never marked idle: its
+// Idle is forced to false whenever the field is present. Idleness is evaluated
+// against the built-in DefaultIdleThreshold; wt list has no per-invocation
+// override (that lives on wt delete --stale).
+func populateIdle(entries []listEntry, now time.Time) {
+	for i := range entries {
+		if entries[i].LastActive == nil {
+			continue
+		}
+		idle := !entries[i].IsMain && wt.IsIdle(*entries[i].LastActive, now, wt.DefaultIdleThreshold)
+		entries[i].Idle = &idle
+	}
+}
+
 func handlePathLookup(name string, ctx *wt.RepoContext) error {
 	entries, err := listWorktreeEntries()
 	if err != nil {
@@ -383,13 +410,19 @@ func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus 
 		// Last Active is rendered under --status (5-column) and in recent human
 		// mode (4-column). sortEntries persisted the recency key into LastActive
 		// on the human path, so this reuses it — no second os.Stat. A nil pointer
-		// falls back to the zero time, which relativeTime renders as "-".
+		// falls back to the zero time, which relativeTime renders as "-". An idle
+		// non-main worktree gets a trailing " ⚠ idle" marker on the same cell,
+		// reusing the already-computed Idle flag (no new stat). The main worktree
+		// is never marked (its Idle is false when set).
 		if showStatus || recentLayout {
 			var t time.Time
 			if e.LastActive != nil {
 				t = *e.LastActive
 			}
 			lastActive = relativeTime(t)
+			if e.Idle != nil && *e.Idle {
+				lastActive += " " + wt.ColorYellow + "⚠ idle" + wt.ColorReset
+			}
 		}
 
 		rows[i] = displayRow{
@@ -436,13 +469,17 @@ func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus 
 			}
 			namePad := colWidths[0] - displayWidth(r.name)
 			statusPad := colWidths[2] - displayWidth(r.status)
+			// lastActive may carry ANSI codes and the multi-byte "⚠" marker, so
+			// pad by display width like Status above — %-*s pads by byte count and
+			// would leave the Path column ragged when the idle marker is present.
+			lastActivePad := colWidths[3] - displayWidth(r.lastActive)
 
-			fmt.Printf("%s%s%s  %-*s  %s%s  %-*s  %s\n",
+			fmt.Printf("%s%s%s  %-*s  %s%s  %s%s  %s\n",
 				marker,
 				r.name, strings.Repeat(" ", namePad),
 				colWidths[1], r.branch,
 				r.status, strings.Repeat(" ", statusPad),
-				colWidths[3], r.lastActive,
+				r.lastActive, strings.Repeat(" ", lastActivePad),
 				r.path)
 		}
 	} else if recentLayout {
@@ -475,12 +512,16 @@ func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus 
 				marker = wt.ColorGreen + "*" + wt.ColorReset + " "
 			}
 			namePad := colWidths[0] - displayWidth(r.name)
+			// lastActive may carry ANSI codes and the multi-byte "⚠" marker, so
+			// pad by display width — %-*s pads by byte count and would leave the
+			// Path column ragged when the idle marker is present.
+			lastActivePad := colWidths[2] - displayWidth(r.lastActive)
 
-			fmt.Printf("%s%s%s  %-*s  %-*s  %s\n",
+			fmt.Printf("%s%s%s  %-*s  %s%s  %s\n",
 				marker,
 				r.name, strings.Repeat(" ", namePad),
 				colWidths[1], r.branch,
-				colWidths[2], r.lastActive,
+				r.lastActive, strings.Repeat(" ", lastActivePad),
 				r.path)
 		}
 	} else {

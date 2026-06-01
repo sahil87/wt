@@ -22,6 +22,7 @@ func deleteCmd() *cobra.Command {
 		deleteAll      bool
 		stashFlag      bool
 		nonInteractive bool
+		staleFlag      string
 	)
 
 	cmd := &cobra.Command{
@@ -30,7 +31,7 @@ func deleteCmd() *cobra.Command {
 		Long: `Delete one or more git worktrees with optional branch cleanup.
 
 Positional arguments are interpreted as worktree names to delete.
-Resolution order: --delete-all, positional args, --worktree-name (deprecated), current worktree, interactive selection.`,
+Resolution order: --stale, --delete-all, positional args, --worktree-name (deprecated), current worktree, interactive selection.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Apply defaults (deleteBranch "" = auto mode, handled by handleBranchCleanup)
@@ -61,6 +62,33 @@ Resolution order: --delete-all, positional args, --worktree-name (deprecated), c
 				stashMode = "stash"
 			}
 
+			// --stale mutex checks run before any git work or session setup so a
+			// mis-typed threshold fails fast. cmd.Flags().Changed("stale") detects
+			// the flag's presence (the bare form sets the 7d NoOptDefVal, so a nil
+			// check on the value would not distinguish "absent" from "bare").
+			staleRequested := cmd.Flags().Changed("stale")
+			if staleRequested {
+				// --stale + positional names: the space-separated --stale Nd form
+				// parses Nd as a positional worktree name, so a positional alongside
+				// --stale is almost always a mis-typed threshold. Convert it into a
+				// loud, recoverable error (matching the --path↔--status idiom in
+				// wt list) rather than silently mis-targeting.
+				if len(args) > 0 {
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						"--stale and worktree names are mutually exclusive",
+						"--stale selects idle worktrees automatically; passing names alongside it is ambiguous",
+						"Use '--stale=Nd' for the threshold (the '=' is required), e.g. wt delete --stale=30d")
+				}
+				// --stale + --delete-all: --delete-all already targets every
+				// worktree, so combining the two is contradictory.
+				if deleteAll {
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						"--stale and --delete-all are mutually exclusive",
+						"--delete-all already targets every worktree; --stale is a narrowing selector",
+						"Use one of them, not both")
+				}
+			}
+
 			// One terminal session spans every menu this invocation shows. The
 			// delete flow chains menus (e.g. selection → uncommitted-changes →
 			// unpushed-commits → final confirm), and a fresh reader per menu
@@ -68,6 +96,10 @@ Resolution order: --delete-all, positional args, --worktree-name (deprecated), c
 			// stealing the next menu's first keystroke (see wt.MenuSession).
 			session := wt.NewMenuSession()
 			defer session.Close()
+
+			if staleRequested {
+				return handleDeleteStale(session, staleFlag, nonInteractive, deleteBranch, deleteRemote, stashMode)
+			}
 
 			if deleteAll {
 				return handleDeleteAll(session, nonInteractive, deleteBranch, deleteRemote, stashMode)
@@ -109,6 +141,13 @@ Resolution order: --delete-all, positional args, --worktree-name (deprecated), c
 	cmd.Flags().BoolVar(&deleteAll, "delete-all", false, "Delete all worktrees")
 	cmd.Flags().BoolVarP(&stashFlag, "stash", "s", false, "Stash uncommitted changes before deleting")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts, use defaults")
+	cmd.Flags().StringVar(&staleFlag, "stale", "", "Select idle worktrees (filesystem mtime older than the threshold) for deletion. Bare --stale uses the 7d default; --stale=Nd overrides (e.g. --stale=30d). The '=' is required.")
+	// NoOptDefVal lets bare `--stale` carry the 7d default without an argument;
+	// `--stale=Nd` overrides. The value MUST use `=` — `--stale 30d` would parse
+	// 30d as a positional worktree name (cobra.ArbitraryArgs), which the
+	// stale↔positional mutex below converts into a loud error rather than a
+	// silent mis-target.
+	cmd.Flags().Lookup("stale").NoOptDefVal = "7d"
 
 	cmd.Flags().MarkDeprecated("worktree-name", "use positional arguments instead")
 
@@ -445,6 +484,59 @@ func handleDeleteAll(session *wt.MenuSession, nonInteractive bool, deleteBranch,
 	return nil
 }
 
+// handleDeleteStale selects every non-main worktree that is idle (filesystem
+// mtime older than the resolved threshold) and routes the selection through the
+// existing handleDeleteMultiple flow — so each removal still passes through the
+// per-worktree stash/unpushed safety prompts and rollback. Idleness only
+// pre-selects candidates; it is never the sole gate for removal (R20).
+//
+// staleValue is the raw flag value: "" / "7d" (bare --stale via NoOptDefVal) or
+// an "Nd" override. An invalid value exits ExitInvalidArgs. Zero matches is not
+// an error — it prints an informational message and exits ExitSuccess.
+func handleDeleteStale(session *wt.MenuSession, staleValue string, nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
+	threshold, err := wt.ParseIdleThreshold(staleValue)
+	if err != nil {
+		wt.ExitWithError(wt.ExitInvalidArgs,
+			"Invalid --stale threshold",
+			err.Error(),
+			"Use a day-suffixed integer, e.g. --stale=30d")
+	}
+
+	ctx, err := wt.GetRepoContext()
+	if err != nil {
+		wt.ExitWithError(wt.ExitGeneralError, "Cannot get repo context", err.Error(), "")
+	}
+
+	entries, err := listWorktreeEntries()
+	if err != nil {
+		wt.ExitWithError(wt.ExitGitError, "Cannot list worktrees", err.Error(), "")
+	}
+
+	now := time.Now()
+	var idleNames []string
+	for _, e := range entries {
+		if e.path == ctx.RepoRoot {
+			continue // main worktree is never an idle candidate (R21)
+		}
+		if wt.IsIdle(wt.RecencyOf(e.path), now, threshold) {
+			idleNames = append(idleNames, filepath.Base(e.path))
+		}
+	}
+
+	if len(idleNames) == 0 {
+		fmt.Printf("No idle worktrees (threshold: %s).\n", formatThreshold(threshold))
+		return nil
+	}
+
+	return handleDeleteMultiple(session, idleNames, nonInteractive, deleteBranch, deleteRemote, stashMode)
+}
+
+// formatThreshold renders a whole-day duration back as an Nd string for the
+// informational empty-state message, matching the --stale=Nd input form.
+func formatThreshold(d time.Duration) string {
+	return fmt.Sprintf("%dd", int(d.Hours())/24)
+}
+
 func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
 	ctx, err := wt.GetRepoContext()
 	if err != nil {
@@ -479,19 +571,53 @@ func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch
 
 	// Order newest-first via the shared recency comparator, matching the
 	// wt open menu. The newest worktree lands first among worktrees and stays
-	// the pre-selected default (offset by 1 for the prepended "All" entry).
+	// the pre-selected default (offset by the prepended "All"/"All idle" entries).
 	wt.SortByRecency(options,
 		func(o wtOption) string { return o.path },
 		func(o wtOption) string { return o.name },
 	)
-	defaultIdx := 2
 
-	// Prepend "All" option
+	// Determine idleness per option from the recency signal. This re-stats each
+	// path once (SortByRecency does not expose its internal keys), which is
+	// acceptable on the interactive menu path at the ≤100-worktree scale and keeps
+	// the annotation consistent with --stale. Note R6's no-extra-stat guarantee
+	// governs only the wt list path, not this menu. Idle options are annotated
+	// with a trailing ", idle"; the count drives the optional "All idle (N)" entry.
+	now := time.Now()
+	idle := make([]bool, len(options))
+	var idleNames []string
+	for i, o := range options {
+		if wt.IsIdle(wt.RecencyOf(o.path), now, wt.DefaultIdleThreshold) {
+			idle[i] = true
+			idleNames = append(idleNames, o.name)
+		}
+	}
+
+	// Build the menu: "All (N worktrees)" at index 1, then "All idle (M)" at
+	// index 2 ONLY when at least one worktree is idle (no "All idle (0)" row).
+	// The first worktree row — and the pre-selected default — is index 2 when
+	// "All idle" is absent, and shifts to 3 when it is present (amending the
+	// recency-ordering contract's documented defaultIdx = 2).
 	allLabel := fmt.Sprintf("All (%d worktrees)", len(options))
 	menuNames := []string{allLabel}
-	for _, o := range options {
-		menuNames = append(menuNames, fmt.Sprintf("%s (%s)", o.name, o.branch))
+	hasAllIdle := len(idleNames) > 0
+	if hasAllIdle {
+		menuNames = append(menuNames, fmt.Sprintf("All idle (%d)", len(idleNames)))
 	}
+	for i, o := range options {
+		label := fmt.Sprintf("%s (%s)", o.name, o.branch)
+		if idle[i] {
+			label += ", idle"
+		}
+		menuNames = append(menuNames, label)
+	}
+
+	// firstWorktreeIdx is the menu index of the first (newest) worktree row.
+	firstWorktreeIdx := 2
+	if hasAllIdle {
+		firstWorktreeIdx = 3
+	}
+	defaultIdx := firstWorktreeIdx
 
 	choice, err := session.Show("Select worktree to delete:", menuNames, defaultIdx)
 	if err != nil {
@@ -506,7 +632,13 @@ func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch
 		return handleDeleteAll(session, nonInteractive, deleteBranch, deleteRemote, stashMode)
 	}
 
-	selected := options[choice-2]
+	if hasAllIdle && choice == 2 {
+		// Route the idle subset through the existing multi-delete flow — no new
+		// deletion code path; per-worktree safety prompts/rollback still run.
+		return handleDeleteMultiple(session, idleNames, nonInteractive, deleteBranch, deleteRemote, stashMode)
+	}
+
+	selected := options[choice-firstWorktreeIdx]
 	rb := wt.NewRollback()
 	return handleDeleteByName(session, selected.name, nonInteractive, deleteBranch, deleteRemote, stashMode, rb)
 }
