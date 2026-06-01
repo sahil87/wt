@@ -257,7 +257,11 @@ or creates a new branch.`,
 				runInit = wt.ConfirmYesNo("Initialize worktree?")
 			}
 
-			// Emit deferred summary (still under rollback handler).
+			// Emit deferred summary (still under rollback handler). The Git
+			// phase separator joins this emission — it precedes the summary
+			// (the Git phase's output) and stays before the init-phase
+			// signal.Reset, so no new I/O enters the tight reinstall window.
+			fmt.Fprintln(os.Stderr, wt.PhaseSeparator("Git"))
 			for _, w := range baseWarnings {
 				fmt.Fprintln(os.Stderr, w)
 			}
@@ -305,7 +309,15 @@ or creates a new branch.`,
 			}
 
 			// Open
+			//
+			// The Open separator is emitted only when the open phase will
+			// actually run — never for the skip case (incl. --non-interactive
+			// defaulting to skip), since a separator must not precede a phase
+			// that emits nothing.
 			var suppressPath bool
+			if worktreeOpen != "skip" {
+				fmt.Fprintln(os.Stderr, wt.PhaseSeparator("Open"))
+			}
 			if worktreeOpen == "prompt" {
 				apps := wt.BuildAvailableApps()
 				if len(apps) > 0 {

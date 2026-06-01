@@ -251,6 +251,110 @@ func TestPrintInitFailureBanner_PathWithSpaces(t *testing.T) {
 	}
 }
 
+// stripANSI removes CSI escape sequences (ESC [ ... letter) so the visible
+// width of a colored separator can be measured. Counts runes, not bytes, so
+// the multi-byte unicode rule glyph (─) is counted as one column.
+func stripANSI(s string) string {
+	var b strings.Builder
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		if runes[i] == '\033' && i+1 < len(runes) && runes[i+1] == '[' {
+			i += 2
+			for i < len(runes) && (runes[i] < '@' || runes[i] > '~') {
+				i++
+			}
+			// i now points at the final byte of the sequence (e.g. 'm'); the
+			// loop's i++ skips it.
+			continue
+		}
+		b.WriteRune(runes[i])
+	}
+	return b.String()
+}
+
+func TestPhaseSeparator_ColoredForm(t *testing.T) {
+	origBold, origReset := ColorBold, ColorReset
+	defer func() { ColorBold, ColorReset = origBold, origReset }()
+	ColorBold = "\033[1m"
+	ColorReset = "\033[0m"
+
+	sep := PhaseSeparator("Git")
+
+	if !strings.Contains(sep, "Git") {
+		t.Errorf("colored separator missing label %q: %q", "Git", sep)
+	}
+	if !strings.Contains(sep, "─") {
+		t.Errorf("colored separator missing unicode rule glyph %q: %q", "─", sep)
+	}
+	if !strings.Contains(sep, "\033[1m") {
+		t.Errorf("colored separator missing ColorBold ANSI escape around label: %q", sep)
+	}
+}
+
+func TestPhaseSeparator_NoColorForm(t *testing.T) {
+	// Replicate the NO_COLOR state the package init() would produce by
+	// blanking the color vars (the same save/blank/restore pattern the other
+	// tests in this file use); avoids depending on process-start env.
+	origBold, origReset := ColorBold, ColorReset
+	defer func() { ColorBold, ColorReset = origBold, origReset }()
+	ColorBold = ""
+	ColorReset = ""
+
+	sep := PhaseSeparator("Git")
+
+	if !strings.Contains(sep, "Git") {
+		t.Errorf("NO_COLOR separator missing label %q: %q", "Git", sep)
+	}
+	if !strings.Contains(sep, "-") {
+		t.Errorf("NO_COLOR separator missing ASCII rule glyph %q: %q", "-", sep)
+	}
+	if strings.Contains(sep, "\033[") {
+		t.Errorf("NO_COLOR separator must contain no ANSI escapes: %q", sep)
+	}
+	if strings.Contains(sep, "─") {
+		t.Errorf("NO_COLOR separator must not use the unicode rule glyph: %q", sep)
+	}
+}
+
+func TestPhaseSeparator_FixedWidthNoTrailingNewline(t *testing.T) {
+	cases := []struct {
+		name    string
+		colored bool
+		bold    string
+		reset   string
+		label   string
+	}{
+		{name: "colored", colored: true, bold: "\033[1m", reset: "\033[0m", label: "Init (fab sync)"},
+		{name: "nocolor", colored: false, bold: "", reset: "", label: "Git"},
+		// Multi-byte label: a non-ASCII WORKTREE_INIT_SCRIPT path. Width is
+		// measured in visible columns (runes), so the separator must still be
+		// exactly phaseSeparatorWidth wide even though the label is wider in
+		// bytes than in runes. Regression guard for the len()-vs-RuneCount fix.
+		{name: "multibyte", colored: false, bold: "", reset: "", label: "Init (café/iniciá.sh)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			origBold, origReset := ColorBold, ColorReset
+			defer func() { ColorBold, ColorReset = origBold, origReset }()
+			ColorBold, ColorReset = tc.bold, tc.reset
+
+			sep := PhaseSeparator(tc.label)
+
+			if strings.HasSuffix(sep, "\n") {
+				t.Errorf("separator must not have a trailing newline: %q", sep)
+			}
+
+			visible := stripANSI(sep)
+			if got := len([]rune(visible)); got != phaseSeparatorWidth {
+				t.Errorf("visible width = %d, want %d (visible=%q)", got, phaseSeparatorWidth, visible)
+			}
+			if !strings.Contains(visible, tc.label) {
+				t.Errorf("visible separator missing label %q: %q", tc.label, visible)
+			}
+		})
+	}
+}
+
 func TestExitCodes(t *testing.T) {
 	if ExitSuccess != 0 {
 		t.Errorf("ExitSuccess = %d, want 0", ExitSuccess)

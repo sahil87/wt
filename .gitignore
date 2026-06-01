@@ -53,3 +53,4 @@ dist/
 
 # fab
 .fab-status.yaml
+.uploads/

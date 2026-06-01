@@ -150,6 +150,11 @@ func RunWorktreeSetupWithObserver(wtPath, initScript, repoRoot string, observer 
 		return nil
 	}
 
+	// Init phase separator, labeled with the resolved init command as the
+	// user would recognize it (e.g. "fab sync" or a script path). Emitted on
+	// stderr immediately before the existing "Running worktree init..." line
+	// so captured logs can attribute the init script's output to this phase.
+	fmt.Fprintln(os.Stderr, PhaseSeparator("Init ("+initScript+")"))
 	fmt.Fprintln(os.Stderr, "Running worktree init...")
 	cmd.Dir = wtPath
 	cmd.Stdout = os.Stderr
