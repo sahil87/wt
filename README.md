@@ -1,6 +1,6 @@
 # wt
 
-> Part of [@sahil87's open source toolkit](https://ai.shll.in) — see all projects there.
+> Part of [@sahil87's open source toolkit](https://shll.ai) — see all projects there.
 
 [![Latest release](https://img.shields.io/github/v/release/sahil87/wt)](https://github.com/sahil87/wt/releases) [![Downloads](https://img.shields.io/github/downloads/sahil87/wt/total)](https://github.com/sahil87/wt/releases) [![Stars](https://img.shields.io/github/stars/sahil87/wt?style=social)](https://github.com/sahil87/wt/stargazers)
 
@@ -146,4 +146,4 @@ detected app, or `7` to copy the absolute path to your clipboard.
 
 ---
 
-> Part of [@sahil87's open source toolkit](https://ai.shll.in) — see all projects there. Originally extracted from [fab-kit](https://github.com/sahil87/fab-kit); the fab-kit repo continues to bundle a copy during the transition.
+> Part of [@sahil87's open source toolkit](https://shll.ai) — see all projects there. Originally extracted from [fab-kit](https://github.com/sahil87/fab-kit); the fab-kit repo continues to bundle a copy during the transition.
