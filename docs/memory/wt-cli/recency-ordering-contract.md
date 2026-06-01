@@ -55,10 +55,21 @@ explicit spec amendment supersedes them.
   before the Name tie-break decides — deterministic and re-run-stable.
 - `wt open` and `wt delete` consume `SortByRecency` directly over their local
   `wtOption` slices. `wt list` does NOT call `SortByRecency` for its recent mode:
-  it inlines `RecencyLess` with a recency-key closure that prefers the
+  it inlines `RecencyLess` over a per-entry `keys[]` slice that prefers the
   already-computed `*LastActive` over a fresh stat (see
   `wt-cli/list-status-contract.md`). Both paths use the same `RecencyLess`
-  ordering definition, so they never drift.
+  ordering definition, so they never drift. (`260601-73cv` did not change this:
+  `wt list` still inlines `RecencyLess` and does not call `SortByRecency`.)
+- **`260601-73cv` (sort-key reuse for display)**: `wt list` recent mode now
+  PERSISTS the recency key it computes — previously discarded after sorting —
+  into `entries[i].LastActive`, gated on the human-output path (`persistKey ==
+  !jsonOut`), so the new `Last Active` column can display it without a second
+  `os.Stat`. This is a pure side-effect on the existing key computation: the
+  comparator/ordering definition (`RecencyOf`/`RecencyLess`/`SortByRecency`,
+  newest-first with Name-ascending tie-break) is UNCHANGED. The resulting order is
+  byte-for-byte identical to before; only the discard was removed. See
+  `wt-cli/list-status-contract.md` ("Recent mode persists the sort key into
+  `LastActive`") for the `persistKey` seam and the main-worktree populate.
 
 ### Open / delete menus list non-main worktrees newest-first
 
@@ -154,3 +165,4 @@ deferred.
 | Change | Date | Summary |
 |--------|------|---------|
 | `260530-rtmf-recency-aware-listing` | 2026-05-31 | Introduced the single recency definition: `RecencyOf(path)` (worktree-dir `os.Stat` mtime, zero time on failure), `RecencyLess` (newest-first, deterministic Name-ascending tie-break), and the generic `SortByRecency[T]` adapter in `internal/worktree`. Consolidated the duplicated inline mtime loops in `open.go`/`delete.go` into this shared helper; `wt open`/`wt delete` menus now list non-main worktrees newest-first with the newest pre-selected as the default (behavior-preserving default selection). |
+| `260601-73cv-list-recency-column` | 2026-06-01 | `wt list` recent mode now PERSISTS the computed recency key into `entries[i].LastActive` for display (previously discarded after sorting), gated on the human-output path via `sortEntries`'s new `persistKey` param. The comparator/ordering definition (`RecencyOf`/`RecencyLess`/`SortByRecency`, newest-first with Name-ascending tie-break) is UNCHANGED, and `wt list` still inlines `RecencyLess` (does not call `SortByRecency`). Ordering output is identical to before; only the key-discard was removed. See `wt-cli/list-status-contract.md` for the rendering/`persistKey` details. |
