@@ -133,4 +133,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/wt.rb
           git commit -m "wt v${version}"
+          # The tap's main may have advanced since the clone (concurrent writers).
+          # Rebase onto the current remote tip before pushing to avoid a
+          # non-fast-forward rejection.
+          git pull --rebase --autostash
           git push
