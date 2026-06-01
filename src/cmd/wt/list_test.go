@@ -716,7 +716,7 @@ func TestList_RecentHumanShowsLastActiveColumn(t *testing.T) {
 	for _, n := range []string{"fresh", "stale"} {
 		createWorktreeViaWt(t, repo, n)
 	}
-	chtimesWt(t, repo, "fresh", time.Now())                  // just now
+	chtimesWt(t, repo, "fresh", time.Now())                    // just now
 	chtimesWt(t, repo, "stale", time.Now().Add(-96*time.Hour)) // 4d ago
 
 	r := runWtSuccess(t, repo, nil, "list")
