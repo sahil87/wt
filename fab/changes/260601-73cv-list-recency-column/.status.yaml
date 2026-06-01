@@ -1,0 +1,51 @@
+id: 73cv
+name: 260601-73cv-list-recency-column
+created: 2026-06-01T00:27:56Z
+created_by: sahil87
+change_type: feat
+issues: []
+progress:
+    intake: done
+    spec: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: active
+    review-pr: pending
+plan:
+    generated: true
+    task_count: 15
+    acceptance_count: 18
+    acceptance_completed: 0
+confidence:
+    certain: 9
+    confident: 0
+    tentative: 0
+    unresolved: 0
+    score: 5.0
+    fuzzy: true
+    dimensions:
+        signal: 93.9
+        reversibility: 78.9
+        competence: 84.4
+        disambiguation: 81.7
+stage_metrics:
+    intake: {started_at: "2026-06-01T00:27:56Z", driver: fab-new, iterations: 1, completed_at: "2026-06-01T00:49:59Z"}
+    spec: {started_at: "2026-06-01T00:49:59Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-01T00:53:14Z"}
+    apply: {started_at: "2026-06-01T00:53:14Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-01T01:03:03Z"}
+    review: {started_at: "2026-06-01T01:03:03Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-01T01:06:41Z"}
+    hydrate: {started_at: "2026-06-01T01:06:41Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-01T01:09:56Z"}
+    ship: {started_at: "2026-06-01T01:09:56Z", driver: fab-fff, iterations: 1}
+prs: []
+true_impact:
+    added: 0
+    deleted: 0
+    net: 0
+    excluding:
+        added: 0
+        deleted: 0
+        net: 0
+    computed_at: "2026-06-01T01:09:56Z"
+    computed_at_stage: hydrate
+# true_impact: lazily created on first apply-finish (no placeholder here).
+last_updated: 2026-06-01T01:09:56Z

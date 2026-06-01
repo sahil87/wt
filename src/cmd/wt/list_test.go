@@ -616,14 +616,28 @@ func TestList_HumanDefaultIsRecency(t *testing.T) {
 	for _, n := range []string{"alpha", "bravo", "charlie"} {
 		createWorktreeViaWt(t, repo, n)
 	}
-	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
-	chtimesWt(t, repo, "alpha", base)
-	chtimesWt(t, repo, "bravo", base.Add(time.Hour))
-	chtimesWt(t, repo, "charlie", base.Add(2*time.Hour)) // newest
+	// "alpha" is days old; the others are recent so the 4-column Last Active
+	// column carries a relative-time bucket on a non-main row.
+	chtimesWt(t, repo, "alpha", time.Now().Add(-72*time.Hour))
+	chtimesWt(t, repo, "bravo", time.Now().Add(-time.Hour))
+	chtimesWt(t, repo, "charlie", time.Now()) // newest
 
 	r := runWtSuccess(t, repo, nil, "list")
 	got := humanNonMainOrder(r.Stdout, []string{"alpha", "bravo", "charlie"})
 	assertOrder(t, got, []string{"charlie", "bravo", "alpha"}, "human default (recency)")
+
+	// The recency-ordered human view is now 4-column: assert the Last Active
+	// header and a relative-time value on the oldest non-main row.
+	assertContains(t, r.Stdout, "Last Active")
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		if strings.Contains(line, "alpha") {
+			if !strings.Contains(line, "3d ago") {
+				t.Errorf("expected '3d ago' on alpha row in recency human view, got: %s", line)
+			}
+			return
+		}
+	}
+	t.Fatal("alpha row not found in recency human view")
 }
 
 // ---------- --status last_active column ----------
@@ -667,6 +681,12 @@ func TestList_LastActivePresentUnderStatus(t *testing.T) {
 	}
 }
 
+// TestList_LastActiveRelativeTimeInHumanStatus asserts the --status 5-column
+// view renders Last Active with the expected relative time. The Last Active
+// column is no longer status-only — it also appears in the recency human view
+// (4-column), covered by TestList_HumanDefaultIsRecency and
+// TestList_RecentHumanShowsLastActiveColumn. This test pins the --status view's
+// 5-column rendering specifically, which is unchanged by this change.
 func TestList_LastActiveRelativeTimeInHumanStatus(t *testing.T) {
 	repo := createTestRepo(t)
 	createWorktreeViaWt(t, repo, "la-rel")
@@ -684,6 +704,155 @@ func TestList_LastActiveRelativeTimeInHumanStatus(t *testing.T) {
 		}
 	}
 	t.Fatal("la-rel row not found")
+}
+
+// ---------- recency human view: 4-column Last Active ----------
+
+// TestList_RecentHumanShowsLastActiveColumn asserts the default human view
+// emits the 4-column Last Active header and distinct relative-time buckets on
+// non-main rows, with newest-first order preserved.
+func TestList_RecentHumanShowsLastActiveColumn(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"fresh", "stale"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	chtimesWt(t, repo, "fresh", time.Now())                  // just now
+	chtimesWt(t, repo, "stale", time.Now().Add(-96*time.Hour)) // 4d ago
+
+	r := runWtSuccess(t, repo, nil, "list")
+	assertContains(t, r.Stdout, "Last Active")
+
+	// Newest-first ordering preserved.
+	got := humanNonMainOrder(r.Stdout, []string{"fresh", "stale"})
+	assertOrder(t, got, []string{"fresh", "stale"}, "recency human view order")
+
+	// Distinct relative-time buckets on the respective rows.
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		if strings.Contains(line, "fresh") && !strings.Contains(line, "just now") {
+			t.Errorf("expected 'just now' on fresh row, got: %s", line)
+		}
+		if strings.Contains(line, "stale") && !strings.Contains(line, "4d ago") {
+			t.Errorf("expected '4d ago' on stale row, got: %s", line)
+		}
+	}
+}
+
+// TestList_NameBranchModesNoLastActiveColumn asserts --sort=name and
+// --sort=branch human output stay 3-column with no Last Active header.
+func TestList_NameBranchModesNoLastActiveColumn(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"alpha", "bravo"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+
+	for _, mode := range []string{"name", "branch"} {
+		r := runWtSuccess(t, repo, nil, "list", "--sort="+mode)
+		assertContains(t, r.Stdout, "Name")
+		assertContains(t, r.Stdout, "Branch")
+		assertContains(t, r.Stdout, "Path")
+		assertNotContains(t, r.Stdout, "Last Active")
+	}
+}
+
+// TestList_JSONOmitsLastActiveWithAndWithoutRecentSort asserts neither --json
+// nor --json --sort=recent emit a last_active key, while preserving each mode's
+// ordering contract (bare --json name-ordered; --json --sort=recent recent).
+func TestList_JSONOmitsLastActiveWithAndWithoutRecentSort(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"alpha", "bravo", "charlie"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	chtimesWt(t, repo, "alpha", base)
+	chtimesWt(t, repo, "bravo", base.Add(time.Hour))
+	chtimesWt(t, repo, "charlie", base.Add(2*time.Hour)) // newest
+
+	// Bare --json: no last_active, stable name order.
+	rPlain := runWtSuccess(t, repo, nil, "list", "--json")
+	for _, e := range parseJSONList(t, rPlain.Stdout) {
+		if _, ok := e["last_active"]; ok {
+			t.Errorf("last_active key present in --json output, entry: %v", e)
+		}
+	}
+	assertOrder(t, jsonNonMainOrder(t, rPlain.Stdout),
+		[]string{"alpha", "bravo", "charlie"}, "--json (stable name)")
+
+	// --json --sort=recent: still no last_active, recency-ordered.
+	rRecent := runWtSuccess(t, repo, nil, "list", "--json", "--sort=recent")
+	for _, e := range parseJSONList(t, rRecent.Stdout) {
+		if _, ok := e["last_active"]; ok {
+			t.Errorf("last_active key present in --json --sort=recent output, entry: %v", e)
+		}
+	}
+	assertOrder(t, jsonNonMainOrder(t, rRecent.Stdout),
+		[]string{"charlie", "bravo", "alpha"}, "--json --sort=recent")
+}
+
+// TestList_MainRowShowsOwnLastActiveInRecentMode asserts the main worktree row
+// in recent human mode shows its own relative-time Last Active, not "-".
+func TestList_MainRowShowsOwnLastActiveInRecentMode(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "other")
+	// Set the main repo dir mtime to ~3 hours ago.
+	mainMtime := time.Now().Add(-3 * time.Hour)
+	if err := os.Chtimes(repo, mainMtime, mainMtime); err != nil {
+		t.Fatalf("Chtimes main repo: %v", err)
+	}
+
+	r := runWtSuccess(t, repo, nil, "list")
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		if strings.Contains(line, "(main)") {
+			if !strings.Contains(line, "3h ago") {
+				t.Errorf("expected main row to show its own relative time '3h ago', got: %s", line)
+			}
+			if strings.Contains(line, " - ") {
+				t.Errorf("expected main row NOT to render '-' for Last Active, got: %s", line)
+			}
+			return
+		}
+	}
+	t.Fatal("(main) row not found in recency human view")
+}
+
+// TestList_VanishedWorktreeRendersDashInRecentMode asserts a worktree directory
+// that cannot be stat'd renders "-" in the recent-mode Last Active column (zero
+// time.Time → "-" via relativeTime).
+func TestList_VanishedWorktreeRendersDashInRecentMode(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "vanished")
+	// Remove the worktree directory from disk (but leave it registered in git)
+	// so RecencyOf cannot stat it and yields the zero time.
+	if err := os.RemoveAll(wtPath); err != nil {
+		t.Fatalf("RemoveAll worktree dir: %v", err)
+	}
+
+	r := runWtSuccess(t, repo, nil, "list")
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		if strings.Contains(line, "vanished") {
+			// A zero recency key renders "-"; no relative-time bucket should
+			// appear on the row (which would mean a real mtime was read).
+			if strings.Contains(line, "ago") || strings.Contains(line, "just now") {
+				t.Errorf("expected no relative time on vanished worktree row, got: %s", line)
+			}
+			if !strings.Contains(line, "-") {
+				t.Errorf("expected '-' Last Active on vanished worktree row, got: %s", line)
+			}
+			return
+		}
+	}
+	t.Fatal("vanished worktree row not found")
+}
+
+// TestList_MainOnlyRepoRendersRecentHeader asserts a repository with only the
+// main worktree renders the 4-column Last Active header, the (main) row, and the
+// total line without panic or misalignment.
+func TestList_MainOnlyRepoRendersRecentHeader(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "list")
+	assertContains(t, r.Stdout, "Last Active")
+	assertContains(t, r.Stdout, "(main)")
+	assertContains(t, r.Stdout, "Total: 1 worktree(s)")
 }
 
 // NO_COLOR support

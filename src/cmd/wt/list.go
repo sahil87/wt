@@ -120,13 +120,20 @@ it forks 2 git subprocesses per worktree (parallelized).`,
 			// for human output, stable name order for --json/--non-interactive;
 			// an explicit --sort overrides in any mode. The main worktree is
 			// always pinned to the first row.
-			sortEntries(entries, resolveSort(sortFlag, jsonOut, nonInteractive))
+			//
+			// persistKey is set on the human path only (!jsonOut): recent mode
+			// writes the computed recency key back into entries[i].LastActive so
+			// the renderer can display it without a second stat. The JSON path
+			// passes false, leaving LastActive nil so omitempty keeps last_active
+			// out of --json --sort=recent (Constitution VI machine-output contract).
+			mode := resolveSort(sortFlag, jsonOut, nonInteractive)
+			sortEntries(entries, mode, !jsonOut)
 
 			if jsonOut {
 				return handleJSONOutput(entries)
 			}
 
-			return handleFormattedOutput(entries, ctx, statusFlag)
+			return handleFormattedOutput(entries, ctx, statusFlag, mode)
 		},
 	}
 
@@ -180,7 +187,14 @@ func resolveSort(sortFlag string, jsonOut, nonInteractive bool) sortMode {
 // the first row and reordering only the non-main entries below it. The main
 // worktree is the porcelain-first entry (IsMain); its position is stable across
 // all sort modes per the recency-ordering contract.
-func sortEntries(entries []listEntry, mode sortMode) {
+//
+// persistKey, when true (the human-output path, !jsonOut), causes recent mode
+// to write the recency key it already computes back into each entry's nil
+// LastActive so the renderer can display it without a second os.Stat. It is
+// false on the JSON path, where leaving LastActive nil keeps last_active out of
+// the output via omitempty. A non-nil LastActive (the --status path) is always
+// left untouched.
+func sortEntries(entries []listEntry, mode sortMode, persistKey bool) {
 	// Partition out the main worktree (always first per porcelain convention)
 	// so only non-main entries are reordered.
 	start := 0
@@ -224,6 +238,29 @@ func sortEntries(entries []listEntry, mode sortMode) {
 			sorted[i] = rest[idx]
 		}
 		copy(rest, sorted)
+
+		// On the human path, persist the recency key we already computed into
+		// each non-main entry's LastActive (only when nil — the --status path's
+		// non-nil value is the source of truth and must not be clobbered). This
+		// reuses the stat already paid for the sort key: no second os.Stat, no
+		// git subprocess. The keys[] slice is indexed by the pre-sort position,
+		// so write back through the permutation.
+		if persistKey {
+			for i, idx := range order {
+				if rest[i].LastActive == nil {
+					k := keys[idx]
+					rest[i].LastActive = &k
+				}
+			}
+			// The pinned main worktree is partitioned out of rest above and is
+			// never stat'd in basic mode, so its LastActive would render "-".
+			// Populate it via a single RecencyOf when nil (one stat for main,
+			// no git subprocess); a non-nil --status value is left as-is.
+			if start == 1 && entries[0].LastActive == nil {
+				k := wt.RecencyOf(entries[0].Path)
+				entries[0].LastActive = &k
+			}
+		}
 	}
 }
 
@@ -301,9 +338,15 @@ func relativePath(entryPath string, ctx *wt.RepoContext) string {
 	return rel + "/"
 }
 
-func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus bool) error {
+func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus bool, mode sortMode) error {
 	fmt.Printf("Worktrees for: %s%s%s\n", wt.ColorBold, ctx.RepoName, wt.ColorReset)
 	fmt.Printf("Location: %s\n\n", ctx.WorktreesDir)
+
+	// recentLayout selects the 4-column Name/Branch/Last Active/Path table for the
+	// recency-ordered human view. --status keeps its own 5-column layout; name/
+	// branch modes stay 3-column. Layout is keyed on the resolved sort mode, not
+	// on showStatus alone.
+	recentLayout := mode == sortRecent && !showStatus
 
 	type displayRow struct {
 		name       string
@@ -336,9 +379,17 @@ func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus 
 			case unpushedMarker != "":
 				status = unpushedMarker
 			}
+		}
+		// Last Active is rendered under --status (5-column) and in recent human
+		// mode (4-column). sortEntries persisted the recency key into LastActive
+		// on the human path, so this reuses it — no second os.Stat. A nil pointer
+		// falls back to the zero time, which relativeTime renders as "-".
+		if showStatus || recentLayout {
+			var t time.Time
 			if e.LastActive != nil {
-				lastActive = relativeTime(*e.LastActive)
+				t = *e.LastActive
 			}
+			lastActive = relativeTime(t)
 		}
 
 		rows[i] = displayRow{
@@ -392,6 +443,44 @@ func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus 
 				colWidths[1], r.branch,
 				r.status, strings.Repeat(" ", statusPad),
 				colWidths[3], r.lastActive,
+				r.path)
+		}
+	} else if recentLayout {
+		headers := [4]string{"Name", "Branch", "Last Active", "Path"}
+		colWidths := [4]int{len(headers[0]), len(headers[1]), len(headers[2]), len(headers[3])}
+		for _, r := range rows {
+			if w := displayWidth(r.name); w > colWidths[0] {
+				colWidths[0] = w
+			}
+			if w := displayWidth(r.branch); w > colWidths[1] {
+				colWidths[1] = w
+			}
+			if w := displayWidth(r.lastActive); w > colWidths[2] {
+				colWidths[2] = w
+			}
+			if w := displayWidth(r.path); w > colWidths[3] {
+				colWidths[3] = w
+			}
+		}
+
+		fmt.Printf("  %-*s  %-*s  %-*s  %s\n",
+			colWidths[0], headers[0],
+			colWidths[1], headers[1],
+			colWidths[2], headers[2],
+			headers[3])
+
+		for i, r := range rows {
+			marker := "  "
+			if entries[i].IsCurrent {
+				marker = wt.ColorGreen + "*" + wt.ColorReset + " "
+			}
+			namePad := colWidths[0] - displayWidth(r.name)
+
+			fmt.Printf("%s%s%s  %-*s  %-*s  %s\n",
+				marker,
+				r.name, strings.Repeat(" ", namePad),
+				colWidths[1], r.branch,
+				colWidths[2], r.lastActive,
 				r.path)
 		}
 	} else {
