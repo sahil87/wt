@@ -277,9 +277,14 @@ func main() {
 	//   - FIX:  foreground reclaimed, MakeRaw succeeds, wt renders the menu and
 	//           then BLOCKS reading a keypress that never comes (or exits). So
 	//           wt is either still alive (not stopped) or has exited cleanly.
-	// We poll for up to a few seconds: any STOPPED observation => bug (exit 20);
-	// a clean exit or a still-running-but-not-stopped wt => fix (exit 0).
-	deadline := time.Now().Add(8 * time.Second)
+	// We poll until a deadline: any STOPPED observation => bug (exit 20); a clean
+	// exit or a still-running-but-not-stopped wt => fix (exit 0). The window must
+	// comfortably exceed wt's time-to-Open-phase (worktree add + init script) so a
+	// slow runner cannot let the deadline elapse BEFORE wt reaches term.MakeRaw —
+	// that would report "never stopped" (exit 0) vacuously even if the bug were
+	// present. 15s matches the integration-test budget in
+	// integration_sigint_unix_test.go.
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		var ws unix.WaitStatus
 		wpid, e := unix.Wait4(cmd.Process.Pid, &ws, unix.WUNTRACED|unix.WNOHANG, nil)
