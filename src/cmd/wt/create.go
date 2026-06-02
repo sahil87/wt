@@ -11,6 +11,7 @@ import (
 
 	wt "github.com/sahil87/wt/internal/worktree"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func createCmd() *cobra.Command {
@@ -271,6 +272,49 @@ or creates a new branch.`,
 			if runInit {
 				initScript := wt.InitScriptPath()
 
+				// Terminal-foreground bookkeeping. wt runs the init child in
+				// its own process group (Setpgid: true) while sharing wt's
+				// controlling terminal. If the init script (or a descendant)
+				// grabs terminal foreground and exits without restoring it, wt
+				// is left in the background and the next TTY write (the
+				// Open-phase menu render below) trips SIGTTOU and suspends the
+				// process. We capture the foreground pgrp before init and
+				// reclaim it after, on every exit path. No-op when stdin is not
+				// a TTY (--non-interactive / piped / CI).
+				//
+				// tcgetpgrp is a single cheap syscall with no I/O or prompt, so
+				// capturing it here — adjacent to the signal.Reset below — does
+				// NOT widen the tight reinstall window (SIGINT Option B
+				// contract). The captured pgrp IS wt's own process group
+				// (equivalently unix.Getpgrp()), since wt is the terminal
+				// foreground at this point — it is the source of truth for
+				// "give the terminal back to me".
+				ttyFd := int(os.Stdin.Fd())
+				reclaimTTY := term.IsTerminal(ttyFd)
+				var wtPgid int
+				if reclaimTTY {
+					fg, err := terminalForeground(ttyFd)
+					if err != nil {
+						// tcgetpgrp failed unexpectedly on a TTY — skip the
+						// bookkeeping rather than reclaim to a bogus pgrp.
+						reclaimTTY = false
+					} else {
+						wtPgid = fg
+					}
+				}
+				// Best-effort restore: a panic/early-return safety net. The two
+				// explicit reclaims below (pre-Open on success, pre-banner on
+				// init failure) are the load-bearing ones — both terminate via
+				// os.Exit or fall through to Open, and os.Exit skips deferred
+				// funcs, so this defer only actually fires on a non-os.Exit
+				// return or a panic in this block. (The pre-init SIGINT handler's
+				// exit-130 path runs before this defer is installed and before
+				// any foreground was captured, so it has nothing to reclaim.) It
+				// never blocks rollback or changes exit codes.
+				if reclaimTTY {
+					defer reclaimTerminalForeground(ttyFd, wtPgid)
+				}
+
 				// SIGINT Option B: git ops are done AND any prompt has been
 				// accepted. Reinstall the signal handler so SIGINT/SIGTERM
 				// target the init child's process group (not rb.Execute) —
@@ -300,12 +344,23 @@ or creates a new branch.`,
 					// from other failures.
 					signal.Stop(initSigCh)
 					close(initSigCh)
+					// Reclaim foreground BEFORE the banner — the banner is a TTY
+					// write too, and would itself SIGTTOU if foreground was lost.
+					if reclaimTTY {
+						reclaimTerminalForeground(ttyFd, wtPgid)
+					}
 					rb.Disarm()
 					wt.PrintInitFailureBanner(wtPath, finalName, err)
 					os.Exit(wt.ExitInitFailed)
 				}
 				signal.Stop(initSigCh)
 				close(initSigCh)
+				// Reclaim foreground before the Open phase so the menu render
+				// can never SIGTTOU on a shared-TTY init child. This is the
+				// load-bearing reclaim.
+				if reclaimTTY {
+					reclaimTerminalForeground(ttyFd, wtPgid)
+				}
 			}
 
 			// Open
