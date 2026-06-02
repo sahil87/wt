@@ -45,3 +45,23 @@ jobs:
       - name: go test
         working-directory: src
         run: go test ./...
+
+  # Single stable status check to pin branch protection to. Pinning the
+  # ruleset to this job (rather than `test` directly) means the required
+  # check name stays constant even if `test` is later split or renamed —
+  # only this job's `needs:` list has to track that, not the repo ruleset.
+  ci-gate:
+    needs: [test]
+    runs-on: ubuntu-latest
+    # Run even when a dependency failed, so the gate can fail explicitly
+    # rather than being skipped (a skipped required check blocks merge in a
+    # confusing way).
+    if: always()
+    steps:
+      - name: Verify CI passed
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "CI gate failed: test job result = ${{ needs.test.result }}" >&2
+            exit 1
+          fi
+          echo "CI gate passed: all required jobs succeeded."

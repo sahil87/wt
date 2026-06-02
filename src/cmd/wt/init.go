@@ -9,6 +9,7 @@ import (
 
 	wt "github.com/sahil87/wt/internal/worktree"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func initCmd() *cobra.Command {
@@ -84,16 +85,51 @@ func runInitScript() error {
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
+	// Terminal-foreground bookkeeping — same contract as wt create's init
+	// step. The init child runs in its own process group (Setpgid: true) on a
+	// shared controlling terminal; if it (or a descendant) grabs terminal
+	// foreground and exits without restoring it, wt would be left in the
+	// background and the user's shell stranded at a suspended prompt after
+	// wt init returns. Capture the foreground pgrp before the child and
+	// reclaim it after, on both the success and failure exit paths. No-op when
+	// stdin is not a TTY (piped / non-interactive / CI).
+	ttyFd := int(os.Stdin.Fd())
+	reclaimTTY := term.IsTerminal(ttyFd)
+	var wtPgid int
+	if reclaimTTY {
+		// The captured foreground pgrp IS wt's own process group, since wt is
+		// the terminal foreground at this point.
+		fg, err := terminalForeground(ttyFd)
+		if err != nil {
+			reclaimTTY = false
+		} else {
+			wtPgid = fg
+		}
+	}
+	if reclaimTTY {
+		// Best-effort safety net for any exit path of this function; the
+		// explicit reclaims below are the ordered, load-bearing ones.
+		defer reclaimTerminalForeground(ttyFd, wtPgid)
+	}
+
 	if err := cmd.Run(); err != nil {
 		// Use the typed ExitInitFailed exit code so operators / shell
 		// wrappers can distinguish "init script failed" from generic
 		// errors — matches the contract `wt create` uses. The actual
 		// init-script output streamed to stderr above; we add a one-line
 		// trailer with the underlying error and exit.
+		if reclaimTTY {
+			// Reclaim before the failure trailer write so it cannot SIGTTOU.
+			reclaimTerminalForeground(ttyFd, wtPgid)
+		}
 		fmt.Fprintf(os.Stderr, "\nInit script failed: %v\n", err)
 		os.Exit(wt.ExitInitFailed)
 	}
 
+	if reclaimTTY {
+		// Reclaim before the completion trailer write.
+		reclaimTerminalForeground(ttyFd, wtPgid)
+	}
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Worktree init complete.")
 	return nil
