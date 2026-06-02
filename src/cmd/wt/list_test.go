@@ -855,6 +855,143 @@ func TestList_MainOnlyRepoRendersRecentHeader(t *testing.T) {
 	assertContains(t, r.Stdout, "Total: 1 worktree(s)")
 }
 
+// ---------- idle marker (260530-5fyu) ----------
+
+// idleLine finds the human-output row containing name and returns it.
+func idleLine(t *testing.T, stdout, name string) string {
+	t.Helper()
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.Contains(line, name) {
+			return line
+		}
+	}
+	t.Fatalf("row for %q not found in:\n%s", name, stdout)
+	return ""
+}
+
+// TestList_IdleMarkerInRecentHuman asserts the default 4-column human view marks
+// a non-main worktree older than the 7d threshold with "⚠ idle" on its Last
+// Active cell, while a fresh worktree shows no marker.
+func TestList_IdleMarkerInRecentHuman(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"fresh", "ancient"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	chtimesWt(t, repo, "fresh", time.Now())                         // just now
+	chtimesWt(t, repo, "ancient", time.Now().Add(-40*24*time.Hour)) // 40 days ago
+
+	r := runWtSuccess(t, repo, nil, "list")
+	ancientRow := idleLine(t, r.Stdout, "ancient")
+	if !strings.Contains(ancientRow, "idle") {
+		t.Errorf("expected '⚠ idle' marker on 40d-old worktree row, got: %s", ancientRow)
+	}
+	if !strings.Contains(ancientRow, "40d ago") {
+		t.Errorf("expected '40d ago' relative time on ancient row, got: %s", ancientRow)
+	}
+	freshRow := idleLine(t, r.Stdout, "fresh")
+	if strings.Contains(freshRow, "idle") {
+		t.Errorf("expected NO idle marker on fresh worktree row, got: %s", freshRow)
+	}
+}
+
+// TestList_IdleMarkerInStatusHuman asserts the 5-column --status view also marks
+// idle worktrees on the Last Active cell.
+func TestList_IdleMarkerInStatusHuman(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "ancient")
+	chtimesWt(t, repo, "ancient", time.Now().Add(-40*24*time.Hour))
+
+	r := runWtSuccess(t, repo, nil, "list", "--status")
+	ancientRow := idleLine(t, r.Stdout, "ancient")
+	if !strings.Contains(ancientRow, "idle") {
+		t.Errorf("expected '⚠ idle' marker under --status, got: %s", ancientRow)
+	}
+}
+
+// TestList_MainNeverMarkedIdle asserts the main worktree is never annotated idle
+// even when its directory mtime is well past the threshold.
+func TestList_MainNeverMarkedIdle(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "other")
+	// Age the main repo dir past the threshold.
+	old := time.Now().Add(-40 * 24 * time.Hour)
+	if err := os.Chtimes(repo, old, old); err != nil {
+		t.Fatalf("Chtimes main repo: %v", err)
+	}
+
+	r := runWtSuccess(t, repo, nil, "list")
+	mainRow := idleLine(t, r.Stdout, "(main)")
+	if strings.Contains(mainRow, "idle") {
+		t.Errorf("main worktree must never be marked idle, got: %s", mainRow)
+	}
+}
+
+// TestList_NameModeNoIdleMarker asserts the 3-column name/branch human modes show
+// no idle marker (they do no per-worktree stat).
+func TestList_NameModeNoIdleMarker(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "ancient")
+	chtimesWt(t, repo, "ancient", time.Now().Add(-40*24*time.Hour))
+
+	for _, mode := range []string{"name", "branch"} {
+		r := runWtSuccess(t, repo, nil, "list", "--sort="+mode)
+		assertNotContains(t, r.Stdout, "idle")
+	}
+}
+
+// TestList_JSONIdleAbsentInDefault asserts the default machine path emits no
+// "idle" key (LastActive stays nil → omitempty omits idle too).
+func TestList_JSONIdleAbsentInDefault(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "ancient")
+	chtimesWt(t, repo, "ancient", time.Now().Add(-40*24*time.Hour))
+
+	// Bare --json and --json --sort=recent both leave LastActive nil.
+	for _, args := range [][]string{{"list", "--json"}, {"list", "--json", "--sort=recent"}} {
+		r := runWtSuccess(t, repo, nil, args...)
+		for _, e := range parseJSONList(t, r.Stdout) {
+			if _, ok := e["idle"]; ok {
+				t.Errorf("idle key present in %v output, entry: %v", args, e)
+			}
+		}
+	}
+}
+
+// TestList_JSONIdlePresentUnderStatus asserts every object carries a boolean
+// "idle" key under --status: true for an old non-main worktree, false for main.
+func TestList_JSONIdlePresentUnderStatus(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "ancient")
+	chtimesWt(t, repo, "ancient", time.Now().Add(-40*24*time.Hour))
+	// Keep main fresh so its idle would be false even ignoring the main override.
+	now := time.Now()
+	if err := os.Chtimes(repo, now, now); err != nil {
+		t.Fatalf("Chtimes main repo: %v", err)
+	}
+
+	r := runWtSuccess(t, repo, nil, "list", "--status", "--json")
+	for _, e := range parseJSONList(t, r.Stdout) {
+		v, ok := e["idle"]
+		if !ok {
+			t.Errorf("idle key missing under --status for entry: %v", e)
+			continue
+		}
+		b, ok := v.(bool)
+		if !ok {
+			t.Errorf("idle should be a bool, got %T for entry: %v", v, e)
+			continue
+		}
+		isMain, _ := e["is_main"].(bool)
+		name, _ := e["name"].(string)
+		if isMain && b {
+			t.Errorf("main worktree must have idle:false, got true")
+		}
+		if name == "ancient" && !b {
+			t.Errorf("40d-old worktree must have idle:true, got false")
+		}
+	}
+}
+
 // NO_COLOR support
 
 func TestList_NoColorSupport(t *testing.T) {

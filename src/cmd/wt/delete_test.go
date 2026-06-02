@@ -403,10 +403,14 @@ func TestDelete_MenuOrdersNewestFirst(t *testing.T) {
 	createWorktreeViaWt(t, repo, "bravo")
 	createWorktreeViaWt(t, repo, "charlie")
 
-	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
-	chtimesWorktree(t, repo, "alpha", base)
-	chtimesWorktree(t, repo, "bravo", base.Add(time.Hour))
-	chtimesWorktree(t, repo, "charlie", base.Add(2*time.Hour))
+	// Recent, distinct mtimes so ordering is deterministic AND none of the
+	// worktrees are idle — this test isolates newest-first ordering and the
+	// unshifted default (no "All idle" entry). Idle annotation/shift behavior is
+	// covered by the dedicated stale-aware menu tests below.
+	now := time.Now()
+	chtimesWorktree(t, repo, "alpha", now.Add(-2*time.Hour))
+	chtimesWorktree(t, repo, "bravo", now.Add(-time.Hour))
+	chtimesWorktree(t, repo, "charlie", now)
 
 	r := runWt(t, repo, nil, "delete")
 	got := menuOrder(r.Stdout, []string{"alpha", "bravo", "charlie"})
@@ -422,9 +426,177 @@ func TestDelete_MenuOrdersNewestFirst(t *testing.T) {
 	}
 	// The newest worktree must be the marked default (offset by the "All" entry).
 	assertContains(t, r.Stdout, "charlie (charlie) (default)")
+	// No idle worktrees → no "All idle" entry.
+	assertNotContains(t, r.Stdout, "All idle")
 
 	// Nothing was deleted (menu was cancelled via EOF).
 	assertWorktreeExists(t, repo, "alpha")
 	assertWorktreeExists(t, repo, "bravo")
 	assertWorktreeExists(t, repo, "charlie")
+}
+
+// ---------- stale-aware menu + --stale selector (260530-5fyu) ----------
+
+// daysAgo returns a time N days before now, for controlled idle/fresh mtimes.
+func daysAgo(n int) time.Time {
+	return time.Now().Add(-time.Duration(n) * 24 * time.Hour)
+}
+
+// TestDelete_MenuAnnotatesIdleAndAllIdleEntry verifies the interactive menu
+// (printed then cancelled via EOF) annotates idle rows with ", idle", includes
+// an "All idle (N)" entry counting only idle worktrees, and pre-selects the
+// newest worktree row at defaultIdx 3 (shifted from 2 because "All idle" is
+// present). Empty stdin makes ShowMenu print the menu then return on EOF;
+// nothing is deleted.
+func TestDelete_MenuAnnotatesIdleAndAllIdleEntry(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"recent-a", "old-b", "old-c"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	chtimesWorktree(t, repo, "recent-a", time.Now()) // fresh, newest
+	chtimesWorktree(t, repo, "old-b", daysAgo(20))   // idle
+	chtimesWorktree(t, repo, "old-c", daysAgo(40))   // idle
+
+	r := runWt(t, repo, nil, "delete")
+
+	assertContains(t, r.Stdout, "All idle (2)")
+	// Idle rows annotated.
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		if strings.Contains(line, "old-b") && !strings.Contains(line, ", idle") {
+			t.Errorf("expected old-b row annotated ', idle', got: %s", line)
+		}
+		if strings.Contains(line, "old-c") && !strings.Contains(line, ", idle") {
+			t.Errorf("expected old-c row annotated ', idle', got: %s", line)
+		}
+		if strings.Contains(line, "recent-a") && strings.Contains(line, ", idle") {
+			t.Errorf("expected fresh recent-a row NOT annotated idle, got: %s", line)
+		}
+	}
+	// Newest worktree is the marked default (shifted past All + All idle).
+	assertContains(t, r.Stdout, "recent-a (recent-a) (default)")
+
+	// Nothing deleted (EOF cancel).
+	assertWorktreeExists(t, repo, "recent-a")
+	assertWorktreeExists(t, repo, "old-b")
+	assertWorktreeExists(t, repo, "old-c")
+}
+
+// TestDelete_MenuNoAllIdleWhenNoneIdle verifies the "All idle" entry is omitted
+// when no worktree is idle, and the default remains the newest worktree at the
+// unshifted defaultIdx 2.
+func TestDelete_MenuNoAllIdleWhenNoneIdle(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"alpha", "bravo"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	chtimesWorktree(t, repo, "alpha", time.Now())
+	chtimesWorktree(t, repo, "bravo", daysAgo(1)) // fresh, newest is alpha
+
+	r := runWt(t, repo, nil, "delete")
+	assertNotContains(t, r.Stdout, "All idle")
+	// Newest (alpha) is the default at the unshifted index.
+	assertContains(t, r.Stdout, "alpha (alpha) (default)")
+}
+
+// TestDelete_StaleSelectsIdleNonInteractive verifies `wt delete --stale
+// --non-interactive` deletes exactly the idle worktrees and leaves fresh ones.
+func TestDelete_StaleSelectsIdleNonInteractive(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"fresh", "idle-x", "idle-y"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	chtimesWorktree(t, repo, "fresh", time.Now())
+	chtimesWorktree(t, repo, "idle-x", daysAgo(10))
+	chtimesWorktree(t, repo, "idle-y", daysAgo(30))
+
+	r := runWtSuccess(t, repo, nil, "delete", "--stale", "--non-interactive")
+	_ = r
+
+	assertWorktreeExists(t, repo, "fresh")
+	assertWorktreeNotExists(t, repo, "idle-x")
+	assertWorktreeNotExists(t, repo, "idle-y")
+}
+
+// TestDelete_StaleThresholdOverride verifies `--stale=Nd` overrides the default
+// threshold for this invocation.
+func TestDelete_StaleThresholdOverride(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"within", "beyond"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	chtimesWorktree(t, repo, "within", daysAgo(20)) // older than 7d, younger than 30d
+	chtimesWorktree(t, repo, "beyond", daysAgo(40)) // older than 30d
+
+	runWtSuccess(t, repo, nil, "delete", "--stale=30d", "--non-interactive")
+
+	// Only the 40d worktree exceeds the 30d threshold.
+	assertWorktreeExists(t, repo, "within")
+	assertWorktreeNotExists(t, repo, "beyond")
+}
+
+// TestDelete_StaleNoMatchesPrintsMessage verifies zero idle matches prints the
+// informational message and exits 0 (not an error).
+func TestDelete_StaleNoMatchesPrintsMessage(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "fresh")
+	chtimesWorktree(t, repo, "fresh", time.Now())
+
+	r := runWtSuccess(t, repo, nil, "delete", "--stale", "--non-interactive")
+	assertContains(t, r.Stdout, "No idle worktrees (threshold: 7d).")
+	assertWorktreeExists(t, repo, "fresh")
+}
+
+// TestDelete_StalePositionalMutex verifies `--stale <name>` exits ExitInvalidArgs
+// with "mutually exclusive" and deletes nothing.
+func TestDelete_StalePositionalMutex(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "feature-x")
+
+	r := runWt(t, repo, nil, "delete", "--stale", "feature-x", "--non-interactive")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "mutually exclusive")
+	assertWorktreeExists(t, repo, "feature-x")
+}
+
+// TestDelete_StaleDeleteAllMutex verifies `--stale --delete-all` exits
+// ExitInvalidArgs with "mutually exclusive".
+func TestDelete_StaleDeleteAllMutex(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "feature-x")
+
+	r := runWt(t, repo, nil, "delete", "--stale", "--delete-all", "--non-interactive")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "mutually exclusive")
+	assertWorktreeExists(t, repo, "feature-x")
+}
+
+// TestDelete_StaleInvalidThreshold verifies a malformed --stale value exits
+// ExitInvalidArgs naming the accepted Nd form.
+func TestDelete_StaleInvalidThreshold(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "feature-x")
+
+	r := runWt(t, repo, nil, "delete", "--stale=banana", "--non-interactive")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "30d")
+	assertWorktreeExists(t, repo, "feature-x")
+}
+
+// TestDelete_StaleNeverTargetsMain verifies the --stale selector never picks the
+// main worktree even when main's dir mtime is past the threshold.
+func TestDelete_StaleNeverTargetsMain(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "fresh")
+	chtimesWorktree(t, repo, "fresh", time.Now())
+	// Age main past the threshold.
+	old := daysAgo(40)
+	if err := os.Chtimes(repo, old, old); err != nil {
+		t.Fatalf("Chtimes main repo: %v", err)
+	}
+
+	r := runWtSuccess(t, repo, nil, "delete", "--stale", "--non-interactive")
+	// Main is excluded; only fresh would be eligible and it is not idle, so no
+	// matches. Main repo dir still present.
+	assertContains(t, r.Stdout, "No idle worktrees")
+	assertDirExists(t, repo)
 }

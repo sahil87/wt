@@ -83,10 +83,37 @@ explicit spec amendment supersedes them.
   behavior-preserving for the default selection. Only the item *ordering* changed.
 - `wt open`: `defaultIdx = 1` (newest is the first menu item; index 0 is the
   cancel/menu-zero slot in `ShowMenu`).
-- `wt delete`: `defaultIdx = 2` — offset by 1 for the prepended `All (N worktrees)`
-  entry, so the newest worktree is the first *worktree* row and stays the default.
+- `wt delete`: `defaultIdx` is **2 by default**, shifting to **3 ONLY when the
+  "All idle (N)" entry is present** (amended by `260530-5fyu` — see below). The
+  newest worktree is always the first *worktree* row and stays the pre-selected
+  default; the index just shifts by the number of prepended summary entries
+  ("All (N worktrees)" always, plus "All idle (N)" when ≥1 worktree is idle).
 - The two menus produce identical non-main ordering (both driven by the same
   `SortByRecency` call), so `wt open` and `wt delete` never disagree on order.
+
+### `wt delete` menu: stale-aware annotation + "All idle" (`260530-5fyu`)
+
+- `handleDeleteMenu` (`src/cmd/wt/delete.go`) now annotates each idle non-main
+  option label with a trailing `, idle` (e.g. `feature-x (feat-x), idle`), and
+  inserts an **"All idle (N)"** entry immediately after the existing "All (N
+  worktrees)" entry **when at least one non-main worktree is idle**. When none is
+  idle the entry is omitted (no "All idle (0)" row). Menu ordering is unchanged —
+  non-main worktrees still list newest-first via `wt.SortByRecency`.
+- The pre-selected default index is computed via a local `firstWorktreeIdx`
+  (`2`, or `3` when "All idle" is present); `defaultIdx = firstWorktreeIdx`. This
+  is what shifts the documented `defaultIdx = 2` to `3` only in the "All idle"
+  case. Selecting "All idle" routes the idle subset through `handleDeleteMultiple`
+  — no new deletion code path.
+- **Idleness is derived from `RecencyOf` via the new `IsIdle` predicate**:
+  `wt.IsIdle(wt.RecencyOf(o.path), now, wt.DefaultIdleThreshold)`, computed per
+  option. This costs **one extra `os.Stat` per option** on the interactive menu
+  path, because `SortByRecency` does not expose its internal recency keys for
+  reuse. That is acceptable at the ≤100-worktree interactive scale and keeps the
+  annotation consistent with `wt delete --stale`. **The `wt list` path adds no
+  such stat** — it reuses the persisted `LastActive` (see
+  `wt-cli/list-status-contract.md`). The shared `IsIdle` predicate,
+  `DefaultIdleThreshold`, and the `--stale` selector are documented in
+  `wt-cli/idle-staleness-contract.md`.
 
 ### Refactor consolidated the duplicated inline loops
 
@@ -125,17 +152,26 @@ otherwise exist — a fabricated cross-package dependency. The generic
 `SortByRecency[T]` with `pathOf`/`nameOf` accessors keeps the helper consumable
 by all three heterogeneous types without conversion.
 
-## Signal-quality caveat
+## Signal-quality caveat (resolved by `260530-5fyu`)
 
 Worktree-directory `mtime` is a **noisy** recency signal: the directory's mtime
 moves on *any* file write inside the worktree root (editor save, build artifact,
 `git` operation that touches a top-level file), not only on meaningful
 "activity". It is sufficient for *ordering* (the most-recently-touched worktree
-is a reasonable default), but it is not a reliable staleness measure. The
-follow-up change `260530-5fyu-stale-worktree-hints` will revisit signal quality
-for staleness detection / cleanup hints; that work is out of scope here and a
-configurable recency signal (git commit date, reflog, HEAD mtime) was explicitly
-deferred.
+is a reasonable default), but it is not a reliable staleness measure.
+
+The follow-up change `260530-5fyu-stale-worktree-hints` revisited this and
+**resolved the signal-quality question**: the decision was to **keep dir-mtime
+with honest "idle / untouched on disk" framing** (option b), NOT to add a
+cleaner per-staleness signal (git commit date, reflog, HEAD mtime — each costs a
+`git` subprocess per worktree and a second, divergent definition). The
+under-reporting tendency of mtime is safe-by-direction for the cleanup use case
+because the `wt delete` safety flow backstops every removal — idleness only
+*selects* candidates, never gates them. A configurable recency signal remains a
+future option if under-reporting proves painful. See
+`wt-cli/idle-staleness-contract.md` for the idle predicate, the 7-day
+`DefaultIdleThreshold`, and the `--stale` selector that this resolution
+produced.
 
 ## Cross-references
 
@@ -144,6 +180,10 @@ deferred.
   reuses the already-computed `*LastActive` as the recent-sort key and that
   ordering is a post-enrichment step that does not disturb the worker-pool
   indexed-write ordering.
+- Sibling memory: `wt-cli/idle-staleness-contract.md` — the `IsIdle` predicate
+  (built on the `RecencyOf` signal documented here), `DefaultIdleThreshold`, and
+  the `wt delete --stale` selector; the authoritative cross-command idle contract
+  behind the `defaultIdx` 2/3 shift and `, idle` annotation noted above.
 - Spec doc: `docs/specs/cli-surface.md` — `wt list` (`--sort` flag), `wt open`
   (selection menu, "most recently modified worktree" default), `wt delete`
   (selection menu).
@@ -153,7 +193,11 @@ deferred.
 - Source: `src/internal/worktree/recency.go` — `RecencyOf`, `RecencyLess`,
   `SortByRecency`.
 - Source: `src/cmd/wt/open.go` (`selectAndOpen`), `src/cmd/wt/delete.go`
-  (`handleDeleteMenu`), `src/cmd/wt/list.go` (`sortEntries`, `resolveSort`).
+  (`handleDeleteMenu` — now stale-aware: `firstWorktreeIdx`/`defaultIdx` 2/3,
+  `, idle` annotation, "All idle (N)"; plus `handleDeleteStale`), `src/cmd/wt/list.go`
+  (`sortEntries`, `resolveSort`).
+- Source: `src/internal/worktree/idle.go` — `IsIdle`, `DefaultIdleThreshold`
+  (the idle predicate consuming `RecencyOf`; see `wt-cli/idle-staleness-contract.md`).
 - Tests: `src/internal/worktree/recency_test.go` (helper + comparator + tie-break,
   controlled mtimes via `os.Chtimes`), `src/cmd/wt/open_test.go`,
   `src/cmd/wt/delete_test.go` (menu newest-first ordering).
@@ -166,3 +210,4 @@ deferred.
 |--------|------|---------|
 | `260530-rtmf-recency-aware-listing` | 2026-05-31 | Introduced the single recency definition: `RecencyOf(path)` (worktree-dir `os.Stat` mtime, zero time on failure), `RecencyLess` (newest-first, deterministic Name-ascending tie-break), and the generic `SortByRecency[T]` adapter in `internal/worktree`. Consolidated the duplicated inline mtime loops in `open.go`/`delete.go` into this shared helper; `wt open`/`wt delete` menus now list non-main worktrees newest-first with the newest pre-selected as the default (behavior-preserving default selection). |
 | `260601-73cv-list-recency-column` | 2026-06-01 | `wt list` recent mode now PERSISTS the computed recency key into `entries[i].LastActive` for display (previously discarded after sorting), gated on the human-output path via `sortEntries`'s new `persistKey` param. The comparator/ordering definition (`RecencyOf`/`RecencyLess`/`SortByRecency`, newest-first with Name-ascending tie-break) is UNCHANGED, and `wt list` still inlines `RecencyLess` (does not call `SortByRecency`). Ordering output is identical to before; only the key-discard was removed. See `wt-cli/list-status-contract.md` for the rendering/`persistKey` details. |
+| `260530-5fyu-stale-worktree-hints` | 2026-06-01 | Amended the `wt delete` menu `defaultIdx`: now **2 by default, 3 only when the "All idle (N)" entry is present** (computed via a local `firstWorktreeIdx`), keeping the newest worktree as the pre-selected default in both cases. `handleDeleteMenu` annotates idle non-main option labels with a trailing `, idle` and inserts the "All idle (N)" summary entry (after "All (N worktrees)") when ≥1 worktree is idle; menu ordering still newest-first via `SortByRecency`. Idleness is derived from the `RecencyOf` signal via the new `IsIdle` predicate — one extra `os.Stat` per option on the interactive menu path (acceptable at ≤100-worktree scale; the `wt list` path adds no stat). **Resolved this file's signal-quality caveat**: kept dir-mtime with honest "idle / untouched on disk" framing (no second/cleaner staleness signal). The predicate, `DefaultIdleThreshold`, and `--stale` selector live in `wt-cli/idle-staleness-contract.md`. |
