@@ -6,7 +6,6 @@ change_type: fix
 issues: []
 progress:
     intake: done
-    spec: done
     apply: done
     review: done
     hydrate: done
@@ -31,7 +30,6 @@ confidence:
         disambiguation: 88.7
 stage_metrics:
     intake: {started_at: "2026-05-08T15:23:29Z", driver: fab-new, iterations: 1, completed_at: "2026-05-08T15:43:21Z"}
-    spec: {started_at: "2026-05-08T15:43:21Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-08T15:44:54Z"}
     apply: {started_at: "2026-05-08T15:44:54Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-08T15:50:04Z"}
     review: {started_at: "2026-05-08T15:50:04Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-08T15:52:30Z"}
     hydrate: {started_at: "2026-05-08T15:52:30Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-08T15:53:10Z"}
@@ -39,4 +37,4 @@ stage_metrics:
     review-pr: {started_at: "2026-05-08T15:54:55Z", driver: git-pr, iterations: 1}
 prs:
     - https://github.com/sahil87/wt/pull/3
-last_updated: 2026-05-08T16:00:55Z
+last_updated: 2026-06-02T00:00:00Z

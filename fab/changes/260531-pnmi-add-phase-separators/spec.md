@@ -216,3 +216,4 @@ any output text — only the stream (stdout → stderr).
 | 11 | Tentative | `cli-surface.md` states `wt init` returns `ExitGeneralError` (1) on script failure, but code + `init-protocol.md` use `ExitInitFailed` (7) — pre-existing spec staleness, out of scope here, flagged for internal-consistency | Observed during spec generation; not caused by this change; A high (verifiable) but D low (fix belongs to a separate change, not this one) | S:70 R:90 A:90 D:35 |
 
 11 assumptions (10 certain, 0 confident, 1 tentative, 0 unresolved).
+<!-- Merged into plan.md ## Requirements on 2026-06-02 — safe to delete. -->

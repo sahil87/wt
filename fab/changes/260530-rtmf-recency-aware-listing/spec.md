@@ -245,3 +245,4 @@ The new `last_active` field SHALL be computed via `os.Stat` only — never a `gi
 | 11 | Tentative | Relative-time format uses coarse buckets (`just now`, `2h ago`, `3d ago`); exact granularity TBD | New (spec) — display polish, low blast radius, no codebase precedent to match (no existing relative-time formatter in src/), so left to implementer discretion; easily adjusted later | S:55 R:85 A:65 D:60 |
 
 11 assumptions (9 certain, 1 confident, 1 tentative, 0 unresolved).
+<!-- Merged into plan.md ## Requirements on 2026-06-02 — safe to delete. -->

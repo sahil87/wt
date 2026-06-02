@@ -515,3 +515,4 @@ Error: Init script failed
 | 16 | Certain | Process-group setup for SIGINT (the `Setpgid: true` `SysProcAttr` on the init cmd) is set during cmd construction or just before `cmd.Run()`. Plan stage picks the exact spot. | New spec-stage decision. Required so the signal handler can deliver SIGINT to the whole process group (intake §5). The "where" is a small detail deferred to plan. | S:80 R:85 A:80 D:70 |
 
 16 assumptions (16 certain, 0 confident, 0 tentative, 0 unresolved).
+<!-- Merged into plan.md ## Requirements on 2026-06-02 — safe to delete. -->

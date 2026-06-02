@@ -275,3 +275,4 @@ Every invocation of `wt open` that produced a successful outcome before this cha
 | 17 | Certain | Stability guarantees on the contract require a constitution amendment to change. | Discovered during spec generation; matches the precedent set by Constitution's Module Path Stability clause. | S:90 R:85 A:90 D:90 |
 
 17 assumptions (12 certain, 5 confident, 0 tentative, 0 unresolved).
+<!-- Merged into plan.md ## Requirements on 2026-06-02 — safe to delete. -->

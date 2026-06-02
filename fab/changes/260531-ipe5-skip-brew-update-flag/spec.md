@@ -126,3 +126,4 @@ The update package test suite SHALL include a test asserting that `update.Run` w
 | 7 | Confident | New memory file `wt-cli/update-command-contract` created at hydrate documenting the flag contract | Confirmed from intake #7; wt-cli domain houses command contracts | S:72 R:85 A:80 D:75 |
 
 7 assumptions (4 certain, 3 confident, 0 tentative, 0 unresolved).
+<!-- Merged into plan.md ## Requirements on 2026-06-02 — safe to delete. -->

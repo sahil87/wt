@@ -333,3 +333,4 @@ On Windows (`GOOS=windows`), `ShowMenu` SHALL detect TTY status via the same `go
 | 15 | Confident | Post-prompt final line shows `<prompt> <option-text>` or `<prompt> (cancelled)` | Keeps output stream consistent for scrollback readers and `wt`'s convention that prompts leave a trace of the decision. | S:70 R:80 A:80 D:75 |
 | 16 | Confident | Windows interactive renderer is best-effort; fallback path is conservative | ConPTY raw-mode quirks (line-buffering on certain terminals, key-code differences) make full Windows arrow-key support a non-trivial side quest. Linux/macOS users gain the UX immediately; Windows users keep today's UX and are no worse off. Apply phase decides which path Windows takes. | S:55 R:60 A:75 D:60 |
 16 assumptions (10 certain, 6 confident, 0 tentative, 0 unresolved).
+<!-- Merged into plan.md ## Requirements on 2026-06-02 — safe to delete. -->

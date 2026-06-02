@@ -176,3 +176,4 @@ The rule SHALL flag option (a) and (b) as preferred; (c) as last-resort for test
 
 15 assumptions (11 certain, 4 confident, 0 tentative, 0 unresolved). <!-- clarified: corrected count — rows 1-9 + 14-15 are Certain (11), 10-13 are Confident (4) -->
 
+<!-- Merged into plan.md ## Requirements on 2026-06-02 — safe to delete. -->

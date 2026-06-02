@@ -227,3 +227,4 @@ Every behavior above SHALL be covered by tests that assert what the user sees: t
 | 9 | Certain | Populate the pinned main worktree's `LastActive` via a single `wt.RecencyOf(Path)` when `persistKey` is true and it is nil — `sortEntries` partitions main out of the key-computation `rest` slice today, so basic recent mode never stats main | Clarified during auto clarify against list.go:186-190. Without this, the main row's `Last Active` would render `-` instead of its real mtime, contradicting the "main worktree displays its own Last Active" requirement. One extra stat for the single main entry parallels the existing per-entry stat in `listEntriesEnriched`; one obvious correct outcome | S:90 R:85 A:85 D:85 |
 
 9 assumptions (9 certain, 0 confident, 0 tentative, 0 unresolved).
+<!-- Merged into plan.md ## Requirements on 2026-06-02 — safe to delete. -->

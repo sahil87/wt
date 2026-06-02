@@ -6,7 +6,6 @@ change_type: refactor
 issues: []
 progress:
     intake: done
-    spec: done
     apply: done
     review: done
     hydrate: done
@@ -31,7 +30,6 @@ confidence:
         disambiguation: 88.6
 stage_metrics:
     intake: {started_at: "2026-05-16T12:00:18Z", driver: fab-new, iterations: 1, completed_at: "2026-05-16T13:03:27Z"}
-    spec: {started_at: "2026-05-16T13:03:27Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T13:05:01Z"}
     apply: {started_at: "2026-05-16T13:04:53Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T13:10:05Z"}
     review: {started_at: "2026-05-16T13:10:05Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T13:15:28Z"}
     hydrate: {started_at: "2026-05-16T13:15:28Z", driver: fab-fff, iterations: 1, completed_at: "2026-05-16T13:16:29Z"}
@@ -39,4 +37,4 @@ stage_metrics:
     review-pr: {started_at: "2026-05-16T13:20:42Z", driver: git-pr, iterations: 1, completed_at: "2026-05-16T13:23:17Z"}
 prs:
     - https://github.com/sahil87/wt/pull/9
-last_updated: 2026-05-16T13:23:17Z
+last_updated: 2026-06-02T00:00:00Z

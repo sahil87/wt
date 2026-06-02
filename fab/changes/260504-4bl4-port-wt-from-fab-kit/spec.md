@@ -304,3 +304,4 @@ This section is documentation, not code. The change does NOT configure the secre
 | 15 | Certain | Repo root will gain `bin/` and `dist/` directories at build/release time; both SHALL be gitignored | Hop's `.gitignore` does this; required so `just build` doesn't dirty the working tree | S:90 R:95 A:90 D:90 |
 
 15 assumptions (15 certain, 0 confident, 0 tentative, 0 unresolved).
+<!-- Merged into plan.md ## Requirements on 2026-06-02 — safe to delete. -->

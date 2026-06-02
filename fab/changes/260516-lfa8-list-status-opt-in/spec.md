@@ -284,3 +284,4 @@ The exit-code list and the `--path`/`--json` mutual-exclusivity rule SHALL remai
 | 18 | Confident | The worker-pool implementation uses a buffered semaphore channel plus `sync.WaitGroup` (standard Go pattern), not a third-party pool library. | Plan-level call but worth noting: dependency-free, ≤30 lines, idiomatic. | S:80 R:90 A:90 D:85 |
 
 18 assumptions (17 certain, 1 confident, 0 tentative, 0 unresolved).
+<!-- Merged into plan.md ## Requirements on 2026-06-02 — safe to delete. -->

@@ -5,6 +5,206 @@
 **Intake**: `intake.md`
 **Spec**: `spec.md`
 
+## Requirements
+
+<!-- migrated from spec.md on 2026-06-02 -->
+
+## Non-Goals
+
+- **No terminal-width detection** — the separator rule is a fixed width; it does not query the
+  terminal size or adapt to it. Rationale: determinism for tests and the single-binary / no-hidden-state posture.
+- **No change to exit codes, rollback behavior, signal handling, or the init resolution contract**
+  (`ResolveInitInvocation`) — this change is purely additive output structure plus one stream realignment.
+- **No new output on `wt create`'s stdout** — the stdout final-path line (`launcher-contract.md`)
+  is untouched. Separators never appear on stdout for `wt create`.
+- **No separators around the validation phase or the dirty-state prompt** — separators bracket
+  only the Git, Init, and Open phases that follow successful argument validation.
+
+## Output Contract: Phase Separators
+
+### Requirement: PhaseSeparator helper
+A single helper `PhaseSeparator(label string) string` SHALL be added to
+`src/internal/worktree/errors.go`, alongside the existing output helpers (`WtError`,
+`PrintError`, `PrintInitFailureBanner`), and SHALL be the sole producer of phase-separator
+strings. The helper SHALL:
+
+- Return a single labeled rule line **without** a trailing newline (callers add newlines via the
+  `Fprintln` they already use).
+- Use a fixed total width of **40 columns** (label plus rule glyphs), and SHALL NOT query the
+  terminal size.
+- Render the label using the existing `ColorBold` treatment when color is enabled.
+- Produce a **unicode** rule (`──`, U+2500) framing the label when color is enabled
+  (e.g. `── Git ──────────────────────────`).
+- Produce a **plain-ASCII** rule (`--`) framing the label when `NO_COLOR` is set, reusing the
+  package's existing color-blanking mechanism (the `init()` that blanks `ColorBold` etc. when
+  `NO_COLOR` is non-empty). When the color variables are blank, the helper SHALL emit the
+  ASCII form and SHALL NOT emit any ANSI escape sequences.
+
+#### Scenario: Colored form
+- **GIVEN** `NO_COLOR` is unset
+- **WHEN** `PhaseSeparator("Git")` is called
+- **THEN** the result contains the label `Git`
+- **AND** the result contains the unicode rule glyph `─` (U+2500)
+- **AND** the result contains the `ColorBold` ANSI escape around the label
+
+#### Scenario: NO_COLOR form
+- **GIVEN** `NO_COLOR` is set to a non-empty value
+- **WHEN** `PhaseSeparator("Git")` is called
+- **THEN** the result contains the label `Git`
+- **AND** the result contains the ASCII rule glyph `-`
+- **AND** the result contains no ANSI escape sequences (no `\033[`)
+
+#### Scenario: Fixed width, no trailing newline
+- **GIVEN** any label shorter than the fixed width
+- **WHEN** `PhaseSeparator(label)` is called
+- **THEN** the returned string has no trailing newline
+- **AND** the total visible width (label + glyphs + spaces, excluding ANSI escapes) equals the fixed 40-column target
+
+### Requirement: wt create emits Git, Init, and Open separators on stderr
+`wt create` SHALL emit three phase separators to **stderr** (never stdout), in order, each
+immediately preceding the output of its phase:
+
+1. `PhaseSeparator("Git")` immediately before the deferred summary block
+   (`Created worktree:` / `Path:` / `Branch:`).
+2. The **Init** separator, emitted by the init runner (see *Init Protocol* domain below), not by
+   `create.go` directly.
+3. `PhaseSeparator("Open")` immediately before the open phase (the `worktree-open` branch).
+
+The existing summary, warning, and prompt strings SHALL be preserved verbatim (in particular the
+substrings `Created worktree:` and `Open in:`). The stdout final-path line SHALL remain the only
+thing `wt create` writes to stdout and SHALL be byte-identical to today's output.
+
+#### Scenario: All three separators present on stderr
+- **GIVEN** a valid git repository and `wt create` with init enabled and an app/open step
+- **WHEN** `wt create` runs to completion
+- **THEN** stderr contains a separator labeled `Git`, one labeled `Init` (with the resolved command), and one labeled `Open`
+- **AND** they appear in that order
+
+#### Scenario: stdout contract preserved
+- **GIVEN** a successful `wt create` whose open step is not `open_here`
+- **WHEN** the command completes
+- **THEN** stdout consists solely of the absolute worktree path line (no separators, no summary, no init output)
+
+#### Scenario: Git separator placement respects the reinstall-window contract
+- **GIVEN** the create flow has completed `git worktree add` and is emitting the deferred summary
+- **WHEN** the `Git` separator is emitted
+- **THEN** it is emitted as part of the existing deferred-summary emission (under the rollback handler, before the init-phase `signal.Reset`)
+- **AND** no new I/O or user prompt is introduced inside the tight reinstall window between `git worktree add` returning and `signal.Reset`
+
+### Requirement: Open separator omitted when open phase is skipped
+When the open phase does not run (`--worktree-open=skip`, or `--non-interactive` defaulting to
+`skip`), `wt create` SHALL NOT emit the `Open` separator. More generally, a phase separator SHALL
+be emitted only when its phase runs and produces diagnostic output:
+- The **Git** separator SHALL be emitted on every successful create, since the deferred summary
+  block always prints (it is the Git phase's output).
+- The **Init** separator SHALL be emitted only when the init phase actually runs an init command —
+  i.e. not when init is disabled and not on the `*InitNotFound` path (see *Init Protocol* below).
+- The **Open** separator SHALL be emitted only when the open phase runs (any `--worktree-open`
+  value other than `skip`).
+<!-- clarified: generalized the "emitted only when its phase produces output" rule per assumption #10, resolving the apparent contradiction with the always-emitted Git separator — Git always emits (summary always prints), Init emits only when a command runs (not disabled, not not-found), Open emits only when not skipped; matches create.go control flow (deferred summary at L264, runner short-circuits to RenderWarning, open block gated on worktreeOpen != "skip") -->
+A separator never precedes a phase that emits nothing.
+
+#### Scenario: Skip open
+- **GIVEN** `wt create --non-interactive` (open defaults to `skip`)
+- **WHEN** the command runs
+- **THEN** stderr contains no `Open` separator
+- **AND** stderr still contains the `Git` and `Init` separators
+
+## Init Protocol: Init Separator and Stream Alignment
+
+### Requirement: Init separator owned by the runner, labeled with the resolved command
+The **Init** phase separator SHALL be emitted by the code that owns the existing
+`Running worktree init...` line, so it is produced exactly once regardless of caller:
+
+- `RunWorktreeSetupWithObserver` in `src/internal/worktree/crud.go` (used by `wt create`).
+- `runInitScript` in `src/cmd/wt/init.go` (the standalone `wt init` path).
+
+The separator label SHALL be `Init (<cmd>)` where `<cmd>` is the resolved init command as the
+user would recognize it — for a command invocation, the full command string (e.g. `fab sync`);
+for a file-path invocation, the path. The label SHALL be derived from the same init-script value
+that resolution uses (`InitScriptPath()` / the resolved `*exec.Cmd`), never hardcoded.
+
+When init resolution returns a structured not-found outcome (`*InitNotFound`), the existing
+`RenderWarning()` path SHALL be used unchanged and **no** Init separator SHALL be emitted (there
+is no command to label).
+
+The substrings `Running worktree init` and `Worktree init complete` SHALL remain present in the
+output (the separator augments, it does not replace these markers), preserving existing test
+assertions.
+
+#### Scenario: Init separator labeled with default command
+- **GIVEN** `WORKTREE_INIT_SCRIPT` is unset (default `fab sync`) and `fab` is on PATH
+- **WHEN** the init runner runs
+- **THEN** stderr contains a separator whose label is `Init (fab sync)`
+
+#### Scenario: Init separator labeled with custom script path
+- **GIVEN** `WORKTREE_INIT_SCRIPT=scripts/setup.sh` and the file exists under the repo root
+- **WHEN** the init runner runs
+- **THEN** stderr contains a separator whose label is `Init (scripts/setup.sh)`
+
+#### Scenario: No separator on not-found
+- **GIVEN** `WORKTREE_INIT_SCRIPT=__nonexistent_cmd__` (not on PATH)
+- **WHEN** the init runner runs
+- **THEN** the canonical not-found warning is printed
+- **AND** no Init separator is emitted
+- **AND** the command exits 0 (graceful skip, unchanged)
+
+### Requirement: wt init streams init diagnostics to stderr
+`wt init` (`runInitScript`) SHALL emit its init diagnostics — the `Running worktree init...` /
+`Worktree init complete.` banner, the Init separator, and the init script's own stdout/stderr —
+to **stderr**, matching `wt create`'s init runner. Specifically, the wired `cmd.Stdout` and
+`cmd.Stderr` for the init child SHALL both be `os.Stderr`, and the banner SHALL be written with
+`fmt.Fprintln(os.Stderr, ...)`.
+
+Rationale: `wt init` has no machine-readable result (it is a side-effecting command whose outcome
+is its exit code), so all of its output is diagnostic and belongs on stderr per the
+stdout=machine-result / stderr=diagnostics convention that `wt create` already follows.
+
+This realignment SHALL NOT change `wt init`'s exit-code behavior, the graceful-skip behavior, or
+any output text — only the stream (stdout → stderr).
+
+#### Scenario: Diagnostics on stderr
+- **GIVEN** a valid repo and a resolvable init script that prints to stdout and exits 0
+- **WHEN** `wt init` runs
+- **THEN** the `Running worktree init` banner, the Init separator, and the script's output all appear on stderr
+- **AND** stdout is empty
+
+#### Scenario: Existing combined-stream assertions still pass
+- **GIVEN** the existing `wt init` tests that assert on `r.Stdout + r.Stderr`
+- **WHEN** the realigned `wt init` runs
+- **THEN** the combined output still contains `Running worktree init`, the script's output, and `Worktree init complete`
+
+## Design Decisions
+
+1. **Single helper in `errors.go` as the sole separator producer**
+   - *Why*: `errors.go` already centralizes user-facing output formatting (`WtError`,
+     `PrintInitFailureBanner`) and owns the `NO_COLOR` blanking `init()`. Co-locating
+     `PhaseSeparator` reuses that mechanism and keeps the canonical wording in one place,
+     mirroring how `RenderWarning` is the single source for not-found warnings.
+   - *Rejected*: inlining the rule construction at each call site — would duplicate the
+     glyph/width/color logic across `create.go`, `crud.go`, and `init.go` and invite drift.
+
+2. **Init separator owned by the runner, not `create.go`**
+   - *Why*: the runner already prints `Running worktree init...` and already holds the resolved
+     `*exec.Cmd`, so it can label the separator with the resolved command and guarantee exactly
+     one emission for both `wt create` and `wt init`.
+   - *Rejected*: emitting it from `create.go` — would either duplicate the resolution logic or
+     double-label when `wt init` runs the same runner.
+
+3. **Align `wt init` to stderr (stream realignment in scope)**
+   - *Why*: resolves the cross-command inconsistency (`wt create` uses stderr, `wt init` used
+     stdout for identical init diagnostics) and makes separator placement uniform. `wt init`
+     has no stdout contract — its tests assert on combined streams and no spec pins it to stdout.
+   - *Rejected*: keeping each command on its own stream — enshrines the inconsistency and makes
+     the separator behavior asymmetric between two commands doing the same thing.
+
+4. **Fixed 40-column width, no terminal-size query**
+   - *Why*: deterministic output for unit tests; no dependency on terminal/ioctl; consistent with
+     the project's single-binary, no-hidden-state posture.
+   - *Rejected*: dynamic width via terminal detection — non-deterministic in tests and adds a
+     platform-specific code path for a cosmetic gain.
+
+
 ## Tasks
 
 <!-- Sequential work items for the apply stage. Checked off [x] as completed. -->

@@ -242,3 +242,4 @@ The change SHALL append a new section `## wt update` to `docs/specs/cli-surface.
 | 20 | Confident | `update.go` package doc comment is brief (3-5 lines): purpose, formula constant rationale, and a note that `os/exec` is used directly per wt convention | Mirrors hop's doc-comment density without copying its hop-specific constitution citation | S:80 R:90 A:85 D:80 |
 
 20 assumptions (18 certain, 2 confident, 0 tentative, 0 unresolved).
+<!-- Merged into plan.md ## Requirements on 2026-06-02 — safe to delete. -->

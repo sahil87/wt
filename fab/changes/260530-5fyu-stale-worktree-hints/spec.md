@@ -193,3 +193,4 @@ THEN it prints "No idle worktrees (threshold: 7d)." and exits 0
 | 11 | Certain | Vanished worktree (zero recency) counts as idle | Clarified — confirmed settled in fab-discuss | S:95 R:80 A:85 D:80 |
 
 11 assumptions (11 certain, 0 confident, 0 tentative, 0 unresolved).
+<!-- Merged into plan.md ## Requirements on 2026-06-02 — safe to delete. -->
