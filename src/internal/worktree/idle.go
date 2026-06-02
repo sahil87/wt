@@ -56,5 +56,15 @@ func ParseIdleThreshold(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid threshold %q: day count must be a positive integer like 7d or 30d", s)
 	}
 
+	// Guard against int64 overflow: time.Duration is int64 nanoseconds, capping
+	// the representable range at ~106751 days. Without this check a too-large day
+	// count wraps to a negative duration, which would make IsIdle treat every
+	// worktree as idle — dangerous for --stale selection (it would target all
+	// worktrees for deletion). Reject anything that does not round-trip.
+	const maxDays = int(int64(^uint64(0)>>1) / int64(24*time.Hour)) // MaxInt64 / 24h
+	if days > maxDays {
+		return 0, fmt.Errorf("invalid threshold %q: day count too large (max %dd)", s, maxDays)
+	}
+
 	return time.Duration(days) * 24 * time.Hour, nil
 }

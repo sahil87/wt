@@ -90,18 +90,34 @@ func TestParseIdleThreshold_ValidDayForms(t *testing.T) {
 
 func TestParseIdleThreshold_RejectsInvalid(t *testing.T) {
 	cases := []string{
-		"banana", // non-numeric, no d suffix
-		"30",     // no d suffix
-		"7h",     // wrong unit
-		"2w",     // wrong unit
-		"dd",     // d suffix but non-integer
-		"0d",     // non-positive
-		"-5d",    // non-positive
-		"d",      // empty number part
+		"banana",     // non-numeric, no d suffix
+		"30",         // no d suffix
+		"7h",         // wrong unit
+		"2w",         // wrong unit
+		"dd",         // d suffix but non-integer
+		"0d",         // non-positive
+		"-5d",        // non-positive
+		"d",          // empty number part
+		"999999999d", // overflows int64 time.Duration (cap is ~106751d)
+		"107000d",    // just over the ~106751d representable cap
 	}
 	for _, in := range cases {
 		if _, err := ParseIdleThreshold(in); err == nil {
 			t.Errorf("ParseIdleThreshold(%q) expected error, got nil", in)
 		}
+	}
+}
+
+// TestParseIdleThreshold_OverflowGuard pins the int64 overflow guard: a day
+// count beyond what time.Duration can represent must be rejected, never wrapped
+// to a negative duration (which would make IsIdle select every worktree).
+func TestParseIdleThreshold_OverflowGuard(t *testing.T) {
+	// A value safely under the cap still parses to a positive duration.
+	if d, err := ParseIdleThreshold("100000d"); err != nil || d <= 0 {
+		t.Errorf("ParseIdleThreshold(\"100000d\") = (%v, %v), want a positive duration, nil error", d, err)
+	}
+	// A value over the cap is rejected, not wrapped negative.
+	if _, err := ParseIdleThreshold("200000d"); err == nil {
+		t.Errorf("ParseIdleThreshold(\"200000d\") expected overflow rejection, got nil error")
 	}
 }

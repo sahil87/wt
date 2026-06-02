@@ -532,9 +532,11 @@ func handleDeleteStale(session *wt.MenuSession, staleValue string, nonInteractiv
 }
 
 // formatThreshold renders a whole-day duration back as an Nd string for the
-// informational empty-state message, matching the --stale=Nd input form.
+// informational empty-state message, matching the --stale=Nd input form. Uses
+// integer duration division — thresholds are always whole-day durations, so no
+// float conversion or truncation is needed.
 func formatThreshold(d time.Duration) string {
-	return fmt.Sprintf("%dd", int(d.Hours())/24)
+	return fmt.Sprintf("%dd", d/(24*time.Hour))
 }
 
 func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
