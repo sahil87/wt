@@ -1,0 +1,20 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-06-03T07:51:49Z"}
+{"args":"There's an update in the way we integrate with shll.ai (help-dump-contract.md teardown directive). shll.ai now PULLS help via 'wt help-dump' instead of the retired push model. Implement the wt help-dump Cobra command per the contract (Hidden, walks tree recursively, emits {tool,version,schema_version:1,root} to stdout, no captured_at). Supersedes backlog pc47 (push producer).","cmd":"fab-new","event":"command","ts":"2026-06-03T07:51:49Z"}
+{"delta":"+1.8","event":"confidence","score":1.8,"trigger":"calc-score","ts":"2026-06-03T07:52:54Z"}
+{"delta":"+0.0","event":"confidence","score":1.8,"trigger":"calc-score","ts":"2026-06-03T07:53:00Z"}
+{"cmd":"fab-clarify","event":"command","ts":"2026-06-03T07:54:44Z"}
+{"delta":"+3.2","event":"confidence","score":5,"trigger":"calc-score","ts":"2026-06-03T14:22:14Z"}
+{"delta":"+0.0","event":"confidence","score":5,"trigger":"calc-score","ts":"2026-06-03T14:22:21Z"}
+{"delta":"+0.0","event":"confidence","score":5,"trigger":"calc-score","ts":"2026-06-03T14:22:28Z"}
+{"delta":"+0.0","event":"confidence","score":5,"trigger":"calc-score","ts":"2026-06-03T14:22:39Z"}
+{"delta":"+0.0","event":"confidence","score":5,"trigger":"calc-score","ts":"2026-06-03T14:22:42Z"}
+{"cmd":"fab-fff","event":"command","ts":"2026-06-03T14:22:53Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-06-03T14:23:17Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-06-03T14:24:28Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-06-03T14:34:53Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-06-03T14:35:34Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-06-03T14:37:47Z"}
+{"event":"review","result":"passed","ts":"2026-06-03T14:37:47Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-06-03T14:38:39Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-06-03T14:40:18Z"}
+{"cmd":"git-pr","event":"command","ts":"2026-06-03T14:41:26Z"}

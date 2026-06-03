@@ -1,0 +1,49 @@
+id: qqkj
+name: 260603-qqkj-help-dump-command
+created: 2026-06-03T07:51:49Z
+created_by: sahil87
+change_type: feat
+issues: []
+progress:
+    intake: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: active
+    review-pr: pending
+plan:
+    generated: true
+    task_count: 7
+    acceptance_count: 15
+    acceptance_completed: 0
+confidence:
+    certain: 13
+    confident: 0
+    tentative: 0
+    unresolved: 0
+    score: 5.0
+    fuzzy: true
+    dimensions:
+        signal: 95.9
+        reversibility: 74.2
+        competence: 88.3
+        disambiguation: 86.1
+stage_metrics:
+    intake: {started_at: "2026-06-03T07:51:49Z", driver: fab-new, iterations: 1, completed_at: "2026-06-03T14:23:17Z"}
+    apply: {started_at: "2026-06-03T14:23:17Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-03T14:34:53Z"}
+    review: {started_at: "2026-06-03T14:34:53Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-03T14:37:47Z"}
+    hydrate: {started_at: "2026-06-03T14:37:47Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-03T14:40:18Z"}
+    ship: {started_at: "2026-06-03T14:40:18Z", driver: fab-fff, iterations: 1}
+prs: []
+true_impact:
+    added: 0
+    deleted: 0
+    net: 0
+    excluding:
+        added: 0
+        deleted: 0
+        net: 0
+    computed_at: "2026-06-03T14:40:18Z"
+    computed_at_stage: hydrate
+# true_impact: lazily created on first apply-finish (no placeholder here).
+last_updated: 2026-06-03T14:40:18Z
