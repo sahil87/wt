@@ -9,12 +9,14 @@ import (
 
 // helpDumpSchemaVersion is the contract revision emitted in the help-dump
 // envelope. It is frozen at 1 for this revision of the shll.ai help-dump
-// contract (see docs/specs / shll.ai help-dump-contract.md §8); new fields and
-// version bumps are a separate, deliberate change.
+// contract — the upstream spec is sahil87/shll.ai docs/specs/help-dump-contract.md
+// §8 (in-repo behavior contract: docs/memory/wt-cli/help-dump-contract.md). New
+// fields and version bumps are a separate, deliberate change.
 const helpDumpSchemaVersion = 1
 
-// toolName is the binary name reported in the help-dump envelope's `tool`
-// field. It is the invoked binary name, not the file slug.
+// toolName is the binary name reported in the help-dump envelope's `tool` field.
+// The contract requires the invoked binary name (not the file slug); for this
+// repo that is the fixed constant "wt" — it is not derived from argv.
 const toolName = "wt"
 
 // HelpDoc is the top-level help-dump envelope emitted to stdout by
