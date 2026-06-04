@@ -35,6 +35,7 @@ Shell wrapper (recommended):
 		initCmd(),
 		shellInitCmd(),
 		updateCmd(),
+		helpDumpCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
