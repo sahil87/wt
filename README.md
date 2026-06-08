@@ -74,7 +74,7 @@ $ wt delete lively-otter      # removes worktree (and optionally the branch)
 | `wt init` | Run the worktree init script (default `fab sync`, override via `WORKTREE_INIT_SCRIPT`). |
 | `wt shell-init` | Print a shell wrapper function for `eval` in your shell profile. |
 
-Run `wt <command> --help` for inline flag details, or see [`docs/specs/cli-surface.md`](docs/specs/cli-surface.md) for the full per-flag reference and exit codes.
+Run `wt <command> --help` for inline flag details, or see the [full command & flag reference](docs/site/workflows.md) for every flag, the `--base` start-point rules, the `wt open` launcher matrix, and exit codes.
 
 ### `wt create --base` — branch start-point
 
@@ -143,7 +143,3 @@ detected app, or `7` to copy the absolute path to your clipboard.
 - **`wt open` can't `cd` without the shell wrapper.** A child process can't change its parent shell's directory — that's a Unix constraint, not a wt bug. `eval "$(wt shell-init)"` installs a shell function that wraps the binary so the "Open here" menu option actually works.
 - **`--base` is ignored when the branch already exists** (locally or on the remote) — wt checks out the existing branch instead and prints a warning. `--reuse` also takes precedence over `--base`.
 - **Worktrees survive `cd` into deleted directories.** If you delete a worktree from outside (`rm -rf`), run `git worktree prune` in the main repo to clean up git's bookkeeping.
-
----
-
-> Part of [@sahil87's open source toolkit](https://shll.ai) — see all projects there. Originally extracted from [fab-kit](https://github.com/sahil87/fab-kit); the fab-kit repo continues to bundle a copy during the transition.
