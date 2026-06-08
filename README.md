@@ -42,6 +42,8 @@ eval "$(wt shell-init)"
 
 > 💡 Have other sahil87 tools? [`shll shell-install`](https://github.com/sahil87/shll#shll-shell-install--wire-the-rc-file-recommended) handles all of their shell integrations and autocompletions at once.
 
+For the full install guide — every path, the shell wrapper, and cross-tool setup — see the [install guide](docs/site/install.md).
+
 ## Usage
 
 A typical first session:
@@ -74,7 +76,7 @@ $ wt delete lively-otter      # removes worktree (and optionally the branch)
 | `wt init` | Run the worktree init script (default `fab sync`, override via `WORKTREE_INIT_SCRIPT`). |
 | `wt shell-init` | Print a shell wrapper function for `eval` in your shell profile. |
 
-Run `wt <command> --help` for inline flag details, or see [`docs/specs/cli-surface.md`](docs/specs/cli-surface.md) for the full per-flag reference and exit codes.
+Run `wt <command> --help` for inline flag details. For every flag and exit code, see the auto-generated [command reference](https://shll.ai/tools/wt/commands/); for the `--base` start-point rules and the `wt open` launcher matrix, see the [workflows guide](docs/site/workflows.md).
 
 ### `wt create --base` — branch start-point
 
@@ -143,7 +145,3 @@ detected app, or `7` to copy the absolute path to your clipboard.
 - **`wt open` can't `cd` without the shell wrapper.** A child process can't change its parent shell's directory — that's a Unix constraint, not a wt bug. `eval "$(wt shell-init)"` installs a shell function that wraps the binary so the "Open here" menu option actually works.
 - **`--base` is ignored when the branch already exists** (locally or on the remote) — wt checks out the existing branch instead and prints a warning. `--reuse` also takes precedence over `--base`.
 - **Worktrees survive `cd` into deleted directories.** If you delete a worktree from outside (`rm -rf`), run `git worktree prune` in the main repo to clean up git's bookkeeping.
-
----
-
-> Part of [@sahil87's open source toolkit](https://shll.ai) — see all projects there. Originally extracted from [fab-kit](https://github.com/sahil87/fab-kit); the fab-kit repo continues to bundle a copy during the transition.
