@@ -42,6 +42,8 @@ eval "$(wt shell-init)"
 
 > 💡 Have other sahil87 tools? [`shll shell-install`](https://github.com/sahil87/shll#shll-shell-install--wire-the-rc-file-recommended) handles all of their shell integrations and autocompletions at once.
 
+For the full install guide — every path, the shell wrapper, and cross-tool setup — see the [install guide](docs/site/install.md).
+
 ## Usage
 
 A typical first session:
@@ -74,7 +76,7 @@ $ wt delete lively-otter      # removes worktree (and optionally the branch)
 | `wt init` | Run the worktree init script (default `fab sync`, override via `WORKTREE_INIT_SCRIPT`). |
 | `wt shell-init` | Print a shell wrapper function for `eval` in your shell profile. |
 
-Run `wt <command> --help` for inline flag details, or see the [full command & flag reference](docs/site/workflows.md) for every flag, the `--base` start-point rules, the `wt open` launcher matrix, and exit codes.
+Run `wt <command> --help` for inline flag details. For every flag and exit code, see the auto-generated [command reference](https://shll.ai/tools/wt/commands/); for the `--base` start-point rules and the `wt open` launcher matrix, see the [workflows guide](docs/site/workflows.md).
 
 ### `wt create --base` — branch start-point
 
