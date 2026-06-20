@@ -31,6 +31,7 @@ Shell wrapper (recommended):
 		createCmd(),
 		listCmd(),
 		openCmd(),
+		goCmd(),
 		deleteCmd(),
 		initCmd(),
 		shellInitCmd(),

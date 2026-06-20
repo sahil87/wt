@@ -8,6 +8,7 @@ description: "Behavior contracts for the `wt` CLI binary — commands, exit code
 | File | Description | Last Updated |
 |------|-------------|-------------|
 | [create-output-phases](create-output-phases.md) | Phase-separator output contract for `wt create` / `wt init` — Git/Init/Open separators on stderr, stdout reserved for the machine result. | 2026-06-20 |
+| [go-command-contract](go-command-contract.md) | `wt go` worktree-selection contract — selection-only navigation via `WT_CD_FILE`/stdout (no launch), exit codes, the current-worktree-included menu, and the `wt open --go` composition. | 2026-06-20 |
 | [help-dump-contract](help-dump-contract.md) | Contract for the hidden `wt help-dump` command — the JSON envelope shll.ai's scheduled puller consumes. | 2026-06-20 |
 | [idle-staleness-contract](idle-staleness-contract.md) | The shared idle predicate, the `wt delete --stale` selector, and the safety invariant that idleness never gates a deletion on its own. | 2026-06-20 |
 | [init-failure-contract](init-failure-contract.md) | Init-failure behavior of `wt create` / `wt init` — kept-worktree contract, `ExitInitFailed`, SIGINT handling, and terminal-foreground reclaim. | 2026-06-20 |
