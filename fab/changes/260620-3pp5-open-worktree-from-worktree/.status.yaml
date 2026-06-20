@@ -1,0 +1,51 @@
+id: 3pp5
+name: 260620-3pp5-open-worktree-from-worktree
+created: 2026-06-20T05:44:24Z
+created_by: sahil-noon
+change_type: feat
+issues: []
+progress:
+    intake: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: active
+    review-pr: pending
+plan:
+    generated: true
+    task_count: 9
+    acceptance_count: 20
+    acceptance_completed: 20
+confidence:
+    certain: 4
+    confident: 4
+    tentative: 0
+    unresolved: 0
+    score: 4.6
+    fuzzy: true
+    dimensions:
+        signal: 78.1
+        reversibility: 77.5
+        competence: 86.9
+        disambiguation: 79.4
+stage_metrics:
+    intake: {started_at: "2026-06-20T05:44:24Z", driver: fab-new, iterations: 1, completed_at: "2026-06-20T06:47:47Z"}
+    apply: {started_at: "2026-06-20T06:47:47Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-20T06:56:54Z"}
+    review: {started_at: "2026-06-20T06:56:54Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-20T07:03:18Z"}
+    hydrate: {started_at: "2026-06-20T07:03:18Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-20T07:08:00Z"}
+    ship: {started_at: "2026-06-20T07:08:00Z", driver: fab-fff, iterations: 1}
+prs: []
+change_type_source: explicit
+true_impact:
+    added: 0
+    deleted: 0
+    net: 0
+    excluding:
+        added: 0
+        deleted: 0
+        net: 0
+    computed_at: "2026-06-20T07:08:00Z"
+    computed_at_stage: hydrate
+summary: Add wt go (current-repo worktree selection, WT_CD_FILE+stdout navigation, no launch) and wt open --go composition; extract shared selectWorktree helper
+# true_impact: lazily created on first apply-finish (no placeholder here).
+last_updated: 2026-06-20T07:08:00Z

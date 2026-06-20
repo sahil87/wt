@@ -59,6 +59,17 @@ existing directory and the cwd is in a git repo.
 When `WT_CD_FILE` is unset, "Open here" falls back to printing `cd -- '<path>'`
 to stdout (single-quoted with `'\''` escaping for shell safety).
 
+**Reused by `wt go`.** The `wt go` selector (see
+[`cli-surface.md`](cli-surface.md#wt-go-name)) navigates to a worktree using
+this **same** `WT_CD_FILE` mechanism — no new environment variable is
+introduced. It writes the resolved absolute path to `WT_CD_FILE` with the
+identical semantics above (mode `0600`, truncate-on-write, contents = resolved
+directory path), and additionally always prints the path to stdout as the last
+line (so `cd "$(command wt go <name>)"` works without the wrapper). Because
+`wt go` adds no new env-var name and does not alter any semantics in this
+section or §5, the stability guarantees in §6 are unchanged — no constitution
+amendment is required.
+
 ## 4. `WT_WRAPPER`
 
 `WT_WRAPPER=1` signals that the caller is handling the `cd` itself (via

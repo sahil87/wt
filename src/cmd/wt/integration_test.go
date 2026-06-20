@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIntegration_CreateListDeleteLifecycle(t *testing.T) {
@@ -262,6 +263,102 @@ func TestIntegration_CreateInitFailure_KeepsWorktreeAndExits7(t *testing.T) {
 
 	// 8. The failing init script's stderr marker streamed through.
 	assertContains(t, r.Stderr, "INIT_FAIL_MARKER")
+}
+
+// TestIntegration_Go_FromSiblingWorktree exercises the core gap this change
+// closes: navigating to a sibling worktree from inside another worktree.
+// `wt go <name>` run from inside worktree A must resolve sibling B and write
+// B's absolute path to WT_CD_FILE (and stdout), launching nothing.
+func TestIntegration_Go_FromSiblingWorktree(t *testing.T) {
+	repo := createTestRepo(t)
+	pathA := createWorktreeViaWt(t, repo, "alpha")
+	pathB := createWorktreeViaWt(t, repo, "bravo")
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	// cwd is INSIDE worktree alpha — the menu/resolution must still see bravo.
+	r := runWtSuccess(t, pathA, env, "go", "bravo")
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != pathB {
+		t.Errorf("expected cd file to contain sibling %q, got %q", pathB, string(data))
+	}
+	if last := strings.TrimSpace(r.Stdout); last != pathB {
+		t.Errorf("expected stdout to be sibling path %q, got %q", pathB, r.Stdout)
+	}
+	if strings.Contains(r.Stderr, "[wt-test-no-launch]") {
+		t.Errorf("wt go must not launch an app, got stderr: %q", r.Stderr)
+	}
+}
+
+// TestIntegration_Go_MenuOrdersNewestFirst verifies the no-arg `wt go` menu
+// lists the repo's worktrees newest-first with the newest as the default —
+// the shared selection helper used by `wt open`. Mirrors
+// TestOpen_MenuOrdersNewestFirst.
+func TestIntegration_Go_MenuOrdersNewestFirst(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "alpha")
+	createWorktreeViaWt(t, repo, "bravo")
+	createWorktreeViaWt(t, repo, "charlie")
+
+	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	chtimesWorktree(t, repo, "alpha", base)
+	chtimesWorktree(t, repo, "bravo", base.Add(time.Hour))
+	chtimesWorktree(t, repo, "charlie", base.Add(2*time.Hour))
+
+	r := runWt(t, repo, nil, "go")
+	got := menuOrder(r.Stdout, []string{"alpha", "bravo", "charlie"})
+	want := []string{"charlie", "bravo", "alpha"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %v in menu, got %v\nstdout:\n%s", want, got, r.Stdout)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("go menu order = %v, want %v", got, want)
+			break
+		}
+	}
+	assertContains(t, r.Stdout, "charlie (charlie) (default)")
+	assertContains(t, r.Stdout, "Select worktree to go to:")
+}
+
+// TestIntegration_OpenGo_NameArg_ResolvesAndLaunches exercises `wt open --go
+// <name> --app open_here`: it composes selection (resolve-by-name) with the
+// launcher, writing the resolved path to WT_CD_FILE via the open_here app.
+func TestIntegration_OpenGo_NameArg_ResolvesAndLaunches(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "alpha")
+	pathB := createWorktreeViaWt(t, repo, "bravo")
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	// Run from inside alpha to prove cross-worktree selection works here too.
+	r := runWtSuccess(t, worktreePath(repo, "alpha"), env, "open", "--go", "bravo", "--app", "open_here")
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != pathB {
+		t.Errorf("expected cd file to contain %q, got %q", pathB, string(data))
+	}
+	_ = r
+}
+
+// TestIntegration_OpenGo_NonGit_ExitsGitError verifies `wt open --go` from a
+// non-git cwd exits ExitGitError (3), the same precondition as `wt go`.
+func TestIntegration_OpenGo_NonGit_ExitsGitError(t *testing.T) {
+	dir := t.TempDir()
+
+	r := runWt(t, dir, nil, "open", "--go")
+	if r.ExitCode != 3 {
+		t.Fatalf("expected exit 3 (ExitGitError), got %d\nstderr: %s", r.ExitCode, r.Stderr)
+	}
 }
 
 func TestIntegration_WorktreeCommitIndependent(t *testing.T) {

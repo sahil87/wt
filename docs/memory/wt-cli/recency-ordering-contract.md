@@ -77,12 +77,12 @@ explicit spec amendment supersedes them.
 
 ### Open / delete menus list non-main worktrees newest-first
 
-- `selectAndOpen` (`src/cmd/wt/open.go`) and `handleDeleteMenu`
-  (`src/cmd/wt/delete.go`) build a `wtOption` slice of non-main worktrees
-  (the main worktree / `ctx.RepoRoot` is skipped) and sort it with
-  `wt.SortByRecency` so the **newest worktree appears at the top** of the menu.
-  This replaces the previous behavior where items appeared in porcelain order and
-  only the newest was highlighted.
+- `selectAndOpen` (`src/cmd/wt/open.go`, via the shared `selectWorktree` helper as
+  of `260620-3pp5` — see below) and `handleDeleteMenu` (`src/cmd/wt/delete.go`)
+  build a `wtOption` slice of non-main worktrees (the main worktree /
+  `ctx.RepoRoot` is skipped) and sort it with `wt.SortByRecency` so the **newest
+  worktree appears at the top** of the menu. This replaces the previous behavior
+  where items appeared in porcelain order and only the newest was highlighted.
 - The pre-selected menu default remains the **most-recent** worktree — this is
   behavior-preserving for the default selection. Only the item *ordering* changed.
 - `wt open`: `defaultIdx = 1` (newest is the first menu item; index 0 is the
@@ -94,6 +94,23 @@ explicit spec amendment supersedes them.
   ("All (N worktrees)" always, plus "All idle (N)" when ≥1 worktree is idle).
 - The two menus produce identical non-main ordering (both driven by the same
   `SortByRecency` call), so `wt open` and `wt delete` never disagree on order.
+
+### `wt go`'s no-arg menu is a new `SortByRecency` consumer (`260620-3pp5`)
+
+- The `260620-3pp5-open-worktree-from-worktree` change extracted the
+  `selectAndOpen` menu logic into the shared `selectWorktree(ctx, session,
+  prompt)` helper (`src/cmd/wt/open.go`), which calls `wt.SortByRecency` over its
+  local `wtOption` slice (filtering out the main repo, `defaultIdx = 1`). That
+  single helper now backs **three** menu callers — `wt open` (main-repo no-arg,
+  prompt "Select worktree to open:"), `wt go` (no-arg, prompt "Select worktree to
+  go to:"), and `wt open --go` (no-arg). So `wt go`'s selection menu is a new
+  consumer of the same newest-first ordering, joining `wt list` / `wt open` /
+  `wt delete` — there is still exactly one `SortByRecency` call site for the
+  open/go selection menu, not a per-verb copy.
+- The ordering, branch display, and newest-default are byte-identical across all
+  three callers because they share the one helper. See
+  `/wt-cli/go-command-contract.md` for the `wt go` / `wt open --go` behavior
+  contract and the `selectWorktree` extraction details.
 
 ### `wt delete` menu: stale-aware annotation + "All idle" (`260530-5fyu`)
 
@@ -188,6 +205,9 @@ produced.
   (built on the `RecencyOf` signal documented here), `DefaultIdleThreshold`, and
   the `wt delete --stale` selector; the authoritative cross-command idle contract
   behind the `defaultIdx` 2/3 shift and `, idle` annotation noted above.
+- Sibling memory: `wt-cli/go-command-contract.md` — the `wt go` selector and
+  `wt open --go` composition; the new `selectWorktree` menu consumers of the
+  `SortByRecency` ordering documented here.
 - Spec doc: `docs/specs/cli-surface.md` — `wt list` (`--sort` flag), `wt open`
   (selection menu, "most recently modified worktree" default), `wt delete`
   (selection menu).
@@ -196,7 +216,8 @@ produced.
   `<repo>.worktrees/<name>/` root.
 - Source: `src/internal/worktree/recency.go` — `RecencyOf`, `RecencyLess`,
   `SortByRecency`.
-- Source: `src/cmd/wt/open.go` (`selectAndOpen`), `src/cmd/wt/delete.go`
+- Source: `src/cmd/wt/open.go` (`selectWorktree` shared helper + `selectAndOpen`;
+  `selectWorktree` is also called by `wt go` and `wt open --go`), `src/cmd/wt/delete.go`
   (`handleDeleteMenu` — now stale-aware: `firstWorktreeIdx`/`defaultIdx` 2/3,
   `, idle` annotation, "All idle (N)"; plus `handleDeleteStale`), `src/cmd/wt/list.go`
   (`sortEntries`, `resolveSort`).

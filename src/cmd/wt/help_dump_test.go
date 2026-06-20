@@ -76,14 +76,14 @@ func TestHelpDump_EmitsValidEnvelope(t *testing.T) {
 			t.Errorf("tree must not contain %q", banned)
 		}
 	}
-	// wt currently exposes exactly these 7 visible subcommands.
-	for _, want := range []string{"create", "delete", "init", "list", "open", "shell-init", "update"} {
+	// wt currently exposes exactly these 8 visible subcommands.
+	for _, want := range []string{"create", "delete", "go", "init", "list", "open", "shell-init", "update"} {
 		if !names[want] {
 			t.Errorf("tree missing expected subcommand %q, got: %v", want, names)
 		}
 	}
-	if got := len(doc.Root.Commands); got != 7 {
-		t.Errorf("expected 7 visible subcommands, got %d: %v", got, names)
+	if got := len(doc.Root.Commands); got != 8 {
+		t.Errorf("expected 8 visible subcommands, got %d: %v", got, names)
 	}
 }
 

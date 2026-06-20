@@ -1,0 +1,10 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-06-20T05:44:24Z"}
+{"args":"There's no easy way to open a worktree from another worktree. wt open seems like the command that should do this, but right now it opens the current folder. Thinking holistically, I am also fine transferring the responsibility of 'opening folders' to the hop command, and make wt open open a worktree and delegate to hop open","cmd":"fab-new","event":"command","ts":"2026-06-20T05:44:24Z"}
+{"delta":"+4.6","event":"confidence","score":4.6,"trigger":"calc-score","ts":"2026-06-20T06:46:53Z"}
+{"delta":"+0.0","event":"confidence","score":4.6,"trigger":"calc-score","ts":"2026-06-20T06:46:58Z"}
+{"cmd":"fab-fff","event":"command","ts":"2026-06-20T06:47:41Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-06-20T06:47:47Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-06-20T06:56:54Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-06-20T07:03:18Z"}
+{"event":"review","result":"passed","ts":"2026-06-20T07:03:18Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-06-20T07:08:00Z"}

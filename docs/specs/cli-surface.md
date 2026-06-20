@@ -75,13 +75,16 @@ Exit codes: `ExitInvalidArgs` if `--path` is combined with `--json` or
 ## `wt open [name|path]`
 
 Open a directory in a detected application (editor, terminal, file manager).
-`wt open` is the canonical directory launcher — external callers (notably
+`wt open` is the canonical directory **launcher** — external callers (notably
 `hop`) MAY delegate to it via subprocess invocation. The full env-var contract
-is documented in [`launcher-contract.md`](launcher-contract.md).
+is documented in [`launcher-contract.md`](launcher-contract.md). Worktree
+**selection** (picking which worktree) is the job of [`wt go`](#wt-go-name);
+`wt open --go` composes the two (select, then launch).
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--app <name\|default>` | (none) | Open directly in the named app, skipping the menu. `default` selects the auto-detected default. |
+| `--go` | `false` | Select a worktree first (via `wt go`'s menu when no name is given, or resolve-by-name when one is), then launch it. Requires a git repository; composes with `--app`. From a non-git cwd, exits `ExitGitError`. |
 
 Positional arg `[name|path]`:
 
@@ -103,6 +106,43 @@ menu; `ExitGitError` only when a git operation fails during name resolution
 `ExitByobuTabError` / `ExitTmuxWindowError` for terminal-app failures;
 `ExitGeneralError` for unknown apps, unresolved targets, or name args supplied
 from a non-git cwd.
+
+## `wt go [name]`
+
+Select a worktree of the current repository and **navigate** there. `wt go` is
+the worktree **selector** (the counterpart to `wt open`, the launcher): it
+changes the shell's working directory to the chosen worktree and launches
+nothing. Navigation reuses the same `WT_CD_FILE` shell-cd plumbing as the
+launcher's "Open here" option — see [`launcher-contract.md`](launcher-contract.md) §3.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--non-interactive` | `false` | No prompts. With no name, refuses deterministically (a no-arg selection menu has no non-interactive default) instead of prompting. |
+
+Positional arg `[name]`:
+
+- Omitted: shows a worktree-selection menu for the current repo (newest-first,
+  branch shown per entry, newest pre-selected as default). Reachable from
+  anywhere in the repository — the main repo **or** inside another worktree.
+  On selection, navigates to the chosen worktree.
+- Provided: resolved as a worktree name (case-insensitive); navigates there
+  directly with no menu.
+
+`wt go` always **requires a git repository** — worktree resolution walks the
+repo's worktree list. It is scoped to the current repo's worktrees only;
+cross-repo navigation is `hop`'s job.
+
+Navigation mechanism: the resolved absolute path is written to `WT_CD_FILE`
+(when set; mode `0600`, truncate-on-write) so the `wt shell-init` wrapper cd's
+the parent shell there, **and** is printed to stdout as the last line so the
+no-wrapper scripting form works: `cd "$(command wt go some-name)"`. When
+`WT_CD_FILE` is unset and `WT_WRAPPER` is not `1`, the same "shell wrapper not
+loaded" hint the launcher prints applies. `wt go` never cd's the parent shell
+directly.
+
+Exit codes: `ExitGitError` (3) when the cwd is not in a git repository or
+`git worktree list` fails; `ExitGeneralError` (1) for an unknown worktree name,
+or for a no-arg invocation under `--non-interactive`.
 
 ## `wt delete [worktree-names...]`
 
