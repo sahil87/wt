@@ -101,8 +101,9 @@ Positional arg `[name|path]`:
   reachable when the cwd is inside a git repo.
 
 Exit codes: `ExitInvalidArgs` when `--app` is used with the main-repo selection
-menu; `ExitGitError` only when a git operation fails during name resolution
-(not for path-only or no-args invocations from outside a repo);
+menu; `ExitGitError` when a git operation fails during name resolution, or when
+`--go` is invoked from a non-git cwd (the `--go` git-repo precondition) — but
+not for path-only or no-args invocations from outside a repo;
 `ExitByobuTabError` / `ExitTmuxWindowError` for terminal-app failures;
 `ExitGeneralError` for unknown apps, unresolved targets, or name args supplied
 from a non-git cwd.
