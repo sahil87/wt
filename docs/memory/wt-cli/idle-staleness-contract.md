@@ -1,3 +1,7 @@
+---
+type: memory
+description: "The shared idle predicate, the `wt delete --stale` selector, and the safety invariant that idleness never gates a deletion on its own."
+---
 # wt-cli: Idle / Staleness Contract
 
 > Post-implementation behavior capture for the shared idle predicate, the
@@ -257,9 +261,3 @@ than wanted; a bare-int value was rejected as less self-documenting than `Nd`.
   and invalid threshold), V (predicate/constant/parser live in
   `internal/worktree`), VI (machine-output stability — `idle` is additive and
   absent on the default `--json` path).
-
-## Changelog
-
-| Change | Date | Summary |
-|--------|------|---------|
-| `260530-5fyu-stale-worktree-hints` | 2026-06-01 | Introduced the shared idle predicate `IsIdle(recency, now, threshold)` (strict `>` boundary, zero-recency-is-idle), the `DefaultIdleThreshold = 7 * 24 * time.Hour` named constant (not env/config configurable), and the `ParseIdleThreshold` `Nd`-only parser — all in `src/internal/worktree/idle.go`. Added `wt delete --stale[=Nd]` (single pflag with `NoOptDefVal = "7d"`, `=`-required value) routing idle non-main worktrees through the existing `handleDeleteMultiple` flow; empty match prints `No idle worktrees (threshold: Nd).` and exits `ExitSuccess`; `--stale` is mutually exclusive with positional names and `--delete-all` (`ExitInvalidArgs`, "mutually exclusive"). Made `handleDeleteMenu` stale-aware (`, idle` row annotation, "All idle (N)" entry, `defaultIdx` 2→3 only when present) and `wt list` idle-aware (`Idle *bool` JSON field, `⚠ idle` marker). Reuses the single `RecencyOf` dir-mtime signal — no second staleness signal. Load-bearing safety invariant (R20): idleness only selects candidates; every removal still routes through the per-worktree stash/unpushed/rollback flow; the main worktree is never an idle candidate (R21). |

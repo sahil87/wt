@@ -1,3 +1,7 @@
+---
+type: memory
+description: "Arrow-key navigation contract for the shared `ShowMenu` — TTY gating, keybindings, and a byte-identical non-TTY fallback."
+---
 # wt-cli: Menu Navigation Contract
 
 > Post-implementation behavior capture for the arrow-key menu navigation upgrade.
@@ -141,12 +145,6 @@ This is a **pattern worth carrying to future changes**: when a function combines
 ### `paintMenu` and `redrawMenu` share `renderRows` (T018 refactor)
 
 Originally `paintMenu` and `redrawMenu` had two parallel rendering paths — the redraw path additionally emitted `\x1b[2K` per line. The T018 refactor extracted `renderRows(w, prompt, options, st, linePrefix)` as the shared core: `paintMenu` calls it with `linePrefix=""`, `redrawMenu` writes the cursor-up prelude then calls it with `linePrefix=ansiClearLine`. The row content is byte-identical between first paint and redraw; `TestPaintAndRedrawShareCore` strips the prelude/clears and asserts byte-equality. No behavioral change, but the refactor eliminates the drift risk where the two paths could diverge on a future highlight-marker tweak.
-
-## Changelog
-
-| Change | Date | Summary |
-|--------|------|---------|
-| `260516-dkg7-arrow-key-menu-navigation` | 2026-05-17 | Added arrow-key menu navigation to `ShowMenu`: TTY-aware branch on entry (single-shot detection of stdin+stdout); interactive path renders an in-place reverse-video highlight with `↑`/`↓`/`j`/`k` navigation, wrap-around at edges, digit-submit (`1`–`9`, `0`→Cancel), Enter-submit, Esc/Ctrl-C/`q`→Cancel→`(0, nil)`; `defer term.Restore` on every exit including panic (via the `runInteractiveMenuCore` test seam); non-TTY fallback path byte-identical to historical numbered-prompt behavior; pure `nextMenuState` + `parseKey` testable without PTY; Windows short-circuits to fallback; sole new dependency `golang.org/x/term`. |
 
 ## Cross-references
 

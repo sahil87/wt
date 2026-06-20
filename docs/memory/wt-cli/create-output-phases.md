@@ -1,3 +1,7 @@
+---
+type: memory
+description: "Phase-separator output contract for `wt create` / `wt init` — Git/Init/Open separators on stderr, stdout reserved for the machine result."
+---
 # wt-cli: Create Output Phases Contract
 
 > Post-implementation behavior capture for the `wt create` / `wt init` phase-separator output.
@@ -72,10 +76,3 @@ Deterministic output for unit tests; no dependency on terminal/ioctl; consistent
 - Tests: `src/internal/worktree/errors_test.go` (`PhaseSeparator` unit test: label presence, colored ANSI + `─`, NO_COLOR ASCII `-` with no `\033[`, 40-column visible width, no trailing newline); `src/cmd/wt/create_test.go` (`Created worktree:` stderr + one-line-stdout guard); `src/cmd/wt/init_test.go` (combined-stream `Running worktree init` / `Worktree init complete`).
 - Constitution: Principle I (Single-Binary CLI, No Hidden State — motivated the fixed width, no terminal query), Principle VI (Interactive by Default, Scriptable on Demand — stdout=machine-result keeps `wt create`'s path line deterministic for launchers/operators).
 - Sibling memory: `wt-cli/init-failure-contract.md` — the init runner / resolver / `*InitNotFound` contract this change builds on (the Init separator sits next to the `Running worktree init` line and respects the not-found and reinstall-window invariants). `wt-cli/list-status-contract.md` and `wt-cli/menu-navigation-contract.md` — same post-change invariant-capture pattern for sibling `wt` subcommands.
-
-## Changelog
-
-| Change | Date | Summary |
-|--------|------|---------|
-| `260531-pnmi-add-phase-separators` | 2026-05-31 | Added `PhaseSeparator(label string) string` to `errors.go` (sole producer: fixed 40-col rune-counted visible width, no trailing newline, unicode `── Label ──` colored / ASCII `-- Label --` NO_COLOR via the existing color-blanking `init()`, bold label). `wt create` emits Git / Init / Open separators on stderr in order (Git always, Init only when a command runs — not on `*InitNotFound`, Open only when `worktreeOpen != "skip"`). Init separator owned by the runner (`crud.go` + `init.go`), labeled `Init (<resolved cmd>)`, single emission point. Realigned `wt init` so all init diagnostics (banner + separator + init-child stdout via `cmd.Stdout = os.Stderr`) go to stderr; `wt create`'s stdout stays solely the worktree-path line. Captured the stdout = machine-result / stderr = diagnostics convention. |
-| `260602-z4p7-wt-reclaim-tty-foreground-after-init` | 2026-06-02 | Light touch: the Open-phase separator + menu render is now preceded by an unconditional terminal-foreground reclaim (when the init phase ran and stdin is a TTY), so the Open phase can never SIGTTOU on a shared-TTY init child. Separator output contract unchanged — job-control ordering guarantee only. Full contract in `init-failure-contract.md`. |

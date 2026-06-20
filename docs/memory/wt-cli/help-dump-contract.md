@@ -1,3 +1,7 @@
+---
+type: memory
+description: "Contract for the hidden `wt help-dump` command — the JSON envelope shll.ai's scheduled puller consumes."
+---
 # wt-cli: Help-Dump Contract
 
 > Post-implementation behavior capture for the Hidden `wt help-dump` command.
@@ -145,9 +149,3 @@ Cobra adds the `-h, --help` flag, the `-v, --version` flag, and the auto-generat
 - Sibling memory: `wt-cli/init-failure-contract.md`, `wt-cli/list-status-contract.md`, `wt-cli/update-command-contract.md` — same pattern of post-change invariant capture for other `wt` subcommands. `update-command-contract.md` documents another **cross-toolkit** contract (`--skip-brew-update`) whose semantics are likewise fixed externally and not open to local reinterpretation.
 - Backlog: `[pc47]` is marked **superseded by qqkj** in `fab/backlog.md` — its producer half is realized here; its push half (build-time CI step, PR-opening into sahil87/shll.ai, auto-merge, `SHLLAI_TOKEN`) was intentionally dropped per the pull-model inversion.
 - Upstream: shll.ai `docs/specs/help-dump-contract.md` (authoritative cross-repo contract) and `sites/astro-starlight-terminal1/src/lib/schemas.ts` (`HelpDocSchema`/`NodeSchema`, machine-checkable conformance anchor).
-
-## Changelog
-
-| Change | Date | Summary |
-|--------|------|---------|
-| `260603-qqkj-help-dump-command` | 2026-06-03 | Added the Hidden `wt help-dump` Cobra subcommand for shll.ai's scheduled pull integration. Emits a single JSON envelope to stdout (exactly `{tool, version, schema_version, root}`; `tool=="wt"`, `version` from `main.version` ldflags, `schema_version` integer `1`) with empty stderr and exit 0 on success; non-zero (typed via `RunE` → `ExitGeneralError`) on any error so the puller treats it as a failed capture. The envelope deliberately OMITS `captured_at` (shll.ai stamps it post-capture). Recursive `HelpNode` shape `{name, path, short, usage, text, commands}` with `text` = the raw `-h` render captured into a buffer (trailing newline trimmed, byte-for-byte vs the reference sample) and `commands` a non-nil slice (`[]` for leaves, never `null`). Tree discovered by recursively walking `rootCmd.Commands()` (never regex-parsing `-h`), filtering `completion`, `help`, and any Hidden node (self-filtering `help-dump`). Two Cobra subtleties handled: `initHelpTree` initializes the lazily-added help/version/completion affordances across the whole tree before rendering, and `renderHelpText` temporarily detaches filtered children during each node's render (working around Cobra's `help`-special-casing usage template) then restores them so the live tree is unmutated. Logic lives in `src/internal/worktree/helpdump.go` (`BuildHelpDump`); thin wiring in `src/cmd/wt/help_dump.go`. Superseded the obsolete push half of backlog `[pc47]`. |

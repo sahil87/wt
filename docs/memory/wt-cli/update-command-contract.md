@@ -1,3 +1,7 @@
+---
+type: memory
+description: "`wt update` self-upgrade contract and the cross-toolkit `--skip-brew-update` flag."
+---
 # wt-cli: Update Command Contract
 
 > Post-implementation behavior capture for the `wt update` self-upgrade flow and the `--skip-brew-update` flag.
@@ -83,9 +87,3 @@ Rather than adding a pre-flight `brew` existence check to preserve not-found det
 - Constitution: Principle II (Cobra command surface — long-form flag name, `RunE`), Principle III (Typed exit codes — `ErrBrewNotFound` → `ExitGeneralError`).
 - Sibling memory: `wt-cli/init-failure-contract.md`, `wt-cli/list-status-contract.md` — same pattern of post-change invariant capture for other `wt` subcommands. The `WT_TEST_FORCE_BREW` seam is a sibling of the `WT_TEST_NO_LAUNCH` seam documented in `init-failure-contract.md`.
 - Cross-toolkit: `--skip-brew-update` flag name/semantics MUST stay identical to the other 5 tools implementing the same contract.
-
-## Changelog
-
-| Change | Date | Summary |
-|--------|------|---------|
-| `260531-ipe5-skip-brew-update-flag` | 2026-05-31 | Added the `--skip-brew-update` cobra bool flag (default false, long-form only); threaded `skipBrewUpdate` as the leading parameter of `update.Run`; guarded ONLY the `brew update` block behind `if !skipBrewUpdate` (info/short-circuit/upgrade unchanged); preserved output routing and the non-brew-install short-circuit; relied on `brew info`'s existing `ErrBrewNotFound` mapping for not-found detection; added the `WT_TEST_FORCE_BREW=1` test seam in `isBrewInstalled()`. |

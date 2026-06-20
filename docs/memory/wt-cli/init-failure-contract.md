@@ -1,3 +1,7 @@
+---
+type: memory
+description: "Init-failure behavior of `wt create` / `wt init` — kept-worktree contract, `ExitInitFailed`, SIGINT handling, and terminal-foreground reclaim."
+---
 # wt-cli: Init Failure Contract
 
 > Post-implementation behavior capture for the `wt create` init-failure DX overhaul.
@@ -113,14 +117,6 @@ The reuse path's init step is a refresh, not a creation gate. Operators do not n
 ### Banner text is not byte-pinned
 
 Tests assert presence of the worktree path, the `wt init` retry hint, and the `wt delete <name>` remove hint — NOT byte-equality of the banner template. Wording can evolve without test churn; the contract is the information surface, not the prose.
-
-## Changelog
-
-| Change | Date | Summary |
-|--------|------|---------|
-| `260516-g5e7-wt-create-init-failure-dx` | 2026-05-16 | Established kept-worktree contract, `ExitInitFailed = 7`, unified `ResolveInitInvocation`, `PrintInitFailureBanner`, SIGINT Option B, and the `WT_TEST_NO_LAUNCH=1` test seam. |
-| `260531-pnmi-add-phase-separators` | 2026-05-31 | Corrected the resolver note: callers' streaming setups are no longer different — both `wt init` and `wt create` now wire init `cmd.Stdout`/`cmd.Stderr` to `os.Stderr`; only the working directory still differs. See `create-output-phases.md`. |
-| `260602-z4p7-wt-reclaim-tty-foreground-after-init` | 2026-06-02 | Added the terminal-foreground reclaim contract: `wt create` and `wt init` capture the controlling terminal's foreground pgrp (`tcgetpgrp` on `os.Stdin.Fd()`) before the init child and reclaim it (`tcsetpgrp` to `wt`'s own group) after, on all exit paths (success before Open; init-failure before `PrintInitFailureBanner`; best-effort `defer` for panic/early-return). Reclaim wraps `tcsetpgrp` in `signal.Ignore(syscall.SIGTTOU)`; all bookkeeping gated on `term.IsTerminal` (no-op when piped / `--non-interactive` / CI). New `terminalForeground`/`reclaimTerminalForeground` helpers in `tty_unix.go` (no-op `tty_windows.go` stubs), `x/sys` promoted indirect→direct (no new module). Lives next to and preserves the SIGINT Option B contract (`Setpgid: true`, tight reinstall window, `defer rb.Execute()` all unchanged). |
 
 ## Cross-references
 
