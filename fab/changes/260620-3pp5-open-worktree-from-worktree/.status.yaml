@@ -10,7 +10,7 @@ progress:
     review: done
     hydrate: done
     ship: done
-    review-pr: active
+    review-pr: done
 plan:
     generated: true
     task_count: 9
@@ -34,7 +34,7 @@ stage_metrics:
     review: {started_at: "2026-06-20T06:56:54Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-20T07:03:18Z"}
     hydrate: {started_at: "2026-06-20T07:03:18Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-20T07:08:00Z"}
     ship: {started_at: "2026-06-20T07:08:00Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-20T07:09:37Z"}
-    review-pr: {started_at: "2026-06-20T07:09:37Z", driver: git-pr, iterations: 1}
+    review-pr: {started_at: "2026-06-20T07:09:37Z", driver: git-pr, iterations: 1, completed_at: "2026-06-20T07:15:49Z"}
 prs:
     - https://github.com/sahil87/wt/pull/23
 change_type_source: explicit
@@ -50,4 +50,4 @@ true_impact:
     computed_at_stage: hydrate
 summary: Add wt go (current-repo worktree selection, WT_CD_FILE+stdout navigation, no launch) and wt open --go composition; extract shared selectWorktree helper
 # true_impact: lazily created on first apply-finish (no placeholder here).
-last_updated: 2026-06-20T07:09:37Z
+last_updated: 2026-06-20T07:15:49Z
