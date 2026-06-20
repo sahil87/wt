@@ -54,3 +54,5 @@ dist/
 # fab
 .fab-status.yaml
 .uploads/
+
+.status.yaml.lock

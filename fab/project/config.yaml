@@ -2,7 +2,7 @@ agent:
     spawn_command: claude --dangerously-skip-permissions --effort xhigh -n "$(basename "$(pwd)")"
 checklist:
     extra_categories: []
-fab_version: 2.0.1
+fab_version: 2.6.4
 project:
     description: Git worktree management CLI — create, list, open, and delete worktrees with shell integration.
     name: worktree-cli
