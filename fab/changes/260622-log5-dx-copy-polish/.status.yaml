@@ -10,7 +10,7 @@ progress:
     review: done
     hydrate: done
     ship: done
-    review-pr: active
+    review-pr: done
 plan:
     generated: true
     task_count: 15
@@ -34,7 +34,7 @@ stage_metrics:
     review: {started_at: "2026-06-22T08:48:24Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-22T08:54:02Z"}
     hydrate: {started_at: "2026-06-22T08:54:02Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-22T08:59:06Z"}
     ship: {started_at: "2026-06-22T08:59:06Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-22T09:00:47Z"}
-    review-pr: {started_at: "2026-06-22T09:00:47Z", driver: git-pr, iterations: 1}
+    review-pr: {started_at: "2026-06-22T09:00:47Z", driver: git-pr, iterations: 1, completed_at: "2026-06-22T09:10:25Z"}
 prs:
     - https://github.com/sahil87/wt/pull/24
 true_impact:
@@ -49,4 +49,4 @@ true_impact:
     computed_at_stage: hydrate
 summary: 'DX copy polish: wt go stderr nav-confirmation, unified wt.Warn helper (delete warnings stdout→stderr), list --path structured not-found, update Short + help-text/glyph fixes'
 # true_impact: lazily created on first apply-finish (no placeholder here).
-last_updated: 2026-06-22T09:00:47Z
+last_updated: 2026-06-22T09:10:25Z
