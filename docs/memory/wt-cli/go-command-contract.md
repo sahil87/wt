@@ -344,8 +344,9 @@ otherwise does not want).
   worktree, no-arg menu newest-first ordering, `wt open --go <name> --app open_here`).
 - Sibling memory: `/wt-cli/create-output-phases.md` — the canonical stdout =
   machine-result / stderr = human-diagnostic stream-discipline contract this
-  confirmation honors; it also documents the `wt.Warn` single warning emitter
-  (`260622-log5`).
+  confirmation honors; it also documents the `wt.Warn` shared one-line warning
+  helper used by create/delete (the verbose init not-found renderer,
+  `InitNotFound.RenderWarning`, is the documented exception) (`260622-log5`).
 - Constitution: Principle II (Cobra command surface — `SilenceUsage`/
   `SilenceErrors`, `RunE`), III (Typed exit codes — `ExitGitError` /
   `ExitGeneralError`, no new code), V (selection orchestration lives in `cmd/`;

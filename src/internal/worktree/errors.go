@@ -110,9 +110,12 @@ func PrintError(what, why, fix string) {
 }
 
 // Warn writes a color-wrapped "Warning:" diagnostic to stderr. It is the single
-// warning emitter for the CLI: all "Warning:" call sites route through it so the
-// prefix, stream (stderr), and color are consistent. Respects the
-// NO_COLOR-blanked package color vars (no fresh os.Getenv).
+// helper for one-line "Warning:" diagnostics in the CLI: the create/delete
+// warning call sites route through it so the prefix, stream (stderr), and color
+// are consistent. (The verbose init not-found warning, InitNotFound.RenderWarning
+// in init.go, is the one exception — it builds its own multi-line "Warning:" text
+// and does not route through this helper.) Respects the NO_COLOR-blanked package
+// color vars (no fresh os.Getenv).
 func Warn(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "%sWarning:%s %s\n", ColorYellow, ColorReset, fmt.Sprintf(format, args...))
 }

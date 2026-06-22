@@ -137,7 +137,7 @@ Resolution order: --stale, --delete-all, positional args, --worktree-name (depre
 
 	cmd.Flags().StringVar(&worktreeName, "worktree-name", "", "Worktree to delete")
 	cmd.Flags().StringVar(&deleteBranch, "delete-branch", "", "Delete the associated branch: true (always), false (never), auto (default — only if branch name matches worktree name)")
-	cmd.Flags().StringVar(&deleteRemote, "delete-remote", "", "Delete the remote-tracking branch when the local branch is deleted (true by default)")
+	cmd.Flags().StringVar(&deleteRemote, "delete-remote", "", "Delete the branch on the origin remote (via git push origin --delete) when the local branch is deleted (true by default)")
 	cmd.Flags().BoolVar(&deleteAll, "delete-all", false, "Delete all worktrees")
 	cmd.Flags().BoolVarP(&stashFlag, "stash", "s", false, "Stash uncommitted changes before deleting")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts, use defaults")

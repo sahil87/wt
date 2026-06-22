@@ -124,12 +124,10 @@ Requires a git repository — worktree resolution walks the repo's worktree list
 // WT_CD_FILE semantics (mode 0600, truncate-on-write, contents = resolved dir
 // path) are the same ones documented in launcher-contract.md §3 for "Open here".
 func navigateTo(ctx *wt.RepoContext, path string) error {
-	// Confirmation block (stderr, human copy). getBranchForPath reuses the same
-	// single git rev-parse the open/go menus use. Emits no color, so it is
-	// NO_COLOR-safe by construction.
-	fmt.Fprintf(os.Stderr, "→ %s / %s  (%s)\n", ctx.RepoName, filepath.Base(path), getBranchForPath(path))
-	fmt.Fprintf(os.Stderr, "  %s\n", path)
-
+	// The WT_CD_FILE write is the operation that can still fail, so it runs
+	// BEFORE the success confirmation. Emitting the "→ repo / …" line first
+	// would print a misleading success message even when the write then errors
+	// out and exits non-zero.
 	if cdFile := os.Getenv("WT_CD_FILE"); cdFile != "" {
 		if err := os.WriteFile(cdFile, []byte(path), 0600); err != nil {
 			wt.ExitWithError(wt.ExitGeneralError,
@@ -141,6 +139,13 @@ func navigateTo(ctx *wt.RepoContext, path string) error {
 		fmt.Fprintln(os.Stderr, `hint: wt go requires the shell wrapper to cd. Run: eval "$(wt shell-init)"`)
 		fmt.Fprintln(os.Stderr, `      Add it to your ~/.zshrc or ~/.bashrc to make it permanent.`)
 	}
+
+	// Confirmation block (stderr, human copy). getBranchForPath reuses the same
+	// single git rev-parse the open/go menus use. Emits no color, so it is
+	// NO_COLOR-safe by construction. Printed only after the WT_CD_FILE write
+	// (above) has succeeded — there are no further error/exit conditions below.
+	fmt.Fprintf(os.Stderr, "→ %s / %s  (%s)\n", ctx.RepoName, filepath.Base(path), getBranchForPath(path))
+	fmt.Fprintf(os.Stderr, "  %s\n", path)
 
 	// Always emit the resolved path as the last stdout line for the scripting
 	// path: cd "$(command wt go some-name)".
