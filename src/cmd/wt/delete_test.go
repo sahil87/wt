@@ -369,6 +369,28 @@ func TestDelete_MultipleBranchPreservation(t *testing.T) {
 	assertBranchExists(t, repo, "bp-bravo")
 }
 
+// TestDelete_UncommittedWarning_OnStderr verifies the interactive
+// "uncommitted changes" warning now lands on STDERR (not stdout), and that the
+// menu prompt itself still renders on stdout. Empty stdin makes the menu return
+// on EOF after the warning has printed; we assert only on the warning stream.
+func TestDelete_UncommittedWarning_OnStderr(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "dirty-current")
+
+	// Make the worktree dirty so handleUncommittedChanges fires.
+	os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("uncommitted"), 0644)
+	gitRun(t, wtPath, "add", "dirty.txt")
+
+	// Interactive (no --non-interactive), run from INSIDE the worktree with no
+	// name → handleDeleteCurrent → handleUncommittedChanges. Empty stdin makes
+	// the subsequent menu return on EOF after the warning prints.
+	r := runWt(t, wtPath, nil, "delete")
+
+	// The warning is a diagnostic and MUST be on stderr, never stdout.
+	assertContains(t, r.Stderr, "Warning: Worktree has uncommitted changes")
+	assertNotContains(t, r.Stdout, "Worktree has uncommitted changes")
+}
+
 func TestDelete_MultipleWithStash(t *testing.T) {
 	repo := createTestRepo(t)
 	wtPathA := createWorktreeViaWt(t, repo, "stash-alpha")

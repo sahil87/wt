@@ -136,8 +136,8 @@ Resolution order: --stale, --delete-all, positional args, --worktree-name (depre
 	}
 
 	cmd.Flags().StringVar(&worktreeName, "worktree-name", "", "Worktree to delete")
-	cmd.Flags().StringVar(&deleteBranch, "delete-branch", "", "Delete associated branch: true, false, or auto (default: auto — deletes only when branch matches worktree name)")
-	cmd.Flags().StringVar(&deleteRemote, "delete-remote", "", "Delete remote branch: true (default) or false")
+	cmd.Flags().StringVar(&deleteBranch, "delete-branch", "", "Delete the associated branch: true (always), false (never), auto (default — only if branch name matches worktree name)")
+	cmd.Flags().StringVar(&deleteRemote, "delete-remote", "", "Delete the remote-tracking branch when the local branch is deleted (true by default)")
 	cmd.Flags().BoolVar(&deleteAll, "delete-all", false, "Delete all worktrees")
 	cmd.Flags().BoolVarP(&stashFlag, "stash", "s", false, "Stash uncommitted changes before deleting")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts, use defaults")
@@ -394,7 +394,7 @@ func handleDeleteMultiple(session *wt.MenuSession, names []string, nonInteractiv
 
 		fmt.Println("Removing worktree...")
 		if err := wt.RemoveWorktree(w.path, true); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to remove %s: %s\n", w.name, err)
+			wt.Warn("failed to remove %s: %s", w.name, err)
 			continue
 		}
 		fmt.Printf("Deleted worktree: %s%s%s\n", wt.ColorGreen, w.name, wt.ColorReset)
@@ -474,7 +474,7 @@ func handleDeleteAll(session *wt.MenuSession, nonInteractive bool, deleteBranch,
 
 		fmt.Println("Removing worktree...")
 		if err := wt.RemoveWorktree(w.path, true); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to remove %s: %s\n", w.name, err)
+			wt.Warn("failed to remove %s: %s", w.name, err)
 			continue
 		}
 		fmt.Printf("Deleted worktree: %s%s%s\n", wt.ColorGreen, w.name, wt.ColorReset)
@@ -665,7 +665,11 @@ func handleUncommittedChanges(session *wt.MenuSession, wtName, stashMode string,
 		return nil
 	}
 
-	fmt.Printf("\n%sWarning:%s Worktree has uncommitted changes\n\n", wt.ColorYellow, wt.ColorReset)
+	// Diagnostic → stderr (wt.Warn). The blank lines around it are menu-layout
+	// framing the helper does not emit (Warn appends a single trailing newline).
+	fmt.Fprintln(os.Stderr)
+	wt.Warn("Worktree has uncommitted changes")
+	fmt.Fprintln(os.Stderr)
 
 	choice, err := session.Show("What would you like to do?", []string{
 		"Stash changes and delete (Recommended)",
@@ -700,7 +704,11 @@ func handleUnpushedCommits(session *wt.MenuSession, branch string, nonInteractiv
 	}
 
 	count := wt.GetUnpushedCount(branch)
-	fmt.Printf("\n%sWarning:%s Branch has %d unpushed commit(s)\n\n", wt.ColorYellow, wt.ColorReset, count)
+	// Diagnostic → stderr (wt.Warn). The blank lines around it are menu-layout
+	// framing the helper does not emit (Warn appends a single trailing newline).
+	fmt.Fprintln(os.Stderr)
+	wt.Warn("Branch has %d unpushed commit(s)", count)
+	fmt.Fprintln(os.Stderr)
 
 	fmt.Println("Commits that will be lost:")
 	lines := wt.GetUnpushedCommitLines(branch, 5)
@@ -744,7 +752,7 @@ func handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote string) {
 		if branch == wtName {
 			shouldDelete = true
 		} else {
-			fmt.Printf("Skipped branch deletion: %s ≠ worktree name (%s). Use --delete-branch true to force.\n", branch, wtName)
+			fmt.Printf("Skipped branch deletion: branch '%s' does not match worktree name '%s'; use --delete-branch=true to force\n", branch, wtName)
 		}
 	}
 

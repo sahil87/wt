@@ -52,6 +52,50 @@ func TestGo_NameArg_NavigatesToWorktree(t *testing.T) {
 	}
 }
 
+// TestGo_NameArg_StderrConfirmation_StdoutStaysBarePath verifies the navigation
+// confirmation block lands on STDERR (repo / worktree / branch + indented path)
+// while STDOUT stays EXACTLY the bare resolved path — the critical regression
+// guard for the stdout machine contract (cd "$(command wt go ...)").
+func TestGo_NameArg_StderrConfirmation_StdoutStaysBarePath(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "frosted-jaguar")
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	r := runWtSuccess(t, repo, env, "go", "frosted-jaguar")
+
+	// STDOUT must be EXACTLY the bare path (single line, no confirmation text).
+	if got := strings.TrimRight(r.Stdout, "\n"); got != wtPath {
+		t.Errorf("stdout must be exactly the bare path %q, got %q", wtPath, got)
+	}
+	if strings.Contains(r.Stdout, "→") {
+		t.Errorf("confirmation arrow must NOT appear on stdout, got: %q", r.Stdout)
+	}
+
+	// STDERR carries the compact-arrow confirmation block.
+	assertContains(t, r.Stderr, "→")
+	assertContains(t, r.Stderr, filepath.Base(repo)) // repo name
+	assertContains(t, r.Stderr, "frosted-jaguar")    // worktree basename
+	assertContains(t, r.Stderr, "frosted-jaguar)")   // branch (in parens; wt create names branch == worktree)
+	assertContains(t, r.Stderr, wtPath)              // indented absolute path line
+}
+
+// TestGo_NoWorktrees_NoConfirmation verifies the confirmation block is NOT
+// emitted when there is nothing to navigate to (no non-main worktrees) — the
+// arrow must only appear on the success path.
+func TestGo_NoWorktrees_NoConfirmation(t *testing.T) {
+	repo := createTestRepo(t)
+
+	// No extra worktrees created: selectWorktree finds zero options, prints
+	// "No worktrees found." and returns without navigating.
+	r := runWtSuccess(t, repo, nil, "go")
+
+	assertContains(t, r.Stdout, "No worktrees found.")
+	assertNotContains(t, r.Stdout, "→")
+	assertNotContains(t, r.Stderr, "→")
+}
+
 // TestGo_NameArg_CaseInsensitive verifies name resolution is case-insensitive,
 // matching resolveWorktreeByName's contract shared with `wt open`.
 func TestGo_NameArg_CaseInsensitive(t *testing.T) {

@@ -100,10 +100,14 @@ func TestList_PathNonexistent(t *testing.T) {
 	repo := createTestRepo(t)
 
 	r := runWt(t, repo, nil, "list", "--path", "nonexistent")
-	if r.ExitCode == 0 {
-		t.Error("expected failure for nonexistent worktree --path lookup")
+	// Structured ExitWithError(ExitGeneralError, ...) — byte-parity with the
+	// open.go/go.go not-found case (what/why/fix on stderr, exit 1).
+	if r.ExitCode != 1 {
+		t.Fatalf("expected exit 1 (ExitGeneralError), got %d\nstderr: %s", r.ExitCode, r.Stderr)
 	}
-	assertContains(t, r.Stderr, "not found")
+	assertContains(t, r.Stderr, "Error: Worktree 'nonexistent' not found")
+	assertContains(t, r.Stderr, "Why: No worktree with that name in this repository")
+	assertContains(t, r.Stderr, "Fix: Use 'wt list' to see available worktrees")
 }
 
 // --json flag tests

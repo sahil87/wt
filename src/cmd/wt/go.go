@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	wt "github.com/sahil87/wt/internal/worktree"
 	"github.com/spf13/cobra"
@@ -71,7 +72,7 @@ Requires a git repository — worktree resolution walks the repo's worktree list
 						err.Error(),
 						"Check 'git worktree list' from this repo")
 				}
-				return navigateTo(path)
+				return navigateTo(ctx, path)
 			}
 
 			// No name. A no-arg selection menu has no sensible non-interactive
@@ -99,7 +100,7 @@ Requires a git repository — worktree resolution walks the repo's worktree list
 				return nil
 			}
 
-			return navigateTo(path)
+			return navigateTo(ctx, path)
 		},
 	}
 
@@ -113,11 +114,22 @@ Requires a git repository — worktree resolution walks the repo's worktree list
 // cd's the parent shell there, and always prints the path to stdout as the last
 // line so the no-wrapper scripting form (cd "$(command wt go ...)") works.
 //
+// A compact-arrow navigation confirmation (repo / worktree / branch + the
+// absolute path) is written to STDERR so the user can see where they are landing
+// without polluting the stdout machine contract. stdout stays the bare resolved
+// path only — this preserves cd "$(command wt go ...)" and the WT_CD_FILE write.
+//
 // Per Constitution VII, wt never cd's the parent shell directly — it cooperates
 // via WT_CD_FILE / stdout and the shell wrapper evaluates the result. The
 // WT_CD_FILE semantics (mode 0600, truncate-on-write, contents = resolved dir
 // path) are the same ones documented in launcher-contract.md §3 for "Open here".
-func navigateTo(path string) error {
+func navigateTo(ctx *wt.RepoContext, path string) error {
+	// Confirmation block (stderr, human copy). getBranchForPath reuses the same
+	// single git rev-parse the open/go menus use. Emits no color, so it is
+	// NO_COLOR-safe by construction.
+	fmt.Fprintf(os.Stderr, "→ %s / %s  (%s)\n", ctx.RepoName, filepath.Base(path), getBranchForPath(path))
+	fmt.Fprintf(os.Stderr, "  %s\n", path)
+
 	if cdFile := os.Getenv("WT_CD_FILE"); cdFile != "" {
 		if err := os.WriteFile(cdFile, []byte(path), 0600); err != nil {
 			wt.ExitWithError(wt.ExitGeneralError,

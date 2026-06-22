@@ -109,6 +109,14 @@ func PrintError(what, why, fix string) {
 	fmt.Fprintln(os.Stderr, WtError(what, why, fix))
 }
 
+// Warn writes a color-wrapped "Warning:" diagnostic to stderr. It is the single
+// warning emitter for the CLI: all "Warning:" call sites route through it so the
+// prefix, stream (stderr), and color are consistent. Respects the
+// NO_COLOR-blanked package color vars (no fresh os.Getenv).
+func Warn(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "%sWarning:%s %s\n", ColorYellow, ColorReset, fmt.Sprintf(format, args...))
+}
+
 // ExitWithError prints a structured error and exits with the given code.
 func ExitWithError(code int, what, why, fix string) {
 	PrintError(what, why, fix)

@@ -308,8 +308,10 @@ func handlePathLookup(name string, ctx *wt.RepoContext) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Worktree '%s' not found. Use 'wt list' to see available worktrees.\n", name)
-	os.Exit(wt.ExitGeneralError)
+	wt.ExitWithError(wt.ExitGeneralError,
+		fmt.Sprintf("Worktree '%s' not found", name),
+		"No worktree with that name in this repository",
+		"Use 'wt list' to see available worktrees")
 	return nil
 }
 

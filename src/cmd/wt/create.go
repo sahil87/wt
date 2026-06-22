@@ -124,8 +124,7 @@ or creates a new branch.`,
 
 			// Dirty-state check
 			if !nonInteractive && (wt.HasUncommittedChanges() || wt.HasUntrackedFiles()) {
-				fmt.Fprintf(os.Stderr, "%sWarning: main repo has uncommitted changes%s\n",
-					wt.ColorYellow, wt.ColorReset)
+				wt.Warn("main repo has uncommitted changes")
 				choice, err := wt.ShowMenu("How to proceed?", []string{
 					"Continue anyway",
 					"Stash changes first",
@@ -188,7 +187,7 @@ or creates a new branch.`,
 					if worktreeInit == "true" {
 						initScript := wt.InitScriptPath()
 						if err := wt.RunWorktreeSetup(existingWtPath, initScript, ctx.RepoRoot); err != nil {
-							fmt.Fprintf(os.Stderr, "Warning: worktree init failed for reused worktree %q: %v\n", finalName, err)
+							wt.Warn("worktree init failed for reused worktree %q: %v", finalName, err)
 						}
 					}
 					fmt.Println(existingWtPath)
@@ -386,7 +385,7 @@ or creates a new branch.`,
 						selected := apps[choice-1]
 						wt.SaveLastApp(selected.Cmd)
 						if openErr := wt.OpenInApp(selected.Cmd, wtPath, ctx.RepoName, finalName); openErr != nil {
-							fmt.Fprintf(os.Stderr, "Warning: could not open in %s: %s\n", selected.Name, openErr)
+							wt.Warn("could not open in %s: %s", selected.Name, openErr)
 						}
 						if selected.Cmd == "open_here" {
 							suppressPath = true
@@ -397,11 +396,11 @@ or creates a new branch.`,
 				apps := wt.BuildAvailableApps()
 				resolved, err := wt.ResolveDefaultApp(apps)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
+					wt.Warn("%s", err)
 				} else {
 					wt.SaveLastApp(resolved.Cmd)
 					if openErr := wt.OpenInApp(resolved.Cmd, wtPath, ctx.RepoName, finalName); openErr != nil {
-						fmt.Fprintf(os.Stderr, "Warning: could not open in %s: %s\n", resolved.Name, openErr)
+						wt.Warn("could not open in %s: %s", resolved.Name, openErr)
 					}
 					if resolved.Cmd == "open_here" {
 						suppressPath = true
@@ -411,11 +410,11 @@ or creates a new branch.`,
 				apps := wt.BuildAvailableApps()
 				resolved, err := wt.ResolveApp(worktreeOpen, apps)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
+					wt.Warn("%s", err)
 				} else {
 					wt.SaveLastApp(resolved.Cmd)
 					if openErr := wt.OpenInApp(resolved.Cmd, wtPath, ctx.RepoName, finalName); openErr != nil {
-						fmt.Fprintf(os.Stderr, "Warning: could not open in %s: %s\n", resolved.Name, openErr)
+						wt.Warn("could not open in %s: %s", resolved.Name, openErr)
 					}
 					if resolved.Cmd == "open_here" {
 						suppressPath = true
@@ -436,9 +435,9 @@ or creates a new branch.`,
 
 	cmd.Flags().StringVar(&worktreeName, "worktree-name", "", "Set worktree name (skips name prompt)")
 	cmd.Flags().StringVar(&worktreeInit, "worktree-init", "", "Run worktree init script: true (default) or false")
-	cmd.Flags().StringVar(&worktreeOpen, "worktree-open", "", "Open in app after creation, or 'skip'")
+	cmd.Flags().StringVar(&worktreeOpen, "worktree-open", "", "After creation: prompt (menu), default (auto-detect app), skip, or an app name (e.g. code, cursor)")
 	cmd.Flags().BoolVar(&reuse, "reuse", false, "Reuse existing worktree if name collides (requires --worktree-name)")
-	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts, porcelain output")
+	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts; use defaults and skip menus")
 	cmd.Flags().StringVar(&base, "base", "", "Git ref (branch, tag, SHA) to use as start-point for new branch")
 
 	return cmd

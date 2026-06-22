@@ -163,6 +163,42 @@ func TestWtError_WithColor(t *testing.T) {
 	}
 }
 
+func TestWarn_WithColor(t *testing.T) {
+	origYellow, origReset := ColorYellow, ColorReset
+	defer func() { ColorYellow, ColorReset = origYellow, origReset }()
+	ColorYellow, ColorReset = "\033[0;33m", "\033[0m"
+
+	out := captureStderr(t, func() {
+		Warn("uncommitted changes in %s", "repo")
+	})
+
+	if !strings.Contains(out, "\033[0;33mWarning:\033[0m uncommitted changes in repo") {
+		t.Errorf("Warn should color-wrap the Warning: prefix and format args, got: %q", out)
+	}
+	if !strings.HasSuffix(out, "\n") {
+		t.Errorf("Warn must append a single trailing newline, got: %q", out)
+	}
+}
+
+func TestWarn_NoColor(t *testing.T) {
+	// NO_COLOR state: package init() blanks the color vars. Replicate via the
+	// same save/blank/restore pattern the other tests use.
+	origYellow, origReset := ColorYellow, ColorReset
+	defer func() { ColorYellow, ColorReset = origYellow, origReset }()
+	ColorYellow, ColorReset = "", ""
+
+	out := captureStderr(t, func() {
+		Warn("plain %d", 7)
+	})
+
+	if out != "Warning: plain 7\n" {
+		t.Errorf("NO_COLOR Warn should be plain %q, got: %q", "Warning: plain 7\n", out)
+	}
+	if strings.Contains(out, "\033[") {
+		t.Errorf("NO_COLOR Warn must contain no ANSI escapes, got: %q", out)
+	}
+}
+
 func TestPrintInitFailureBanner_ExitError(t *testing.T) {
 	origRed, origBold, origReset := ColorRed, ColorBold, ColorReset
 	defer func() { ColorRed, ColorBold, ColorReset = origRed, origBold, origReset }()
