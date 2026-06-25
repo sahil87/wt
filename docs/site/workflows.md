@@ -70,7 +70,7 @@ selection menu.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--delete-branch <true\|false\|auto>` | `auto` | Delete the associated local branch. `auto` deletes only when the branch name matches the worktree name. |
-| `--delete-remote <true\|false>` | `true` | Delete the remote-tracking branch when the local branch is deleted. |
+| `--delete-remote <true\|false>` | `true` | Delete the branch on the origin remote (via `git push origin --delete`) when the local branch is deleted. |
 | `--delete-all` | `false` | Delete every worktree (skips the selection logic). |
 | `-s`, `--stash` | `false` | Stash uncommitted changes in the worktree before deleting. |
 | `--stale[=Nd]` | `7d` when bare | Select idle worktrees (filesystem mtime older than the threshold) for deletion. Bare `--stale` uses the 7-day default; `--stale=30d` overrides. The `=` is required. |
