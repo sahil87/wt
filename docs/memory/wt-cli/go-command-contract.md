@@ -6,7 +6,8 @@ description: "`wt go` worktree-selection contract — selection-only navigation 
 
 > Post-implementation behavior capture for the `wt go` worktree-selection verb
 > and the `wt open --go` select-then-launch composition.
-> Source change: `260620-3pp5-open-worktree-from-worktree`.
+> Source change: `260620-3pp5-open-worktree-from-worktree`
+> (stderr navigation confirmation added by `260622-log5-dx-copy-polish`).
 
 This file documents the contract `wt go` honors and how `wt open --go` composes
 it. `wt go` is the **selector** half of the selector/launcher split: it picks a
@@ -37,8 +38,9 @@ explicit spec amendment supersedes them.
   case-insensitively via the **shared** `resolveWorktreeByName` (the same
   resolver `wt open <name>` uses, in `src/cmd/wt/open.go`) and navigates there.
   It launches **no** application — navigation is the only effect.
-- On success it routes through `navigateTo(path)` (below): writes the resolved
-  absolute path to `WT_CD_FILE` when set AND prints it to stdout as the last line.
+- On success it routes through `navigateTo(ctx, path)` (below): writes the resolved
+  absolute path to `WT_CD_FILE` when set AND prints it to stdout as the last line,
+  and emits a stderr navigation confirmation (see the navigation section below).
 
 ### `wt go` (no arg) shows the current-repo selection menu from anywhere in the repo
 
@@ -92,14 +94,19 @@ explicit spec amendment supersedes them.
 
 ### `wt go` navigates via `WT_CD_FILE` + stdout — `navigateTo`, never `OpenInApp`
 
-- `navigateTo(path string)` in `src/cmd/wt/go.go` is the dedicated navigation
-  helper. It:
-  1. Writes `path` to `WT_CD_FILE` (mode `0600`, truncate-on-write) when the env
+- `navigateTo(ctx *wt.RepoContext, path string)` in `src/cmd/wt/go.go` is the
+  dedicated navigation helper (it takes `ctx` so it can render `ctx.RepoName` in the
+  stderr confirmation below — `260622-log5` widened the signature from the original
+  `navigateTo(path string)`; both call sites, the by-name path and the menu path,
+  pass the resolved `ctx`). It:
+  1. Emits a **stderr navigation confirmation** (see the dedicated requirement
+     below) — the first thing it writes, on the success path only.
+  2. Writes `path` to `WT_CD_FILE` (mode `0600`, truncate-on-write) when the env
      var is set — the identical semantics `launcher-contract.md` §3 fixes for
      "Open here". A write failure exits `ExitGeneralError`.
-  2. **Always** prints the resolved absolute path to stdout as the **last line**,
+  3. **Always** prints the resolved absolute path to stdout as the **last line**,
      so the no-wrapper scripting form `cd "$(command wt go some-name)"` works.
-  3. When `WT_CD_FILE` is unset **and** `WT_WRAPPER != "1"`, prints the same
+  4. When `WT_CD_FILE` is unset **and** `WT_WRAPPER != "1"`, prints the same
      two-line "shell wrapper required / `eval "$(wt shell-init)"`" hint to stderr
      that the launcher's "Open here" emits (the `WT_WRAPPER`-gated hint
      convention, `launcher-contract.md` §4).
@@ -115,6 +122,38 @@ explicit spec amendment supersedes them.
 - **No new env var** is introduced. `wt go` reuses `WT_CD_FILE` / `WT_WRAPPER`
   verbatim, so the launcher-contract stability guarantees (§6) are unchanged and
   no constitution amendment is required.
+
+### `wt go` emits a stderr navigation confirmation on success — stdout stays the bare path (`260622-log5`)
+
+- On the **success path only** (a worktree was resolved by name OR selected from
+  the menu, i.e. inside `navigateTo`), `wt go` writes a two-line compact-arrow
+  confirmation to **stderr** so the user can see *where* they are landing:
+  ```
+  → idea / frosted-jaguar  (feature-x)
+    /home/sahil/code/sahil87/idea.worktrees/frosted-jaguar
+  ```
+  - Line 1: `→ {ctx.RepoName} / {filepath.Base(path)}  ({branch})` — two spaces
+    before the parenthesized branch.
+  - Line 2: the absolute resolved `path`, **two-space-indented**.
+- The branch is derived via the existing `getBranchForPath(path)` (in
+  `src/cmd/wt/open.go`) — the **same** single `git rev-parse --abbrev-ref HEAD` the
+  open/go menus already run per entry; `wt go` reuses it rather than issuing a
+  fresh git call (Constitution V).
+- **The confirmation is success-path-only.** It is emitted from inside
+  `navigateTo`, so it never fires on the cancel path (`Cancelled.`) or the
+  no-worktrees path (`No worktrees found.`) — those return before `navigateTo` is
+  reached.
+- **stdout is unchanged — NON-NEGOTIABLE.** The confirmation is diagnostic copy on
+  stderr; stdout stays **exactly** the single bare resolved absolute path as the
+  final (and only) stdout line. This preserves `cd "$(command wt go <name>)"` and
+  the `WT_CD_FILE` write (mode `0600`, truncate-on-write). The confirmation is the
+  *first* thing `navigateTo` writes and the bare-path `fmt.Println(path)` stays the
+  *last* write, so no confirmation text can leak onto stdout.
+- **No color.** The confirmation is emitted as plain text (no `ColorYellow`/etc.),
+  so it is NO_COLOR-safe **by construction** — it never touches the package color
+  vars and never calls `os.Getenv` afresh. (This is a deliberately simpler posture
+  than `PhaseSeparator`'s color-detection-via-blanked-vars; `wt go`'s confirmation
+  has no colored variant.)
 
 ### `wt go` no-arg under `--non-interactive` / non-TTY is deterministic and non-prompting
 
@@ -199,8 +238,8 @@ explicit spec amendment supersedes them.
 
 ### `wt go` writes `WT_CD_FILE` + prints stdout via a dedicated `navigateTo`, not `OpenInApp`
 
-**Decision**: a small `navigateTo` helper in `cmd/wt/go.go` does both the
-`WT_CD_FILE` write (when set) and the always-print-bare-path stdout emission.
+**Decision**: a small `navigateTo(ctx, path)` helper in `cmd/wt/go.go` does both
+the `WT_CD_FILE` write (when set) and the always-print-bare-path stdout emission.
 **Why**: `wt go` is a navigation verb with no app concept, and it must do BOTH
 sides of the cd contract (write the file when set AND always print the bare path
 for `cd "$(command wt go)"`). Constitution VII + `launcher-contract.md` §3 fix
@@ -209,6 +248,26 @@ the mechanism; no new env var, no `internal/` business rule.
 wrong shape (it writes `WT_CD_FILE` OR prints a `cd --` line, mutually exclusive,
 and never emits a bare path), and it couples `go` to the launcher app catalog.
 *Introduced by*: `260620-3pp5-open-worktree-from-worktree`.
+
+### Navigation confirmation on stderr, never stdout (`260622-log5`)
+
+**Decision**: the compact-arrow `→ {repo} / {worktree}  ({branch})` + indented-path
+confirmation goes to **stderr**, emitted from inside `navigateTo` (success path
+only); stdout stays the bare resolved path as the final line. `navigateTo` was
+widened to `navigateTo(ctx, path)` so it has `ctx.RepoName`, and the branch reuses
+`getBranchForPath`.
+**Why**: the governing stream-discipline rule — stdout = machine result, stderr =
+human copy (see `/wt-cli/create-output-phases.md`) — and the `cd "$(command wt go)"`
+/ `WT_CD_FILE` scripting contract both require a bare-path stdout. Putting the
+confirmation on stderr closes the `wt go` reassurance gap (it previously printed
+only a bare path, less informative than `wt create`'s summary) without touching the
+machine contract. Plain text (no color) keeps it NO_COLOR-safe by construction and
+matches the create-summary's modest styling.
+**Rejected**: printing the block to stdout (breaks every scripting/launcher
+consumer); a create-style multi-line labeled block or a single dense line (the
+compact-arrow form was the user's explicit choice over both); a fresh
+`git rev-parse` for the branch (reuse `getBranchForPath` per Constitution V).
+*Introduced by*: `260622-log5-dx-copy-polish`.
 
 ### Shared `selectWorktree(ctx, session, prompt)` returning `(path, name, cancelled, noWorktrees, err)`
 
@@ -278,9 +337,16 @@ otherwise does not want).
 - Source: `src/cmd/wt/main.go` — `goCmd()` registered in `root.AddCommand(...)`.
 - Tests: `src/cmd/wt/go_test.go` (unit: name happy path → `WT_CD_FILE`+stdout,
   unknown name → exit 1, non-git → exit 3, no-arg `--non-interactive` → exit 1
-  without prompting), `src/cmd/wt/integration_test.go` (end-to-end `wt go <name>`
-  from a sibling worktree, no-arg menu newest-first ordering,
-  `wt open --go <name> --app open_here`).
+  without prompting; `260622-log5`: success emits the `→`/repo/worktree/branch +
+  indented-path confirmation on stderr while stdout stays exactly the bare path,
+  and the confirmation is absent on the no-worktrees menu path),
+  `src/cmd/wt/integration_test.go` (end-to-end `wt go <name>` from a sibling
+  worktree, no-arg menu newest-first ordering, `wt open --go <name> --app open_here`).
+- Sibling memory: `/wt-cli/create-output-phases.md` — the canonical stdout =
+  machine-result / stderr = human-diagnostic stream-discipline contract this
+  confirmation honors; it also documents the `wt.Warn` shared one-line warning
+  helper used by create/delete (the verbose init not-found renderer,
+  `InitNotFound.RenderWarning`, is the documented exception) (`260622-log5`).
 - Constitution: Principle II (Cobra command surface — `SilenceUsage`/
   `SilenceErrors`, `RunE`), III (Typed exit codes — `ExitGitError` /
   `ExitGeneralError`, no new code), V (selection orchestration lives in `cmd/`;

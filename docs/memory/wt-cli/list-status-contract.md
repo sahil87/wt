@@ -66,6 +66,7 @@ This file documents the contract that `wt list` honors after the status-opt-in c
 
 - `handlePathLookup` uses raw `listWorktreeEntries()`. It runs BEFORE the enrichment dispatch and returns early. No `checkDirty` or `getUnpushedInDir` calls regardless of other flags.
 - `--path` + `--status` is rejected at flag-validation time, not after enrichment runs.
+- **Not-found uses the structured `ExitWithError` form (`260622-log5`).** When `--path <name>` resolves no worktree, `handlePathLookup` exits via `wt.ExitWithError(wt.ExitGeneralError, "Worktree '<name>' not found", "No worktree with that name in this repository", "Use 'wt list' to see available worktrees")` — the same `Error:`/`Why:`/`Fix:` what/why/fix structure (and `ExitGeneralError = 1`) that `wt go`/`wt open`'s not-found path emits, replacing the prior ad-hoc `fmt.Fprintf(os.Stderr, …) + os.Exit`. This brings the three not-found cases to byte-parity. See `/wt-cli/go-command-contract.md`'s "`wt go <unknown-name>` exits `ExitGeneralError`".
 
 ### Mutually exclusive flags
 
@@ -357,6 +358,7 @@ relative buckets).
 - Sibling memory: `wt-cli/init-failure-contract.md` — same pattern of post-change invariant capture for a different `wt` subcommand.
 - Sibling memory: `wt-cli/recency-ordering-contract.md` — the shared `RecencyOf`/`RecencyLess`/`SortByRecency` definition that this file's `--sort`/`recent` ordering and `last_active` field consume; also covers the `wt open`/`wt delete` menu ordering.
 - Sibling memory: `wt-cli/idle-staleness-contract.md` — the `wt.IsIdle` predicate, `DefaultIdleThreshold`, and `wt delete --stale` selector that the `Idle *bool` field and `⚠ idle` marker documented here consume. That file is the authoritative cross-command (list + delete) idle contract; this file documents only the `wt list` display/JSON surface of it.
+- Sibling memory: `/wt-cli/go-command-contract.md` — the `wt go`/`wt open` `Worktree '<name>' not found` structured-error format that `--path` not-found now matches byte-for-byte (`260622-log5`).
 
 ## Open follow-ups (not in scope for this change)
 

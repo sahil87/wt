@@ -1,0 +1,52 @@
+id: log5
+name: 260622-log5-dx-copy-polish
+created: 2026-06-22T06:58:16Z
+created_by: sahil-noon
+change_type: fix
+issues: []
+progress:
+    intake: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: done
+    review-pr: done
+plan:
+    generated: true
+    task_count: 15
+    acceptance_count: 15
+    acceptance_completed: 0
+confidence:
+    certain: 7
+    confident: 1
+    tentative: 0
+    unresolved: 0
+    score: 4.7
+    fuzzy: true
+    dimensions:
+        signal: 80.6
+        reversibility: 80.0
+        competence: 88.1
+        disambiguation: 80.6
+stage_metrics:
+    intake: {started_at: "2026-06-22T06:58:16Z", driver: fab-new, iterations: 1, completed_at: "2026-06-22T08:39:47Z"}
+    apply: {started_at: "2026-06-22T08:39:47Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-22T08:48:24Z"}
+    review: {started_at: "2026-06-22T08:48:24Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-22T08:54:02Z"}
+    hydrate: {started_at: "2026-06-22T08:54:02Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-22T08:59:06Z"}
+    ship: {started_at: "2026-06-22T08:59:06Z", driver: fab-fff, iterations: 1, completed_at: "2026-06-22T09:00:47Z"}
+    review-pr: {started_at: "2026-06-22T09:00:47Z", driver: git-pr, iterations: 1, completed_at: "2026-06-22T09:10:25Z"}
+prs:
+    - https://github.com/sahil87/wt/pull/24
+true_impact:
+    added: 0
+    deleted: 0
+    net: 0
+    excluding:
+        added: 0
+        deleted: 0
+        net: 0
+    computed_at: "2026-06-22T08:59:06Z"
+    computed_at_stage: hydrate
+summary: 'DX copy polish: wt go stderr nav-confirmation, unified wt.Warn helper (delete warnings stdout→stderr), list --path structured not-found, update Short + help-text/glyph fixes'
+# true_impact: lazily created on first apply-finish (no placeholder here).
+last_updated: 2026-06-22T09:10:25Z

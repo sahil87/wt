@@ -14,7 +14,7 @@ func updateCmd() *cobra.Command {
 	var skipBrewUpdate bool
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "self-update the wt binary via Homebrew",
+		Short: "Self-update the wt binary via Homebrew",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			err := update.Run(skipBrewUpdate, version, cmd.OutOrStdout(), cmd.ErrOrStderr())
