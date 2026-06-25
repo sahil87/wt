@@ -153,7 +153,7 @@ Delete one or more worktrees with optional branch cleanup.
 |------|---------|-------------|
 | `--worktree-name <name>` | (none) | **Deprecated**: use positional arguments instead. |
 | `--delete-branch <true\|false\|auto>` | `auto` | Delete the associated local branch. `auto` deletes only when the branch name matches the worktree name. |
-| `--delete-remote <true\|false>` | `true` | Delete the remote-tracking branch when the local branch is deleted. |
+| `--delete-remote <true\|false>` | `true` | Delete the branch on the origin remote (via `git push origin --delete`) when the local branch is deleted. |
 | `--delete-all` | `false` | Delete every worktree (skips the current selection logic). |
 | `-s`, `--stash` | `false` | Stash uncommitted changes in the worktree before deleting. |
 | `--non-interactive` | `false` | No prompts; use defaults. |
