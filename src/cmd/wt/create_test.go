@@ -627,6 +627,44 @@ func TestCreate_InitFailureBannerHasRetryHint(t *testing.T) {
 	assertContains(t, r.Stderr, "&&")
 }
 
+// TestCreate_InitFailureBannerHasGoHint asserts the banner now points the user
+// at `wt go '<name>'` for the kept worktree, on the non-interactive path. The
+// hint lives in PrintInitFailureBanner so it appears on every caller path.
+func TestCreate_InitFailureBannerHasGoHint(t *testing.T) {
+	repo := createTestRepo(t)
+	env := createFailingInitScript(t, repo)
+
+	r := runWt(t, repo, env, "create", "--non-interactive",
+		"--worktree-name", "go-hint-test",
+		"--worktree-open", "skip")
+
+	assertExitCode(t, r, 7)
+	assertContains(t, r.Stderr, "wt go 'go-hint-test'")
+}
+
+// TestCreate_InitFailureNonInteractive_NoPrompt asserts the non-interactive
+// init-failure path preserves today's exact behavior: banner + exit 7 with NO
+// open-anyway prompt. The interactivity gate is !nonInteractive AND a TTY, so
+// --non-interactive must never reach ConfirmYesNo.
+func TestCreate_InitFailureNonInteractive_NoPrompt(t *testing.T) {
+	repo := createTestRepo(t)
+	env := createFailingInitScript(t, repo)
+
+	r := runWt(t, repo, env, "create", "--non-interactive",
+		"--worktree-name", "noprompt-test",
+		"--worktree-open", "skip")
+
+	assertExitCode(t, r, 7)
+	// The banner is shown (with the go hint)...
+	assertContains(t, r.Stderr, "wt go 'noprompt-test'")
+	// ...but the open-anyway prompt is NOT, and the Open phase did not run.
+	assertNotContains(t, r.Stdout, "Continue and open the worktree anyway?")
+	assertNotContains(t, r.Stderr, "Continue and open the worktree anyway?")
+	assertNotContains(t, r.Stdout, "cd -- '")
+	// Worktree survives.
+	assertWorktreeExists(t, repo, "noprompt-test")
+}
+
 func TestCreate_OpenHereSuppressesPath(t *testing.T) {
 	repo := createTestRepo(t)
 

@@ -1,0 +1,15 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-06-26T10:06:14Z"}
+{"args":"wt create should degrade gracefully on init-script failure: print init-failure banner, then (interactive only) prompt to open the worktree anyway; either way add a 'Go: wt go \u003cname\u003e' hint to the banner; always exit ExitInitFailed=7 regardless of open choice/outcome; non-interactive keeps banner+exit7 with no prompt","cmd":"fab-new","event":"command","ts":"2026-06-26T10:06:14Z"}
+{"delta":"+4.7","event":"confidence","score":4.7,"trigger":"calc-score","ts":"2026-06-26T10:07:40Z"}
+{"delta":"+0.0","event":"confidence","score":4.7,"trigger":"calc-score","ts":"2026-06-26T10:07:47Z"}
+{"delta":"+0.0","event":"confidence","score":4.7,"trigger":"calc-score","ts":"2026-06-26T10:07:51Z"}
+{"delta":"+0.0","event":"confidence","score":4.7,"trigger":"calc-score","ts":"2026-06-26T10:08:13Z"}
+{"delta":"+0.0","event":"confidence","score":4.7,"trigger":"calc-score","ts":"2026-06-26T10:08:19Z"}
+{"delta":"+0.0","event":"confidence","score":4.7,"trigger":"calc-score","ts":"2026-06-26T10:08:27Z"}
+{"cmd":"fab-switch","event":"command","ts":"2026-06-26T10:09:22Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-06-26T10:11:51Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-06-26T10:22:40Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-06-26T10:28:38Z"}
+{"event":"review","result":"passed","ts":"2026-06-26T10:28:38Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-06-26T10:33:33Z"}
+{"cmd":"git-pr","event":"command","ts":"2026-06-26T10:34:13Z"}

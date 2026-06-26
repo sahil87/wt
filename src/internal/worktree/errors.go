@@ -130,6 +130,7 @@ func ExitWithError(code int, what, why, fix string) {
 // lives in one place and tests can assert against shape, not byte equality.
 const (
 	bannerLabelWorktree = "Worktree:"
+	bannerLabelGo       = "Go:      "
 	bannerLabelRetry    = "Retry:   "
 	bannerLabelRemove   = "Remove:  "
 	bannerKeptNote      = "(kept — git operations succeeded)"
@@ -145,8 +146,14 @@ const (
 //  1. Status line ("init script exited with status N" / "did not complete")
 //     + reminder that the init output streamed above.
 //  2. Worktree: <absolute path>  (kept — git operations succeeded)
-//  3. Retry:    cd <wtPath> && wt init
-//  4. Remove:   wt delete <name>
+//  3. Go:       wt go <name>
+//  4. Retry:    cd <wtPath> && wt init
+//  5. Remove:   wt delete <name>
+//
+// The Go/Retry/Remove hints are grouped after Worktree as the action hints.
+// The Go hint points at the selection-free navigation command for the kept
+// worktree; it lives in this shared helper so EVERY caller path (interactive
+// yes/no AND non-interactive) gains the same discoverability.
 //
 // `&&` (never `;`) is used in the retry hint so it parses identically in
 // bash, zsh, and fish.
@@ -164,8 +171,10 @@ func PrintInitFailureBanner(wtPath, name string, err error) {
 	fmt.Fprintln(os.Stderr, statusLine)
 	fmt.Fprintf(os.Stderr, "  %s%s%s %s  %s\n",
 		ColorBold, bannerLabelWorktree, ColorReset, wtPath, bannerKeptNote)
-	// Single-quote both path and name so the hints stay correct when they
-	// contain spaces or shell metacharacters (e.g. macOS dirs with spaces).
+	// Single-quote path and name so the hints stay correct when they contain
+	// spaces or shell metacharacters (e.g. macOS dirs with spaces).
+	fmt.Fprintf(os.Stderr, "  %s%s%s wt go '%s'\n",
+		ColorBold, bannerLabelGo, ColorReset, shellQuoteSingle(name))
 	fmt.Fprintf(os.Stderr, "  %s%s%s cd '%s' && wt init\n",
 		ColorBold, bannerLabelRetry, ColorReset, shellQuoteSingle(wtPath))
 	fmt.Fprintf(os.Stderr, "  %s%s%s wt delete '%s'\n",

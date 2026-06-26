@@ -11,7 +11,7 @@ description: "Behavior contracts for the `wt` CLI binary — commands, exit code
 | [go-command-contract](go-command-contract.md) | `wt go` worktree-selection contract — selection-only navigation via `WT_CD_FILE`/stdout (no launch), exit codes, the current-worktree-included menu, and the `wt open --go` composition. |
 | [help-dump-contract](help-dump-contract.md) | Contract for the hidden `wt help-dump` command — the JSON envelope shll.ai's scheduled puller consumes. |
 | [idle-staleness-contract](idle-staleness-contract.md) | The shared idle predicate, the `wt delete --stale` selector, and the safety invariant that idleness never gates a deletion on its own. |
-| [init-failure-contract](init-failure-contract.md) | Init-failure behavior of `wt create` / `wt init` — kept-worktree contract, `ExitInitFailed`, SIGINT handling, and terminal-foreground reclaim. |
+| [init-failure-contract](init-failure-contract.md) | Init-failure behavior of `wt create` / `wt init` — kept-worktree contract, `ExitInitFailed` on every path, the interactive open-anyway prompt, the `wt go` banner hint, SIGINT handling, and terminal-foreground reclaim. |
 | [list-status-contract](list-status-contract.md) | `wt list` output contract — enrichment-free default, `--status` opt-in dashboard, `--sort` ordering, and pointer-field JSON shape. |
 | [menu-navigation-contract](menu-navigation-contract.md) | Arrow-key navigation contract for the shared `ShowMenu` — TTY gating, keybindings, and a byte-identical non-TTY fallback. |
 | [recency-ordering-contract](recency-ordering-contract.md) | The single recency definition (`RecencyOf`/`RecencyLess`/`SortByRecency`) and newest-first ordering across `wt list`, `wt open`, and `wt delete`. |

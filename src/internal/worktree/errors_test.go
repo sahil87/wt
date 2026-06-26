@@ -218,6 +218,9 @@ func TestPrintInitFailureBanner_ExitError(t *testing.T) {
 	if !strings.Contains(out, "status 2") {
 		t.Errorf("banner missing 'status 2' for *exec.ExitError:\n%s", out)
 	}
+	if !strings.Contains(out, "wt go '"+name+"'") {
+		t.Errorf("banner missing 'wt go %s' navigation hint (single-quoted):\n%s", name, out)
+	}
 	if !strings.Contains(out, "wt init") {
 		t.Errorf("banner missing 'wt init' retry hint:\n%s", out)
 	}
@@ -248,6 +251,9 @@ func TestPrintInitFailureBanner_NonExitError(t *testing.T) {
 	}
 	if !strings.Contains(out, wtPath) {
 		t.Errorf("banner missing worktree path %q:\n%s", wtPath, out)
+	}
+	if !strings.Contains(out, "wt go '"+name+"'") {
+		t.Errorf("banner missing 'wt go %s' navigation hint (single-quoted):\n%s", name, out)
 	}
 	if !strings.Contains(out, "wt init") {
 		t.Errorf("banner missing 'wt init' retry hint:\n%s", out)
@@ -284,6 +290,10 @@ func TestPrintInitFailureBanner_PathWithSpaces(t *testing.T) {
 	// The name contains a single quote; shellQuoteSingle escapes it as '\''.
 	if !strings.Contains(out, `wt delete 'my'\''name'`) {
 		t.Errorf("remove hint must escape embedded single quotes in name:\n%s", out)
+	}
+	// The Go: navigation hint single-quotes the name the same way.
+	if !strings.Contains(out, `wt go 'my'\''name'`) {
+		t.Errorf("go hint must escape embedded single quotes in name:\n%s", out)
 	}
 }
 
