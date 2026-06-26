@@ -142,13 +142,14 @@ const (
 // *exec.ExitError, otherwise a generic phrasing), the absolute worktree path
 // that was kept, a copy-paste-ready retry command, and a remove hint.
 //
-// Banner order:
+// Banner order (name/path values are single-quoted for copy/paste safety —
+// see shellQuoteSingle and the assertions in errors_test.go):
 //  1. Status line ("init script exited with status N" / "did not complete")
 //     + reminder that the init output streamed above.
 //  2. Worktree: <absolute path>  (kept — git operations succeeded)
-//  3. Go:       wt go <name>
-//  4. Retry:    cd <wtPath> && wt init
-//  5. Remove:   wt delete <name>
+//  3. Go:       wt go '<name>'
+//  4. Retry:    cd '<wtPath>' && wt init
+//  5. Remove:   wt delete '<name>'
 //
 // The Go/Retry/Remove hints are grouped after Worktree as the action hints.
 // The Go hint points at the selection-free navigation command for the kept
