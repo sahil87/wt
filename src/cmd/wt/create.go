@@ -268,6 +268,13 @@ or creates a new branch.`,
 			fmt.Fprintf(os.Stderr, "Created worktree: %s\nPath: %s\nBranch: %s\n",
 				finalName, wtPath, createdSummaryBranch)
 
+			// initFailed records that the init script exited non-zero. It is
+			// set in the failure branch below instead of an inline os.Exit so
+			// the interactive "open anyway" path can fall through to the Open
+			// phase (phase 5). It is read at the very end of the function to
+			// force ExitInitFailed on ALL init-failure paths — a successful
+			// open must NOT downgrade the exit to 0.
+			var initFailed bool
 			if runInit {
 				initScript := wt.InitScriptPath()
 
@@ -301,15 +308,17 @@ or creates a new branch.`,
 						wtPgid = fg
 					}
 				}
-				// Best-effort restore: a panic/early-return safety net. The two
-				// explicit reclaims below (pre-Open on success, pre-banner on
-				// init failure) are the load-bearing ones — both terminate via
-				// os.Exit or fall through to Open, and os.Exit skips deferred
-				// funcs, so this defer only actually fires on a non-os.Exit
-				// return or a panic in this block. (The pre-init SIGINT handler's
-				// exit-130 path runs before this defer is installed and before
-				// any foreground was captured, so it has nothing to reclaim.) It
-				// never blocks rollback or changes exit codes.
+				// Best-effort restore: a panic/early-return safety net. The
+				// single explicit reclaim below (run unconditionally after the
+				// init call, before the banner / open-anyway prompt / Open menu)
+				// is the load-bearing one — every init-failure path either
+				// os.Exits (non-interactive) or falls through to Open, and
+				// os.Exit skips deferred funcs, so this defer only actually
+				// fires on a non-os.Exit return or a panic in this block. (The
+				// pre-init SIGINT handler's exit-130 path runs before this defer
+				// is installed and before any foreground was captured, so it has
+				// nothing to reclaim.) It never blocks rollback or changes exit
+				// codes.
 				if reclaimTTY {
 					defer reclaimTerminalForeground(ttyFd, wtPgid)
 				}
@@ -336,29 +345,60 @@ or creates a new branch.`,
 				}()
 				captureInit := func(c *exec.Cmd) { initCmdPtr.Store(c) }
 
-				if err := wt.RunWorktreeSetupWithObserver(wtPath, initScript, ctx.RepoRoot, captureInit); err != nil {
-					// Init-script non-zero exit: keep the worktree, print the
-					// structured banner, exit with ExitInitFailed so operators
-					// can distinguish "worktree exists, init didn't complete"
-					// from other failures.
-					signal.Stop(initSigCh)
-					close(initSigCh)
-					// Reclaim foreground BEFORE the banner — the banner is a TTY
-					// write too, and would itself SIGTTOU if foreground was lost.
-					if reclaimTTY {
-						reclaimTerminalForeground(ttyFd, wtPgid)
-					}
-					rb.Disarm()
-					wt.PrintInitFailureBanner(wtPath, finalName, err)
-					os.Exit(wt.ExitInitFailed)
-				}
+				initErr := wt.RunWorktreeSetupWithObserver(wtPath, initScript, ctx.RepoRoot, captureInit)
+
+				// SIGINT Option B teardown — tear down the init-child signal
+				// handler before any further TTY work (banner, open-anyway
+				// prompt, or the Open menu). This runs on EVERY init outcome
+				// (success and the open-anyway fall-through), so the init
+				// handler is never left armed once the init child has exited.
 				signal.Stop(initSigCh)
 				close(initSigCh)
-				// Reclaim foreground before the Open phase so the menu render
-				// can never SIGTTOU on a shared-TTY init child. This is the
-				// load-bearing reclaim.
+				// Reclaim foreground before any further TTY write. This is the
+				// load-bearing reclaim: it precedes the init-failure banner AND
+				// the open-anyway prompt AND the Open menu (the menu is reached
+				// either on init success or via the open-anyway Yes fall-through
+				// below) — all are TTY writes that would SIGTTOU if foreground
+				// were stranded by a shared-TTY init child.
 				if reclaimTTY {
 					reclaimTerminalForeground(ttyFd, wtPgid)
+				}
+
+				if initErr != nil {
+					// Init-script non-zero exit: keep the worktree and print the
+					// structured banner. We do NOT os.Exit inline — instead we
+					// set initFailed and (when interactive) offer to open the
+					// kept worktree anyway by falling through to the Open phase.
+					// The function exits ExitInitFailed at the end on every
+					// init-failure path (incl. a successful open-anyway open), so
+					// operators can still distinguish "worktree exists, init
+					// didn't complete" from other failures.
+					initFailed = true
+					// Worktree is KEPT on init-script non-zero exit: disarm the
+					// rollback so the deferred rb.Execute() (which still fires on
+					// any OTHER failure) does not remove the just-created worktree.
+					rb.Disarm()
+					wt.PrintInitFailureBanner(wtPath, finalName, initErr)
+
+					// Open-anyway prompt is interactive-only, gated by the same
+					// TTY / --non-interactive discipline the rest of create uses
+					// (!nonInteractive AND stdin is a TTY — reclaimTTY is that
+					// signal, already computed above). Non-interactive / piped /
+					// CI keeps today's exact behavior: banner + exit 7, NO prompt.
+					if !nonInteractive && reclaimTTY {
+						if !wt.ConfirmYesNo("Continue and open the worktree anyway?") {
+							// No: do not open. The banner's Go: line already shows
+							// how to reach the worktree, so no app menu is shown.
+							worktreeOpen = "skip"
+						}
+						// Yes: fall through into the existing Open phase (foreground
+						// already reclaimed above) so the user can open the kept
+						// worktree. Either way the function exits 7 at the end via
+						// the initFailed check.
+					} else {
+						// Non-interactive: exit 7 immediately, no prompt, no Open.
+						os.Exit(wt.ExitInitFailed)
+					}
 				}
 			}
 
@@ -422,8 +462,20 @@ or creates a new branch.`,
 				}
 			}
 
-			// Success — disarm rollback
+			// Success — disarm rollback (a no-op on the open-anyway path,
+			// where rb was already disarmed in the init-failure branch — the
+			// worktree was always kept).
 			rb.Disarm()
+
+			// Init-failure override: when the interactive open-anyway path
+			// fell through to Open, the process MUST still exit
+			// ExitInitFailed — a successful open must NOT downgrade the exit
+			// to 0 and erase the init-failure signal operators depend on.
+			// This is the single exit point for the open-anyway path; it runs
+			// regardless of whether the open succeeded or the user chose No.
+			if initFailed {
+				os.Exit(wt.ExitInitFailed)
+			}
 
 			// Output the worktree path as the last line
 			if !suppressPath {

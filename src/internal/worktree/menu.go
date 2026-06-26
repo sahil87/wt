@@ -207,8 +207,11 @@ func runFallbackMenu(prompt string, options []string, defaultIdx int) (int, erro
 }
 
 // ConfirmYesNo prompts for a Y/n confirmation. Returns true if yes (default).
+// The prompt is written to stderr (human-facing copy), keeping stdout reserved
+// for machine-readable results even when the caller's stdout is redirected
+// while stdin remains a TTY.
 func ConfirmYesNo(prompt string) bool {
-	fmt.Printf("%s [Y/n] ", prompt)
+	fmt.Fprintf(os.Stderr, "%s [Y/n] ", prompt)
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil {

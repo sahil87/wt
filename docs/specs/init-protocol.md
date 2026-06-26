@@ -131,14 +131,31 @@ kept. The user sees a structured banner containing:
 - A status line with the extracted exit code (or a generic phrase if the
   underlying error does not unwrap to `*exec.ExitError`).
 - The absolute worktree path that was kept.
+- A navigation hint: `wt go '<name>'` — the selection-free command to reach
+  the kept worktree. This hint lives in the banner itself, so it appears on
+  every path (interactive and non-interactive).
 - A copy-paste-ready retry hint: `cd <wtPath> && wt init` (uses `&&`, never
   `;`, so it parses identically in bash/zsh/fish).
 - A remove hint: `wt delete <name>`.
 
+**Interactive open-anyway prompt.** When `wt create` is interactive (stdin is
+a TTY and `--non-interactive` was not passed), after printing the banner it
+prompts `Continue and open the worktree anyway?`. Answering **yes** opens the
+kept worktree via the normal Open phase (app menu); answering **no** skips the
+Open phase. **In both cases `wt create` still exits `ExitInitFailed = 7`** — a
+successful open never downgrades the exit code, so operators always see the
+init-failure signal. When `wt create` is **non-interactive** (piped, CI, or
+`--non-interactive`), no prompt is shown: it prints the banner and exits 7
+immediately, exactly as before.
+
+`ExitInitFailed = 7` thus holds on **every** init-failure path: non-interactive,
+interactive open-anyway yes (even after a successful open), and interactive no.
+
 The `wt create --reuse` path is exempt from `ExitInitFailed`: a reused
 worktree is presumed functional pre-existing, so its init step is a refresh
 (warn-but-continue) rather than a gate. `wt init` also exits with
-`ExitInitFailed` when the init script it located exits non-zero.
+`ExitInitFailed` when the init script it located exits non-zero (it has no
+open-anyway prompt — it is not a worktree-creating command).
 
 ### SIGINT during init
 
