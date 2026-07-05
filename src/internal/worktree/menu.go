@@ -139,7 +139,7 @@ func (s *MenuSession) Show(prompt string, options []string, defaultIdx int) (int
 // TTY (which term.MakeRaw requires). restoreFn is the raw-mode restore (a
 // no-op in tests).
 func (s *MenuSession) showInteractive(w io.Writer, prompt string, options []string, defaultIdx int, restoreFn func()) (int, error) {
-	return runInteractiveMenuCore(w, s.reader, prompt, options, defaultIdx, restoreFn)
+	return runInteractiveMenuCore(w, s.reader, prompt, options, defaultIdx, restoreFn, terminalHeight)
 }
 
 // Close ends the session. It is currently a no-op (raw mode is managed per
@@ -288,6 +288,24 @@ const (
 	// follow-up byte within this window is treated as Cancel; otherwise the
 	// follow-up bytes form an escape sequence like \x1b[A.
 	escTimeoutMs = 50
+
+	// defaultTerminalHeight is the row count assumed when term.GetSize fails.
+	// 24 is the classic terminal default; falling back to it keeps the windowed
+	// output bounded rather than degrading to the unbounded full-region paint
+	// that the viewport change exists to fix.
+	defaultTerminalHeight = 24
+
+	// menuOverheadRows is the number of always-present, non-option rows in the
+	// menu region: the prompt line and the Cancel row. The option viewport is
+	// the terminal height minus this overhead minus one further reserved row
+	// (so the `\r\n`-terminated region's footprint stays <= height-1 and never
+	// scrolls the terminal on repaint — see menuLayout's budget comment).
+	menuOverheadRows = 2
+
+	// Overflow indicator gutter text. Rendered as non-selectable rows at the
+	// window edges when options are hidden above/below (e.g. "↑ 3 more").
+	indicatorUp   = "↑"
+	indicatorDown = "↓"
 )
 
 // menuState is the pure state passed into nextMenuState.
@@ -296,12 +314,19 @@ const (
 //   - 0           → the Cancel row.
 //   - 1..numOptions → the corresponding option row.
 //
+// top is the window offset — the 0-based index of the first option row visible
+// in the scrolling viewport (see menuLayout). It is 0 for menus that fit the
+// terminal. Like highlight, it is pure state: the renderer recomputes it from
+// menuLayout at paint/redraw time so a terminal resize is absorbed on the next
+// keystroke without any SIGWINCH handling.
+//
 // defaultIdx mirrors ShowMenu's parameter and is carried so seeding tests can
 // assert the initial highlight rule without re-deriving it.
 type menuState struct {
 	highlight  int
 	numOptions int
 	defaultIdx int
+	top        int
 }
 
 // menuStateTransition is the result of feeding a keyEvent to nextMenuState.
@@ -353,6 +378,179 @@ func initialHighlight(defaultIdx, numOptions int) int {
 		return 0
 	}
 	return 1
+}
+
+// menuLayout computes the scrolling viewport for the option region. It is pure:
+// no I/O, no globals, no clock — the same discipline as nextMenuState — so every
+// windowing edge case is unit-testable without a PTY.
+//
+// Inputs:
+//   - numOptions : total option rows (excludes prompt and Cancel).
+//   - highlight  : the current highlight (0 = Cancel, 1..numOptions = option).
+//   - prevTop    : the previous window offset (0-based first-visible option
+//     index), so the window shifts only as far as needed to keep the highlight
+//     visible instead of jumping on every keystroke.
+//   - height     : the terminal height in rows (already resolved, e.g. via
+//     terminalHeight()).
+//
+// Returns:
+//   - top       : the new window offset (0-based index of the first visible option).
+//   - first     : alias of top, the 0-based index of the first visible option.
+//   - count     : number of option rows visible in the window.
+//   - moreAbove : count of options hidden above the window (0 → no ↑ indicator).
+//   - moreBelow : count of options hidden below the window (0 → no ↓ indicator).
+//
+// Row budget: the option viewport is height-menuOverheadRows-1 (prompt + Cancel
+// + one reserved row that must stay unrendered so the region's `\r\n`-terminated
+// footprint is rowsRendered <= height-1 and never scrolls the terminal on
+// repaint — see the budget comment in the body). When indicators are shown they
+// consume viewport rows, so the visible option count shrinks by up to 2 — but
+// only while the budget can still spare a row for an indicator AND show at least
+// one option. When the budget is too small to fit indicator chrome plus an
+// option (heights 4–5, where indicator deductions would drive the visible count
+// below one), the indicator rows are DROPPED rather than overflowing the budget:
+// the "N more" chrome is sacrificed so the option is shown and the option-region
+// rows never exceed the budget (prefer showing the option over the chrome, as
+// fzf does). This keeps rowsRendered <= height-1 down to height 4 — the honest
+// footprint boundary. Only at the truly sub-overhead heights 1–3 (where the raw
+// budget is < 1 and is clamped up to 1) does the layout necessarily overshoot
+// height-1: the ≥1-option escape hatch keeps output bounded and non-empty rather
+// than panicking on a degenerate terminal.
+//
+// When highlight is Cancel (0) the option window is not re-centered — Cancel is
+// a fixed overhead row rendered after the option region and is always visible,
+// so it never constrains the window. The window is only shifted to keep a
+// highlighted *option* in view; on wrap-around the highlight can jump far (e.g.
+// from option 1 up to Cancel to the last option) and the window jumps with it.
+func menuLayout(numOptions, highlight, prevTop, height int) (top, first, count, moreAbove, moreBelow int) {
+	if numOptions <= 0 {
+		return 0, 0, 0, 0, 0
+	}
+
+	// Option-region budget: total height minus the prompt + Cancel overhead,
+	// minus one further row that MUST stay unrendered. Every row (including the
+	// Cancel row) is terminated with `\r\n`, so a region that filled all `height`
+	// rows would emit a trailing newline on the bottom screen row and scroll the
+	// terminal by one line on every repaint — pushing the prompt into scrollback
+	// and leaking a stale menu copy per keystroke. Reserving one row keeps the
+	// rendered footprint at `rowsRendered <= height - 1`, so the cursor-up
+	// in-place redraw stays sound. Clamped to at least one row so degenerate
+	// short terminals still render bounded, non-empty output.
+	budget := height - menuOverheadRows - 1
+	if budget < 1 {
+		budget = 1
+	}
+
+	// Everything fits — no windowing, no indicators.
+	if numOptions <= budget {
+		return 0, 0, numOptions, 0, 0
+	}
+
+	// Windowing is required. Start from the previous top and shift it just
+	// enough to keep the highlighted option visible. Cancel (highlight 0) does
+	// not constrain the option window.
+	top = prevTop
+	if top < 0 {
+		top = 0
+	}
+
+	if highlight >= 1 {
+		h := highlight - 1 // 0-based option index
+		// Shift the window down until the highlight is not below it.
+		for {
+			v := optionRowsForTop(budget, numOptions, top)
+			if h < top+v {
+				break
+			}
+			top++
+		}
+		// Shift the window up until the highlight is not above it.
+		for top > 0 && h < top {
+			top--
+		}
+	}
+
+	// Clamp top so the window never runs past the end of the list, then
+	// recompute the final visible count and hidden-row counts.
+	maxTop := numOptions - 1
+	if top > maxTop {
+		top = maxTop
+	}
+	if top < 0 {
+		top = 0
+	}
+	count = optionRowsForTop(budget, numOptions, top)
+	if top+count > numOptions {
+		count = numOptions - top
+	}
+	if count < 1 {
+		count = 1
+	}
+
+	first = top
+	moreAbove = top
+	moreBelow = numOptions - (top + count)
+	if moreBelow < 0 {
+		moreBelow = 0
+	}
+
+	// Drop indicator chrome the budget cannot afford, so the option-region rows
+	// (indicators + visible options) never exceed the budget.
+	moreAbove, moreBelow = dropUnaffordableIndicators(budget, count, moreAbove, moreBelow)
+	return top, first, count, moreAbove, moreBelow
+}
+
+// optionRowsForTop returns how many option rows fit in the viewport for a
+// candidate window offset `top`, accounting for the ↑/↓ indicator rows that
+// offset implies. An ↑ indicator is present when top > 0 (options hidden above);
+// a ↓ indicator when options remain below the window — and whether that is true
+// depends on the count itself, so both are tested against the reduced count and
+// the tighter (safe) answer is taken. When the budget is so small that deducting
+// the indicator rows would leave zero options, it clamps to one option; the
+// indicator chrome is then dropped by dropUnaffordableIndicators so the
+// option-region rows still fit the budget.
+func optionRowsForTop(budget, numOptions, top int) int {
+	v := budget
+	if top > 0 {
+		v-- // ↑ indicator row
+	}
+	if top+v < numOptions {
+		v-- // ↓ indicator row
+	}
+	if v < 1 {
+		v = 1
+	}
+	return v
+}
+
+// dropUnaffordableIndicators sacrifices indicator chrome the budget cannot hold.
+// renderRows keys each indicator row off moreAbove/moreBelow, so an indicator
+// occupies a row iff its count is > 0. When the budget is too small to hold the
+// indicator rows plus the visible options (heights 4–5, and the clamped
+// sub-overhead heights 1–3), the ↓ indicator is dropped first, then the ↑ — so
+// the option-region rows (indicators + count) never exceed the budget and the
+// rendered footprint stays <= height-1 (down to the honest boundary, height 4).
+// Preferring the option over the "N more" hint mirrors fzf's behavior on a
+// cramped viewport. Returns the (possibly zeroed) hidden-row counts.
+func dropUnaffordableIndicators(budget, count, moreAbove, moreBelow int) (int, int) {
+	indicators := func() int {
+		c := 0
+		if moreAbove > 0 {
+			c++
+		}
+		if moreBelow > 0 {
+			c++
+		}
+		return c
+	}
+	for indicators()+count > budget && indicators() > 0 {
+		if moreBelow > 0 {
+			moreBelow = 0
+		} else {
+			moreAbove = 0
+		}
+	}
+	return moreAbove, moreBelow
 }
 
 // nextMenuState applies a keyEvent to the previous state and returns the
@@ -632,6 +830,20 @@ func isInteractiveTTY() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
+// terminalHeight returns the current terminal height (row count) of stdout —
+// the stream the menu region is painted to. On any term.GetSize failure it
+// returns defaultTerminalHeight (24) so the scrolling viewport stays bounded
+// rather than degrading to the unbounded full-region paint the viewport change
+// fixes. It is the production heightFn wired into runInteractiveMenuCore; tests
+// inject a constant instead so windowing is exercised without a PTY.
+func terminalHeight() int {
+	_, h, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || h < 1 {
+		return defaultTerminalHeight
+	}
+	return h
+}
+
 // =============================================================================
 // Raw-mode I/O shell
 // =============================================================================
@@ -652,11 +864,16 @@ func isInteractiveTTY() bool {
 //     MUST be invoked exactly once before this function returns,
 //     even on panic — that contract guarantees the user's terminal
 //     is never left in raw mode.
+//   - heightFn  : returns the terminal height, queried at paint/redraw time so
+//     the scrolling viewport (see menuLayout) adapts to the current
+//     terminal size and a resize is absorbed on the next keystroke's
+//     repaint (no SIGWINCH handling). Production wires terminalHeight;
+//     tests inject a constant so windowing is exercised without a PTY.
 //
 // SIGINT handling: raw mode delivers Ctrl-C as a raw \x03 byte rather than
 // generating a SIGINT, so no signal escapes mid-menu. The deferred restoreFn
 // always runs.
-func runInteractiveMenuCore(w io.Writer, reader *blockingByteReader, prompt string, options []string, defaultIdx int, restoreFn func()) (int, error) {
+func runInteractiveMenuCore(w io.Writer, reader *blockingByteReader, prompt string, options []string, defaultIdx int, restoreFn func(), heightFn func() int) (int, error) {
 	defer restoreFn()
 
 	state := menuState{
@@ -664,12 +881,20 @@ func runInteractiveMenuCore(w io.Writer, reader *blockingByteReader, prompt stri
 		numOptions: len(options),
 		defaultIdx: defaultIdx,
 	}
+	// Query height once for both the initial window settle and the first paint,
+	// so they observe the same terminal size (heightFn is a syscall in
+	// production — no reason to call it twice back to back).
+	initialHeight := heightFn()
+	// Settle the initial window so the seeded highlight is visible on first
+	// paint (e.g. a defaultIdx deep in an over-tall list starts scrolled).
+	state.top, _, _, _, _ = menuLayout(state.numOptions, state.highlight, state.top, initialHeight)
 
 	// rowsRendered tracks how many lines the menu currently occupies on
-	// screen so the next redraw knows how far up to move the cursor.
-	// The menu region is: 1 prompt line + len(options) option rows +
-	// 1 Cancel row = len(options) + 2 lines.
-	rowsRendered := paintMenu(w, prompt, options, state)
+	// screen so the next redraw knows how far up to move the cursor. It is the
+	// *windowed* row count (1 prompt + indicators + visible options + 1 Cancel)
+	// and never exceeds the terminal height — this is what keeps the cursor-up
+	// in-place redraw sound for lists taller than the terminal.
+	rowsRendered := paintMenu(w, prompt, options, state, initialHeight)
 
 	for {
 		first, ok := reader.readByteBlocking()
@@ -688,61 +913,114 @@ func runInteractiveMenuCore(w io.Writer, reader *blockingByteReader, prompt stri
 		}
 
 		if next.highlight != state.highlight {
+			// Shift the window (pure) so the new highlight stays visible, then
+			// redraw. Height is re-queried here so a resize is picked up.
+			height := heightFn()
+			newTop, _, _, _, _ := menuLayout(state.numOptions, next.highlight, state.top, height)
 			rowsRendered = redrawMenu(w, prompt, options, menuState{
 				highlight:  next.highlight,
 				numOptions: state.numOptions,
 				defaultIdx: state.defaultIdx,
-			}, rowsRendered)
+				top:        newTop,
+			}, rowsRendered, height)
 			state.highlight = next.highlight
+			state.top = newTop
 		}
 		// Ignored key with no highlight change → no output, no bell.
 	}
 }
 
-// paintMenu writes the full menu region for the first time and returns the
-// number of lines written (so redraw / finalize know how far to move up).
-func paintMenu(w io.Writer, prompt string, options []string, st menuState) int {
-	renderRows(w, prompt, options, st, "")
-	// 1 prompt + N options + 1 Cancel
-	return len(options) + 2
+// paintMenu writes the (windowed) menu region for the first time and returns
+// the number of lines written (so redraw / finalize know how far to move up).
+// height drives the scrolling viewport; the returned count is the windowed
+// total (prompt + indicators + visible options + Cancel) and never exceeds
+// height, keeping the cursor-up in-place redraw sound for over-tall lists.
+func paintMenu(w io.Writer, prompt string, options []string, st menuState, height int) int {
+	return renderRows(w, prompt, options, st, "", height)
 }
 
 // redrawMenu rewrites the menu region in place by moving the cursor up
-// rowsRendered lines, clearing each line, and reprinting the new state.
-// Returns the (unchanged) row count for the caller to keep tracking.
-func redrawMenu(w io.Writer, prompt string, options []string, st menuState, rowsRendered int) int {
+// rowsRendered lines, clearing each line, and reprinting the new (windowed)
+// state. Returns the new windowed row count for the caller to keep tracking.
+func redrawMenu(w io.Writer, prompt string, options []string, st menuState, rowsRendered, height int) int {
 	// Move the cursor to the start of the menu region.
 	fmt.Fprint(w, ansiCarriageRet)
 	fmt.Fprintf(w, ansiCursorUpFmt, rowsRendered)
 	// Repaint each line with a leading \x1b[2K clear to wipe whatever was
 	// there before — the row content may have changed length (highlight
-	// gutter `›` vs. plain space). The renderRows helper handles the
-	// actual row content; the linePrefix arg supplies the per-line clear.
-	renderRows(w, prompt, options, st, ansiClearLine)
-	return len(options) + 2
+	// gutter `›` vs. plain space, or an indicator row appearing/disappearing).
+	// The renderRows helper handles the actual row content; the linePrefix arg
+	// supplies the per-line clear.
+	newRows := renderRows(w, prompt, options, st, ansiClearLine, height)
+
+	// Shrink robustness: if the new windowed region is shorter than what was
+	// on screen (e.g. the terminal was made smaller mid-menu — height is
+	// re-queried each redraw, so the window count can drop), the trailing
+	// old-minus-new lines below the newly-painted region still hold stale
+	// content that renderRows did not touch. Clear those extra lines, then move
+	// the cursor back up so it rests just below the new region — keeping the
+	// returned newRows an accurate cursor-up target for the next redraw. Resize
+	// is a declared non-goal; this is minimal hardening so a shrink does not
+	// leave visible ghosts until finalize.
+	if extra := rowsRendered - newRows; extra > 0 {
+		for i := 0; i < extra; i++ {
+			fmt.Fprint(w, ansiClearLine)
+			fmt.Fprint(w, "\r\n")
+		}
+		fmt.Fprint(w, ansiCarriageRet)
+		fmt.Fprintf(w, ansiCursorUpFmt, extra)
+	}
+	return newRows
 }
 
-// renderRows emits the menu's row block — prompt line, every option row, and
-// the Cancel row — to w. linePrefix is written before each row; pass "" for
-// the first paint and ansiClearLine for in-place redraws. This single helper
-// is the source of truth for menu row layout so paintMenu and redrawMenu
-// cannot drift apart on formatting (Acceptance A-033: no unnecessary
-// duplication; code-quality.md anti-pattern: duplicating existing utilities).
+// renderRows emits the menu's row block — prompt line, the windowed option
+// rows (with ↑/↓ overflow indicators when rows are hidden), and the Cancel row
+// — to w. linePrefix is written before each row; pass "" for the first paint
+// and ansiClearLine for in-place redraws. This single helper is the source of
+// truth for menu row layout so paintMenu and redrawMenu cannot drift apart on
+// formatting (Acceptance A-033: no unnecessary duplication; code-quality.md
+// anti-pattern: duplicating existing utilities).
+//
+// height is the terminal height driving the scrolling viewport (see
+// menuLayout). It returns the number of rows written so the caller can track
+// how far up the cursor must move on the next redraw; that count is the
+// *windowed* total and never exceeds height, which is what keeps the cursor-up
+// in-place redraw sound for lists taller than the terminal.
 //
 // Every row is terminated with `\r\n`. The interactive renderer runs while
 // the terminal is in raw mode (ONLCR disabled), so a plain `\n` does not
 // imply a carriage return and rows would stair-step across the screen.
-func renderRows(w io.Writer, prompt string, options []string, st menuState, linePrefix string) {
+func renderRows(w io.Writer, prompt string, options []string, st menuState, linePrefix string, height int) int {
+	_, first, count, moreAbove, moreBelow := menuLayout(len(options), st.highlight, st.top, height)
+
 	fmt.Fprint(w, linePrefix)
 	fmt.Fprint(w, prompt)
 	fmt.Fprint(w, "\r\n")
-	for i, opt := range options {
+
+	rows := 1 // prompt
+
+	if moreAbove > 0 {
+		fmt.Fprint(w, linePrefix)
+		writeIndicatorRow(w, indicatorUp, moreAbove)
+		rows++
+	}
+	for i := first; i < first+count; i++ {
 		row := i + 1
 		fmt.Fprint(w, linePrefix)
-		writeOptionRow(w, row, opt, row == st.defaultIdx, row == st.highlight)
+		writeOptionRow(w, row, options[i], row == st.defaultIdx, row == st.highlight)
+		rows++
 	}
+	if moreBelow > 0 {
+		fmt.Fprint(w, linePrefix)
+		writeIndicatorRow(w, indicatorDown, moreBelow)
+		rows++
+	}
+
 	fmt.Fprint(w, linePrefix)
 	writeCancelRow(w, st.defaultIdx == 0, st.highlight == 0)
+	rows++ // Cancel
+
+	return rows
 }
 
 // finalizeMenu wipes the menu region and writes a single summary line:
@@ -815,6 +1093,21 @@ func writeOptionRow(w io.Writer, num int, label string, isDefault, isHighlighted
 	}
 	fmt.Fprintf(w, "%s %s%d)%s %s%s\r\n",
 		gutter, ColorBold, num, ColorReset, label, defaultMarker)
+}
+
+// writeIndicatorRow renders a non-selectable overflow indicator row shown at a
+// window edge when option rows are hidden — e.g. "↑ 3 more" at the top or
+// "↓ 5 more" at the bottom. It is a rendering artifact, never a menu option:
+// it carries no number, is never highlighted, and occupies a row within the
+// viewport budget (see menuLayout). Styled like a plain (non-highlighted,
+// non-default) row so it reads as chrome, not a choice.
+//
+// The `\r\n` terminator matches every other row: the interactive renderer runs
+// in raw mode (ONLCR disabled), so a plain `\n` would stair-step the output.
+func writeIndicatorRow(w io.Writer, arrow string, hidden int) {
+	// Leading two spaces align the indicator text under the option labels
+	// (the option gutter+space is also two columns wide before the "N)").
+	fmt.Fprintf(w, "  %s %d more\r\n", arrow, hidden)
 }
 
 // writeCancelRow renders the Cancel row. Mirrors writeOptionRow's structure

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // =============================================================================
@@ -525,6 +527,7 @@ func TestRunInteractiveMenuCore_PanicRestore(t *testing.T) {
 			[]string{"a", "b"},
 			-1,
 			restoreFn,
+			func() int { return 24 },
 		)
 	}()
 
@@ -550,19 +553,31 @@ func TestRunInteractiveMenuCore_PanicRestore(t *testing.T) {
 // cursor-up prelude and a per-line \x1b[2K clear; once those are stripped, the
 // resulting row bytes MUST match paintMenu's output byte-for-byte. This
 // guards the renderRows refactor (T018) against future drift.
+//
+// A deliberately small height (6) forces the scrolling viewport on: the option
+// budget is height-menuOverheadRows-1 = 3, and with 5 options windowed at top 1
+// the layout emits both ↑/↓ indicators plus one visible option row — so the
+// byte-equality property is asserted on the windowed render path, not just the
+// fits-on-screen path.
 func TestPaintAndRedrawShareCore(t *testing.T) {
 	withDisabledColors(t)
 
-	st := menuState{highlight: 2, numOptions: 3, defaultIdx: 1}
+	const height = 6 // budget height-menuOverheadRows-1 = 3 < 5 options → windowed
+	st := menuState{highlight: 3, numOptions: 5, defaultIdx: 1, top: 1}
 	prompt := "Open in:"
-	options := []string{"cursor", "code", "open_here"}
+	options := []string{"cursor", "code", "open_here", "split", "tab"}
 
 	var paintBuf, redrawBuf bytes.Buffer
-	paintRows := paintMenu(&paintBuf, prompt, options, st)
-	redrawRows := redrawMenu(&redrawBuf, prompt, options, st, paintRows)
+	paintRows := paintMenu(&paintBuf, prompt, options, st, height)
+	redrawRows := redrawMenu(&redrawBuf, prompt, options, st, paintRows, height)
 
 	if paintRows != redrawRows {
 		t.Errorf("row count diverged: paintMenu=%d redrawMenu=%d", paintRows, redrawRows)
+	}
+	// The rendered region reserves one row (every row ends \r\n), so the sound
+	// footprint is rowsRendered <= height-1; a full-height paint would scroll.
+	if paintRows > height-1 {
+		t.Errorf("windowed paint rendered %d rows, exceeds sound bound height-1 = %d", paintRows, height-1)
 	}
 
 	// Strip redraw's cursor-up prelude (\r + \x1b[<N>A) and every per-line
@@ -578,6 +593,445 @@ func TestPaintAndRedrawShareCore(t *testing.T) {
 	if redrawOut != paintBuf.String() {
 		t.Errorf("paintMenu and redrawMenu emit different row content after stripping redraw's prelude/clears.\n--- paint ---\n%q\n--- redraw (stripped) ---\n%q",
 			paintBuf.String(), redrawOut)
+	}
+}
+
+// TestRedrawMenu_ClearsExtraLinesOnShrink asserts redrawMenu's shrink hardening:
+// when the previous region was taller than the freshly-painted one (e.g. the
+// terminal was made smaller mid-menu, so height re-queried at redraw yields a
+// smaller window), redrawMenu clears the trailing (old-new) stale lines instead
+// of leaving ghosts until finalize. Resize is a declared non-goal; this guards
+// the minimal robustness fix. PTY-free — it inspects the emitted byte stream.
+func TestRedrawMenu_ClearsExtraLinesOnShrink(t *testing.T) {
+	withDisabledColors(t)
+
+	options := make([]string, 20)
+	for i := range options {
+		options[i] = fmt.Sprintf("opt%d", i+1)
+	}
+	st := menuState{highlight: 1, numOptions: len(options), defaultIdx: -1, top: 0}
+
+	// Redraw with a small height (fewer visible rows now) while telling redraw
+	// the region previously occupied many more rows (the pre-shrink count).
+	const smallHeight = 6
+	newRows := renderRows(io.Discard, "Pick:", options, st, "", smallHeight)
+	const prevRows = 20 // taller region that was on screen before the shrink
+
+	var buf bytes.Buffer
+	got := redrawMenu(&buf, "Pick:", options, st, prevRows, smallHeight)
+	if got != newRows {
+		t.Fatalf("redrawMenu returned %d rows; want the windowed count %d", got, newRows)
+	}
+
+	out := buf.String()
+	extra := prevRows - newRows
+	if extra <= 0 {
+		t.Fatalf("test setup expected a shrink (prevRows %d > newRows %d)", prevRows, newRows)
+	}
+
+	// There must be exactly newRows clears for the repaint plus `extra` clears
+	// for the stale trailing lines — one \x1b[2K per cleared line.
+	wantClears := newRows + extra
+	gotClears := strings.Count(out, ansiClearLine)
+	if gotClears != wantClears {
+		t.Errorf("redrawMenu emitted %d line clears; want %d (newRows %d + extra %d)",
+			gotClears, wantClears, newRows, extra)
+	}
+
+	// After clearing the extra lines, the cursor is moved back up by `extra`
+	// so the returned newRows stays an accurate cursor-up target for the next
+	// redraw. Assert that final cursor-up is present.
+	wantCursorBack := fmt.Sprintf(ansiCursorUpFmt, extra)
+	if !strings.Contains(out, wantCursorBack) {
+		t.Errorf("redrawMenu did not move the cursor back up by the extra %d lines (want %q):\n%q",
+			extra, wantCursorBack, out)
+	}
+}
+
+// =============================================================================
+// menuLayout — scrolling-viewport state machine (windowing)
+// =============================================================================
+
+// TestMenuLayout exercises the pure windowing function across the edge cases
+// called out in the intake: window at top (no ↑), window at bottom (no ↓),
+// both indicators mid-list, highlight-driven shifts up/down, wrap-around jumps,
+// a terminal shorter than the overhead, and a 0-option menu. All PTY-free.
+func TestMenuLayout(t *testing.T) {
+	cases := []struct {
+		name                                   string
+		numOptions, highlight, prevTop, height int
+		wantTop, wantFirst, wantCount          int
+		wantMoreAbove, wantMoreBelow           int
+	}{
+		// Option budget is height-menuOverheadRows-1 (prompt + Cancel + one
+		// reserved row that keeps rowsRendered <= height-1 so the region never
+		// scrolls the terminal on repaint).
+
+		// --- Fits entirely: no windowing, no indicators ---
+		{"fits: 3 options in tall terminal", 3, 1, 0, 24, 0, 0, 3, 0, 0},
+		{"fits exactly: options == budget", 5, 3, 0, 8, 0, 0, 5, 0, 0},
+		{"single option fits", 1, 1, 0, 24, 0, 0, 1, 0, 0},
+
+		// --- Window at top: only ↓ indicator ---
+		// height 10 → budget 7; 20 options, highlight near top, top 0.
+		{"window at top → only ↓ more", 20, 1, 0, 10, 0, 0, 6, 0, 14},
+
+		// --- Window at bottom: only ↑ indicator ---
+		// highlight on last option → window jumps to end, no ↓.
+		{"window at bottom → only ↑ more", 20, 20, 0, 10, 14, 14, 6, 14, 0},
+
+		// --- Both indicators mid-list ---
+		// highlight in the middle, window already scrolled → both edges hidden.
+		{"both indicators mid-list", 20, 10, 8, 10, 8, 8, 5, 8, 7},
+
+		// --- Honest windowed cases at heights 4 and 5 (the rework-cycle-2 boundary) ---
+		// budget = height-menuOverheadRows-1: height 5 → 2, height 4 → 1. A mid-list
+		// window would want BOTH indicators, but the budget cannot fit indicator
+		// chrome plus an option, so the chrome is dropped (moreAbove/moreBelow report
+		// 0 even though options are hidden) and count == budget. These cases would
+		// FAIL the pre-rework code (which fabricated a row via the v<1→v=1 clamp,
+		// rendering 5 rows at height 5 = full-height scroll, and 5 rows > height at
+		// height 4). The ≤ height-1 invariant guard below now asserts them.
+		{"height 5 mid-list drops chrome to fit budget", 20, 10, 8, 5, 9, 9, 1, 9, 0},
+		{"height 4 mid-list drops both indicators", 20, 10, 8, 4, 9, 9, 1, 0, 0},
+		{"height 5 window at top keeps ↓, drops nothing extra", 20, 1, 0, 5, 0, 0, 1, 0, 19},
+		{"height 5 window at bottom keeps ↑", 20, 20, 0, 5, 19, 19, 1, 19, 0},
+		{"height 4 window at top drops chrome", 20, 1, 0, 4, 0, 0, 1, 0, 0},
+
+		// --- Highlight-driven shift down ---
+		// highlight past the bottom of the current window forces top down until
+		// the highlight is the last visible row.
+		{"shift down to reveal highlight", 20, 8, 0, 10, 3, 3, 5, 3, 12},
+
+		// --- Highlight-driven shift up ---
+		// highlight above the current window forces top down.
+		{"shift up to reveal highlight", 20, 3, 8, 10, 2, 2, 5, 2, 13},
+
+		// --- Wrap-around jump: highlight at last option, window was at top ---
+		{"wrap jump to last option", 30, 30, 0, 12, 22, 22, 8, 22, 0},
+
+		// --- Cancel highlight does not constrain the option window ---
+		{"cancel highlight keeps prevTop window", 20, 0, 5, 10, 5, 5, 5, 5, 10},
+
+		// --- Degenerate: terminal shorter than overhead ---
+		// budget is clamped up to 1, which cannot spare a row for chrome, so the
+		// indicators are dropped (moreBelow reports 0 though options are hidden).
+		// The ≥1-option escape hatch keeps output non-empty; these heights are
+		// exempt from the ≤ height-1 invariant guard below (see its height gate).
+		{"terminal shorter than overhead clamps to 1 option", 20, 1, 0, 1, 0, 0, 1, 0, 0},
+		{"terminal exactly overhead clamps to 1 option", 20, 1, 0, 2, 0, 0, 1, 0, 0},
+
+		// --- Degenerate: 0-option menu ---
+		{"zero options", 0, 0, 0, 24, 0, 0, 0, 0, 0},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			top, first, count, moreAbove, moreBelow := menuLayout(tc.numOptions, tc.highlight, tc.prevTop, tc.height)
+			if top != tc.wantTop || first != tc.wantFirst || count != tc.wantCount ||
+				moreAbove != tc.wantMoreAbove || moreBelow != tc.wantMoreBelow {
+				t.Errorf("menuLayout(n=%d, hl=%d, prevTop=%d, h=%d) = (top=%d first=%d count=%d above=%d below=%d); want (top=%d first=%d count=%d above=%d below=%d)",
+					tc.numOptions, tc.highlight, tc.prevTop, tc.height,
+					top, first, count, moreAbove, moreBelow,
+					tc.wantTop, tc.wantFirst, tc.wantCount, tc.wantMoreAbove, tc.wantMoreBelow)
+			}
+
+			// Invariant: the highlighted OPTION (1..numOptions) is always inside
+			// the returned window. (Cancel — highlight 0 — is not an option row.)
+			if tc.highlight >= 1 && count > 0 {
+				h := tc.highlight - 1
+				if h < first || h >= first+count {
+					t.Errorf("highlighted option index %d not visible in window [%d,%d)", h, first, first+count)
+				}
+			}
+
+			// Invariant: total rendered rows never exceed height-1 when windowing
+			// is active (i.e. not everything fits). Every row ends \r\n, so the
+			// region must leave one row unrendered or the trailing newline on the
+			// bottom screen row scrolls the terminal on every repaint (the bug
+			// this reserved row fixes). The rendered region is prompt + indicators
+			// + visible options + Cancel.
+			if tc.numOptions > 0 {
+				indicators := 0
+				if moreAbove > 0 {
+					indicators++
+				}
+				if moreBelow > 0 {
+					indicators++
+				}
+				rendered := 1 + indicators + count + 1 // prompt + indicators + options + Cancel
+				// The honest footprint boundary is height >= 4 (== menuOverheadRows+2,
+				// the smallest height whose raw budget height-menuOverheadRows-1 is
+				// >= 1). At and above it the drop-chrome logic (menuLayout sacrifices
+				// indicator rows the budget cannot afford) guarantees
+				// indicators + count <= budget, so rendered <= height-1 — verified by
+				// the honest windowed height-4/5 cases above (which would fail the
+				// pre-rework code). Below height 4 the raw budget is < 1 and is
+				// clamped to 1; the ≥1-option escape hatch keeps output bounded and
+				// non-empty but necessarily taller than height-1 on such a
+				// pathological sub-overhead terminal, so those heights are exempt.
+				if tc.height >= menuOverheadRows+2 && rendered > tc.height-1 {
+					t.Errorf("rendered %d rows exceeds sound bound height-1 = %d (top=%d count=%d above=%d below=%d)",
+						rendered, tc.height-1, top, count, moreAbove, moreBelow)
+				}
+			}
+		})
+	}
+}
+
+// TestMenuLayout_FootprintSweep is the brute-force guard the reviewers used to
+// find the rework-cycle-2 bug: it sweeps every (height, numOptions, highlight,
+// prevTop) combination in a small grid and asserts the two load-bearing
+// invariants on menuLayout's output —
+//
+//  1. Footprint: the rendered region (prompt + indicators + visible options +
+//     Cancel) stays <= height-1 for every height >= 4 (the honest boundary).
+//     Every row ends \r\n, so a region of exactly `height` rows scrolls the
+//     terminal one line per repaint — the original bug. Heights 1-3 are exempt:
+//     the raw budget is < 1, clamped up to 1, so the ≥1-option escape hatch
+//     keeps output bounded but necessarily taller than height-1.
+//  2. Highlight visibility: the highlighted option (1..numOptions) is always
+//     inside the returned window, even after chrome is dropped.
+//
+// It is exhaustive over the grid rather than table-driven so a regression at ANY
+// height/size/highlight/prevTop is caught, not just the hand-picked rows in
+// TestMenuLayout. PTY-free and cheap (pure arithmetic).
+func TestMenuLayout_FootprintSweep(t *testing.T) {
+	for height := 1; height <= 12; height++ {
+		for n := 1; n <= 25; n++ {
+			for highlight := 0; highlight <= n; highlight++ {
+				for prevTop := 0; prevTop < n; prevTop++ {
+					top, first, count, above, below := menuLayout(n, highlight, prevTop, height)
+
+					// Invariant 1: footprint <= height-1 for height >= 4.
+					indicators := 0
+					if above > 0 {
+						indicators++
+					}
+					if below > 0 {
+						indicators++
+					}
+					rendered := 1 + indicators + count + 1
+					if height >= menuOverheadRows+2 && rendered > height-1 {
+						t.Fatalf("footprint overshoot: menuLayout(n=%d, hl=%d, prevTop=%d, h=%d) => top=%d count=%d above=%d below=%d rendered=%d > height-1=%d",
+							n, highlight, prevTop, height, top, count, above, below, rendered, height-1)
+					}
+
+					// Invariant 2: highlighted option always visible.
+					if highlight >= 1 && count > 0 {
+						h := highlight - 1
+						if h < first || h >= first+count {
+							t.Fatalf("highlight invisible: menuLayout(n=%d, hl=%d, prevTop=%d, h=%d) => window [%d,%d) excludes option index %d",
+								n, highlight, prevTop, height, first, first+count, h)
+						}
+					}
+
+					// Sanity: never report a hidden-count > 0 without leaving room,
+					// never overrun the list, always show >=1 option where options exist.
+					if count < 1 {
+						t.Fatalf("count < 1 with options present: menuLayout(n=%d, hl=%d, prevTop=%d, h=%d) => count=%d", n, highlight, prevTop, height, count)
+					}
+					if first+count > n {
+						t.Fatalf("window overruns list: menuLayout(n=%d, hl=%d, prevTop=%d, h=%d) => first=%d count=%d", n, highlight, prevTop, height, first, count)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestMenuLayout_WrapJumpFromTopToBottom simulates the reported wrap-around bug
+// scenario: a long list windowed at the top, highlight on option 1, user presses
+// ↑ (wraps to Cancel) then ↑ again (to the last option). The window must jump to
+// the bottom so the last option is visible — the arrow-key reachability the
+// viewport change restores.
+func TestMenuLayout_WrapJumpFromTopToBottom(t *testing.T) {
+	const numOptions, height = 20, 10
+	// Start: highlight on option 1, window at top.
+	top := 0
+	top, _, _, _, _ = menuLayout(numOptions, 1, top, height)
+	if top != 0 {
+		t.Fatalf("initial window should be at top, got top=%d", top)
+	}
+	// ↑ wraps to Cancel (highlight 0) — window unchanged (Cancel is chrome).
+	top, _, _, _, _ = menuLayout(numOptions, 0, top, height)
+	if top != 0 {
+		t.Fatalf("Cancel highlight should not move the window, got top=%d", top)
+	}
+	// ↑ again wraps to the last option (20) — window must jump to the bottom.
+	top, first, count, above, below := menuLayout(numOptions, numOptions, top, height)
+	if below != 0 {
+		t.Errorf("with last option highlighted, ↓ indicator should be gone; moreBelow=%d", below)
+	}
+	if above == 0 {
+		t.Errorf("with the window jumped to the bottom, ↑ indicator should show; moreAbove=%d", above)
+	}
+	lastIdx := numOptions - 1
+	if lastIdx < first || lastIdx >= first+count {
+		t.Errorf("last option index %d not visible after wrap jump: window [%d,%d)", lastIdx, first, first+count)
+	}
+	if top != lastIdx-count+1 {
+		t.Errorf("window not anchored to bottom: top=%d, expected %d", top, lastIdx-count+1)
+	}
+}
+
+// =============================================================================
+// terminalHeight — GetSize-failure fallback (24-row default)
+// =============================================================================
+
+// TestTerminalHeightFallback asserts the intake's 24-row fallback contract:
+// when the height source fails, windowing must use defaultTerminalHeight rather
+// than degrading to an unbounded (unwindowed) render. The production
+// terminalHeight() calls term.GetSize on stdout, which errors here because the
+// test's stdout is not a TTY — exercising the real fallback branch.
+func TestTerminalHeightFallback(t *testing.T) {
+	// Under `go test`, stdout is a pipe (not a TTY), so term.GetSize errors and
+	// terminalHeight() must return the classic 24-row default. Only assert the
+	// fallback when GetSize actually failed — guards the rare case of running
+	// the test attached to a real terminal, where GetSize would succeed.
+	_, _, err := term.GetSize(int(os.Stdout.Fd()))
+	got := terminalHeight()
+	if err != nil {
+		if got != defaultTerminalHeight {
+			t.Errorf("terminalHeight() on GetSize failure = %d; want %d", got, defaultTerminalHeight)
+		}
+	} else if got < 1 {
+		t.Errorf("terminalHeight() on GetSize success = %d; want a positive height", got)
+	}
+
+	// And the layout consuming a 24-row height stays bounded for a long list.
+	_, _, count, above, below := menuLayout(100, 1, 0, defaultTerminalHeight)
+	rendered := 1 + count + 1 // prompt + visible options + Cancel
+	if above > 0 {
+		rendered++
+	}
+	if below > 0 {
+		rendered++
+	}
+	if rendered > defaultTerminalHeight {
+		t.Errorf("layout at 24-row fallback rendered %d rows, exceeds %d", rendered, defaultTerminalHeight)
+	}
+}
+
+// =============================================================================
+// renderRows / paintMenu — windowed row slicing + overflow indicators
+// =============================================================================
+
+// TestRenderRows_WindowedSlicing verifies that a long option list rendered in a
+// short terminal shows only the windowed options plus ↑/↓ indicator rows with
+// the correct hidden counts, and that the row count stays within the height.
+func TestRenderRows_WindowedSlicing(t *testing.T) {
+	withDisabledColors(t)
+
+	options := []string{"one", "two", "three", "four", "five", "six", "seven", "eight"}
+	const height = 6 // budget height-menuOverheadRows-1 = 3; 8 options → windowed
+
+	// Highlight in the middle so both indicators can appear. top=2 keeps the
+	// window scrolled off both edges.
+	st := menuState{highlight: 4, numOptions: len(options), defaultIdx: -1, top: 2}
+
+	var buf bytes.Buffer
+	rows := renderRows(&buf, "Pick:", options, st, "", height)
+	out := buf.String()
+
+	if rows > height {
+		t.Errorf("renderRows returned %d rows, exceeds height %d", rows, height)
+	}
+
+	// Confirm the computed layout so the string assertions below are grounded.
+	_, first, count, above, below := menuLayout(len(options), st.highlight, st.top, height)
+	if above == 0 || below == 0 {
+		t.Fatalf("test setup expected both indicators; got above=%d below=%d", above, below)
+	}
+
+	// Indicator rows present with correct counts.
+	wantUp := fmt.Sprintf("%s %d more", indicatorUp, above)
+	wantDown := fmt.Sprintf("%s %d more", indicatorDown, below)
+	if !strings.Contains(out, wantUp) {
+		t.Errorf("output missing up indicator %q:\n%s", wantUp, out)
+	}
+	if !strings.Contains(out, wantDown) {
+		t.Errorf("output missing down indicator %q:\n%s", wantDown, out)
+	}
+
+	// Visible options appear by label; hidden ones do not. Labels are unique
+	// and never overlap the indicator text, so a plain substring check is a
+	// reliable visibility probe even for the highlighted row (whose number is
+	// wrapped in reverse-video SGR codes that withDisabledColors does not
+	// strip — only the color constants are zeroed, not the highlight visuals).
+	for i := 0; i < len(options); i++ {
+		visible := i >= first && i < first+count
+		if visible && !strings.Contains(out, options[i]) {
+			t.Errorf("expected visible option %q in output:\n%s", options[i], out)
+		}
+		if !visible && strings.Contains(out, options[i]) {
+			t.Errorf("hidden option %q should not appear in output:\n%s", options[i], out)
+		}
+	}
+}
+
+// TestRenderRows_NoIndicatorsAtEdges verifies the window-at-top case shows no ↑
+// indicator and the window-at-bottom case shows no ↓ indicator.
+func TestRenderRows_NoIndicatorsAtEdges(t *testing.T) {
+	withDisabledColors(t)
+
+	options := make([]string, 12)
+	for i := range options {
+		options[i] = fmt.Sprintf("opt%d", i+1)
+	}
+	const height = 7 // budget height-menuOverheadRows-1 = 4
+
+	// Window at top: highlight on option 1.
+	var top bytes.Buffer
+	renderRows(&top, "Pick:", options, menuState{highlight: 1, numOptions: len(options), defaultIdx: -1, top: 0}, "", height)
+	if strings.Contains(top.String(), indicatorUp+" ") {
+		t.Errorf("window-at-top output should NOT contain an ↑ indicator:\n%s", top.String())
+	}
+	if !strings.Contains(top.String(), indicatorDown+" ") {
+		t.Errorf("window-at-top output SHOULD contain a ↓ indicator:\n%s", top.String())
+	}
+
+	// Window at bottom: highlight on the last option.
+	var bottom bytes.Buffer
+	renderRows(&bottom, "Pick:", options, menuState{highlight: len(options), numOptions: len(options), defaultIdx: -1, top: 0}, "", height)
+	if !strings.Contains(bottom.String(), indicatorUp+" ") {
+		t.Errorf("window-at-bottom output SHOULD contain an ↑ indicator:\n%s", bottom.String())
+	}
+	if strings.Contains(bottom.String(), indicatorDown+" ") {
+		t.Errorf("window-at-bottom output should NOT contain a ↓ indicator:\n%s", bottom.String())
+	}
+}
+
+// TestRenderRows_SmallMenuByteIdenticalToUnwindowed asserts the intake's
+// "menus that fit render byte-identically to today" promise: a small menu in a
+// tall terminal renders exactly the same bytes whether or not windowing exists
+// (no indicators, all options present). We compare the windowed renderer's
+// output at a generous height against a hand-built expected block matching the
+// pre-change layout.
+func TestRenderRows_SmallMenuByteIdenticalToUnwindowed(t *testing.T) {
+	withDisabledColors(t)
+
+	options := []string{"cursor", "code", "open_here"}
+	st := menuState{highlight: 2, numOptions: 3, defaultIdx: 1, top: 0}
+
+	var buf bytes.Buffer
+	rows := renderRows(&buf, "Open in:", options, st, "", 24) // tall → fits
+
+	// Expected block: exactly the pre-change layout — prompt, 3 option rows
+	// (row 2 highlighted, row 1 the default), Cancel. No indicator rows.
+	var want bytes.Buffer
+	fmt.Fprint(&want, "Open in:\r\n")
+	writeOptionRow(&want, 1, "cursor", true, false)
+	writeOptionRow(&want, 2, "code", false, true)
+	writeOptionRow(&want, 3, "open_here", false, false)
+	writeCancelRow(&want, false, false)
+
+	if buf.String() != want.String() {
+		t.Errorf("small menu not byte-identical to unwindowed layout.\n--- got ---\n%q\n--- want ---\n%q", buf.String(), want.String())
+	}
+	if rows != len(options)+2 {
+		t.Errorf("small menu rendered %d rows; want %d (prompt + %d options + Cancel)", rows, len(options)+2, len(options))
 	}
 }
 
