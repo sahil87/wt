@@ -11,14 +11,24 @@ The init script value is resolved by `worktree.InitScriptPath()`:
    its value is used verbatim.
 2. Otherwise, the default value `"fab sync"` is used.
 
+Alongside the value, `InitScriptPath` reports its **provenance** — whether the
+value is the built-in default or an explicit override:
+
 ```go
-func InitScriptPath() string {
+func InitScriptPath() (script string, isDefault bool) {
     if v := os.Getenv("WORKTREE_INIT_SCRIPT"); v != "" {
-        return v
+        return v, false
     }
-    return "fab sync"
+    return "fab sync", true
 }
 ```
+
+`isDefault` is true **only** when `WORKTREE_INIT_SCRIPT` is unset/empty. It is
+**provenance, not string equality**: an explicit `WORKTREE_INIT_SCRIPT="fab sync"`
+returns `("fab sync", false)` even though the string matches the default. The
+run-time graceful-skip classification (see **Graceful skip behavior** case 3)
+keys on this flag, so an explicitly configured script always fails hard while the
+built-in default may skip gracefully in a non-fab-managed repo.
 
 The default exists so that users with `fab-kit` installed get a working init
 flow out of the box. Users who do not run fab-kit override the env var
@@ -70,7 +80,10 @@ separator helper (`PhaseSeparator`) lives in `internal/worktree/errors.go`.
 
 ## Graceful skip behavior
 
-The init step is non-blocking when the script cannot be located. Two cases:
+The init step is non-blocking when the script cannot be located, or when the
+built-in default does not apply. Cases 1–2 are **resolve-time** (the script
+never runs); case 3 is **run-time** (the default script runs and reports it
+does not apply).
 
 1. **Command not on PATH** (e.g., `fab` not installed):
    ```
@@ -89,9 +102,41 @@ The init step is non-blocking when the script cannot be located. Two cases:
    ```
    Again, exit 0.
 
-This means a freshly-cloned repo without an init script (and without
-fab-kit installed) silently no-ops on `wt init`, which is the desired
-behavior for the "I just want to use the worktree" path.
+3. **Default init not applicable** (repo is not fab-managed):
+   ```
+   Warning: not a fab-managed repo — skipping init (default "fab sync" does not apply)
+   Set WORKTREE_INIT_SCRIPT to a custom script, or run 'fab init' to make this repo fab-managed.
+   ```
+   When the **built-in default** `fab sync` runs and exits `ExitNotManaged = 3`
+   (fab-kit ≥ PR #471 checks a config walk-up before any git resolution), `wt`
+   treats it as "the default does not apply" rather than an init failure. This is
+   a **run-time classification** — resolution succeeded and the script genuinely
+   ran; only after `cmd.Run()` returns is the `(isDefault, exit code 3)` pair
+   inspected (via `errors.As` → `*exec.ExitError`) by the shared helper
+   `DefaultNotApplicable`. On the skip: the warning above is printed to stderr,
+   `wt init` exits 0, and `wt create` proceeds to its Open phase exactly as on
+   init success (no kept-worktree banner, no open-anyway prompt, no
+   `Worktree init complete.` line, exit 0).
+
+   Two constraints scope this narrowly:
+   - **Provenance-gated**: only the built-in default skips. An explicit
+     `WORKTREE_INIT_SCRIPT="fab sync"` (`isDefault=false`) still hard-fails on
+     exit 3 — the user opted into that script, so the failure is theirs to see
+     (see **Script failure semantics**).
+   - **Exit-3-only, no version detection**: only exit code 3 skips. An older
+     fab-kit predating PR #471 exits 1 in a non-fab repo, which is not 3, so it
+     degrades to today's hard-fail (`ExitInitFailed = 7` + banner). There is no
+     fallback probe — the feature lights up when fab-kit updates.
+
+   Because detection is post-run, the Init phase separator,
+   `Running worktree init...`, and fab's own `ERROR: not in a fab-managed repo…`
+   stderr line all print before the skip warning; the skip warning is the last
+   word and the exit code is 0.
+
+Cases 1–2 mean a freshly-cloned repo without an init script (and without
+fab-kit installed) silently no-ops on `wt init`; case 3 extends that "I just
+want to use the worktree" ergonomics to a repo where fab-kit **is** installed
+but the repo itself is not fab-managed.
 
 ## Resolution contract
 
@@ -122,6 +167,17 @@ exits with `ExitInitFailed = 7` — a typed exit code distinct from
 `ExitGeneralError` (1) so operators (shell wrappers, fab-kit, `hop`) can
 programmatically detect "worktree exists, init didn't complete" and offer
 a retry-init affordance.
+
+**Exit-3 carve-out for the built-in default.** The one exception is the
+default-not-applicable skip (see **Graceful skip behavior** case 3): when the
+**built-in default** `fab sync` (`isDefault=true`) exits `ExitNotManaged = 3`,
+`wt` does **not** exit 7 — it prints the skip warning and exits 0, treating the
+init step as a no-op. This carve-out is narrow: it applies **only** to the
+built-in default and **only** to exit code 3. An explicit `WORKTREE_INIT_SCRIPT`
+value (including the literal `"fab sync"`) keeps `ExitInitFailed = 7` on **every**
+non-zero exit, and the default itself keeps `ExitInitFailed = 7` on every non-zero
+exit **other than 3**. All the failure behavior described below (kept worktree,
+banner, open-anyway prompt) applies to those hard-failure paths, unchanged.
 
 For `wt create`, init failure does **not** roll back the just-created
 worktree. The git operations all succeeded; only the user-supplied script

@@ -185,8 +185,8 @@ or creates a new branch.`,
 					// Run init script on reuse — ensures skills are current even in existing worktrees.
 					// Non-fatal: reuse proceeds even if init fails (existing worktree may be functional).
 					if worktreeInit == "true" {
-						initScript := wt.InitScriptPath()
-						if err := wt.RunWorktreeSetup(existingWtPath, initScript, ctx.RepoRoot); err != nil {
+						initScript, isDefault := wt.InitScriptPath()
+						if err := wt.RunWorktreeSetup(existingWtPath, initScript, isDefault, ctx.RepoRoot); err != nil {
 							wt.Warn("worktree init failed for reused worktree %q: %v", finalName, err)
 						}
 					}
@@ -276,7 +276,7 @@ or creates a new branch.`,
 			// open must NOT downgrade the exit to 0.
 			var initFailed bool
 			if runInit {
-				initScript := wt.InitScriptPath()
+				initScript, isDefault := wt.InitScriptPath()
 
 				// Terminal-foreground bookkeeping. wt runs the init child in
 				// its own process group (Setpgid: true) while sharing wt's
@@ -345,7 +345,7 @@ or creates a new branch.`,
 				}()
 				captureInit := func(c *exec.Cmd) { initCmdPtr.Store(c) }
 
-				initErr := wt.RunWorktreeSetupWithObserver(wtPath, initScript, ctx.RepoRoot, captureInit)
+				initErr := wt.RunWorktreeSetupWithObserver(wtPath, initScript, isDefault, ctx.RepoRoot, captureInit)
 
 				// SIGINT Option B teardown — tear down the init-child signal
 				// handler before any further TTY work (banner, open-anyway

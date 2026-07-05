@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,6 +31,62 @@ const (
 	hintCommandNotOnPath = "Install fab-kit or set WORKTREE_INIT_SCRIPT to a custom script."
 	hintFileNotFound     = "Create the file or set WORKTREE_INIT_SCRIPT to a custom script."
 )
+
+// exitNotManaged is fab-kit's ExitNotManaged code: `fab sync` exits 3 (via a
+// config walk-up before any git resolution, symmetric with
+// `fab-kit migrations-status`) when it is run outside a fab-managed repo
+// (fab-kit >= PR #471). wt embeds the numeric value rather than importing from
+// fab-kit — the two are separate repos with no import relationship (see
+// docs/memory/wt-cli and the Single-Binary constitution principle). Older
+// fab-kit predating PR #471 exits 1, which is not 3, so it degrades to today's
+// hard-fail with no version detection.
+const exitNotManaged = 3
+
+// Skip-warning copy for the default-not-applicable case. File-scoped so the two
+// run sites (crud.go's RunWorktreeSetupWithObserver and cmd/wt/init.go) share
+// the canonical phrasing without duplicating literals — the same anti-drift
+// discipline InitNotFound.RenderWarning applies to the not-found copy.
+const (
+	skipDefaultLine1 = `Warning: not a fab-managed repo — skipping init (default "fab sync" does not apply)`
+	skipDefaultLine2 = "Set WORKTREE_INIT_SCRIPT to a custom script, or run 'fab init' to make this repo fab-managed."
+)
+
+// DefaultNotApplicable reports whether an init-script non-zero exit is the
+// "built-in default does not apply" skip case rather than a real init failure.
+//
+// It returns true ONLY when BOTH hold:
+//   - isDefault is true (the init script is the built-in "fab sync" default,
+//     not an explicit WORKTREE_INIT_SCRIPT — provenance, not string equality),
+//     and
+//   - err unwraps (via errors.As) to an *exec.ExitError whose exit code is
+//     exactly exitNotManaged (3, fab-kit's ExitNotManaged for a non-fab repo).
+//
+// It returns false for a nil err, any exit code other than 3, an err that does
+// not unwrap to *exec.ExitError, and any case where isDefault is false
+// (regardless of exit code — an explicitly configured script always fails
+// hard). Callers that get true render RenderDefaultSkipWarning and treat the
+// init step as a no-op; all other outcomes stay hard failures exactly as today.
+//
+// The decision needs the post-run exit code, so it is a run-time
+// classification: ResolveInitInvocation and InitNotFound are untouched.
+func DefaultNotApplicable(err error, isDefault bool) bool {
+	if !isDefault || err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	return exitErr.ExitCode() == exitNotManaged
+}
+
+// RenderDefaultSkipWarning returns the canonical two-line warning printed when
+// the built-in default init is skipped because the repo is not fab-managed
+// (see DefaultNotApplicable). It is the single renderer for this copy so both
+// run sites stay byte-identical, mirroring InitNotFound.RenderWarning.
+func RenderDefaultSkipWarning() string {
+	return skipDefaultLine1 + "\n" + skipDefaultLine2
+}
 
 // InitNotFound is the structured "not found" outcome returned by
 // ResolveInitInvocation. Callers render a verbose warning via RenderWarning

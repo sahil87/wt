@@ -1,0 +1,14 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-07-05T15:43:19Z"}
+{"args":"wt should continue to work without errors in non-fab-kit-managed repos: gracefully skip the default 'fab sync' init when the repo is not fab-managed (marker probe mirroring fab ResolveConfig walk-up), instead of exit 7 + failure banner","cmd":"fab-new","event":"command","ts":"2026-07-05T15:43:19Z"}
+{"delta":"+4.7","event":"confidence","score":4.7,"trigger":"calc-score","ts":"2026-07-05T15:44:26Z"}
+{"delta":"+0.0","event":"confidence","score":4.7,"trigger":"calc-score","ts":"2026-07-05T18:13:01Z"}
+{"cmd":"fab-clarify","event":"command","ts":"2026-07-05T18:13:01Z"}
+{"cmd":"fab-fff","event":"command","ts":"2026-07-05T18:36:42Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-07-05T18:36:50Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-07-05T18:44:41Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-07-05T18:46:15Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-07-05T19:03:43Z"}
+{"event":"review","result":"passed","ts":"2026-07-05T19:03:43Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-07-05T19:07:25Z"}
+{"action":"enter","driver":"git-pr","event":"stage-transition","stage":"review-pr","ts":"2026-07-05T19:08:48Z"}
+{"event":"review","result":"passed","ts":"2026-07-05T19:13:36Z"}

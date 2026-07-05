@@ -3,9 +3,11 @@ package worktree
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -117,6 +119,80 @@ func TestResolveInitInvocation_FileMissing(t *testing.T) {
 	expectedAbs := filepath.Join(repoRoot, rel)
 	if notFound.Path != expectedAbs {
 		t.Errorf("expected Path=%q, got %q", expectedAbs, notFound.Path)
+	}
+}
+
+// exitErrorWithCode runs a trivial command that exits with the given code and
+// returns the resulting error, which unwraps to an *exec.ExitError carrying
+// that code. This produces a real exit error (as cmd.Run does at the run sites)
+// rather than a hand-forged one, so DefaultNotApplicable is exercised through
+// the same errors.As path it uses in production.
+func exitErrorWithCode(t *testing.T, code int) error {
+	t.Helper()
+	err := exec.Command("bash", "-c", "exit "+strconv.Itoa(code)).Run()
+	if err == nil {
+		t.Fatalf("expected non-nil error for exit %d", code)
+	}
+	// Confirm the fixture actually carries the code we asked for.
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected *exec.ExitError, got %T", err)
+	}
+	if exitErr.ExitCode() != code {
+		t.Fatalf("fixture exit code = %d, want %d", exitErr.ExitCode(), code)
+	}
+	return err
+}
+
+func TestDefaultNotApplicable(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("`bash` not on PATH; skipping")
+	}
+	exit3 := exitErrorWithCode(t, 3)
+	exit1 := exitErrorWithCode(t, 1)
+
+	tests := []struct {
+		name      string
+		err       error
+		isDefault bool
+		want      bool
+	}{
+		{"default + exit 3 → skip", exit3, true, true},
+		{"explicit + exit 3 → no skip (provenance)", exit3, false, false},
+		{"default + exit 1 → no skip (only 3)", exit1, true, false},
+		{"default + nil error → no skip", nil, true, false},
+		{"default + non-ExitError → no skip", errors.New("boom"), true, false},
+		{"explicit + exit 1 → no skip", exit1, false, false},
+		{"explicit + nil error → no skip", nil, false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DefaultNotApplicable(tc.err, tc.isDefault); got != tc.want {
+				t.Errorf("DefaultNotApplicable(%v, %v) = %v, want %v",
+					tc.err, tc.isDefault, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRenderDefaultSkipWarning(t *testing.T) {
+	out := RenderDefaultSkipWarning()
+	if out == "" {
+		t.Fatal("expected non-empty warning")
+	}
+	for _, want := range []string{
+		"not a fab-managed repo",
+		"skipping init",
+		"WORKTREE_INIT_SCRIPT",
+		"fab init",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected skip warning to contain %q, got:\n%s", want, out)
+		}
+	}
+	// Two lines: the skip statement and the escape-hatch hint.
+	if got := strings.Count(out, "\n"); got != 1 {
+		t.Errorf("expected exactly one newline (two lines), got %d:\n%s", got, out)
 	}
 }
 
