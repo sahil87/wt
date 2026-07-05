@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -263,6 +264,127 @@ func TestIntegration_CreateInitFailure_KeepsWorktreeAndExits7(t *testing.T) {
 
 	// 8. The failing init script's stderr marker streamed through.
 	assertContains(t, r.Stderr, "INIT_FAIL_MARKER")
+}
+
+// stubFabEnv writes a stub `fab` executable that exits with exitCode into a
+// fresh t.TempDir(), and returns env overrides that (1) prepend that dir to
+// PATH so the stub shadows any real fab and (2) clear WORKTREE_INIT_SCRIPT so
+// the default "fab sync" init runs. The stub emits a fab-like error line on
+// stderr so the streamed-through-output behavior is exercised. All state lives
+// under t.TempDir() with no host side-effects (per code-review.md).
+func stubFabEnv(t *testing.T, exitCode int) []string {
+	t.Helper()
+	binDir := t.TempDir()
+	stub := filepath.Join(binDir, "fab")
+	// The stub echoes a fab-like message and exits with the requested code,
+	// mirroring `fab sync`'s "not in a fab-managed repo" behavior (exit 3) or an
+	// older fab-kit's generic failure (exit 1).
+	content := "#!/usr/bin/env bash\n" +
+		"echo 'ERROR: not in a fab-managed repo (stub)' >&2\n" +
+		"exit " + strconv.Itoa(exitCode) + "\n"
+	if err := os.WriteFile(stub, []byte(content), 0o755); err != nil {
+		t.Fatalf("WriteFile stub fab: %v", err)
+	}
+	return []string{
+		// Prepend binDir so the stub shadows any real fab on the dev/CI host.
+		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		// Clear the test-default no-init override so InitScriptPath falls through
+		// to the built-in default "fab sync" (isDefault=true).
+		"WORKTREE_INIT_SCRIPT=",
+	}
+}
+
+// TestIntegration_CreateDefaultInitSkip_NonFabRepo_Exit3 verifies the graceful
+// default-init skip: when the built-in default `fab sync` exits ExitNotManaged
+// (3) in a non-fab-managed repo, `wt create` treats it as an init no-op —
+// worktree kept, skip warning on stderr, NO failure banner, exit 0.
+func TestIntegration_CreateDefaultInitSkip_NonFabRepo_Exit3(t *testing.T) {
+	repo := createTestRepo(t)
+	env := stubFabEnv(t, 3)
+
+	r := runWt(t, repo, env, "create", "--non-interactive",
+		"--worktree-name", "skip-default",
+		"--worktree-open", "skip")
+
+	// Exit 0 — the default does not apply, so it is not a failure.
+	assertExitCode(t, r, 0)
+
+	// Worktree was created and registered.
+	assertWorktreeExists(t, repo, "skip-default")
+
+	// The canonical skip warning is on stderr.
+	assertContains(t, r.Stderr, "not a fab-managed repo")
+	assertContains(t, r.Stderr, "WORKTREE_INIT_SCRIPT")
+
+	// No init-failure banner / hard-failure artifacts.
+	assertNotContains(t, r.Stderr, "Worktree init complete.")
+	assertNotContains(t, r.Stderr, "wt delete")
+	assertNotContains(t, r.Stderr, "init script exited with status")
+
+	// stdout carries the final worktree path (unaffected by the skip).
+	if strings.TrimSpace(r.Stdout) != worktreePath(repo, "skip-default") {
+		t.Errorf("expected stdout final path %q, got %q",
+			worktreePath(repo, "skip-default"), r.Stdout)
+	}
+}
+
+// TestIntegration_InitDefaultSkip_NonFabRepo_Exit3 verifies `wt init` exits 0
+// (skip warning, no ExitInitFailed) when the default `fab sync` exits 3.
+func TestIntegration_InitDefaultSkip_NonFabRepo_Exit3(t *testing.T) {
+	repo := createTestRepo(t)
+	env := stubFabEnv(t, 3)
+
+	r := runWt(t, repo, env, "init")
+
+	assertExitCode(t, r, 0)
+	assertContains(t, r.Stderr, "not a fab-managed repo")
+	assertNotContains(t, r.Stderr, "Worktree init complete.")
+	assertNotContains(t, r.Stderr, "Init script failed")
+}
+
+// TestIntegration_CreateDefaultInit_OldFabKit_Exit1_HardFails verifies the
+// no-regression posture: an older fab-kit exits 1 (not 3), so the default init
+// hard-fails exactly as today — exit 7 with the failure banner.
+func TestIntegration_CreateDefaultInit_OldFabKit_Exit1_HardFails(t *testing.T) {
+	repo := createTestRepo(t)
+	env := stubFabEnv(t, 1)
+
+	r := runWt(t, repo, env, "create", "--non-interactive",
+		"--worktree-name", "oldfab",
+		"--worktree-open", "skip")
+
+	// Exit 7 (ExitInitFailed), unchanged from today.
+	assertExitCode(t, r, 7)
+
+	// Worktree is kept, banner is shown.
+	assertWorktreeExists(t, repo, "oldfab")
+	assertContains(t, r.Stderr, worktreePath(repo, "oldfab"))
+	assertContains(t, r.Stderr, "wt delete")
+
+	// The graceful-skip path must NOT engage for a non-3 exit.
+	assertNotContains(t, r.Stderr, "not a fab-managed repo — skipping init")
+}
+
+// TestIntegration_CreateExplicitFabSync_Exit3_HardFails verifies the provenance
+// rule: an EXPLICIT WORKTREE_INIT_SCRIPT="fab sync" still hard-fails on exit 3
+// (the user opted into the script), even though the string matches the default.
+func TestIntegration_CreateExplicitFabSync_Exit3_HardFails(t *testing.T) {
+	repo := createTestRepo(t)
+	// Start from the exit-3 stub, then override WORKTREE_INIT_SCRIPT to an
+	// explicit "fab sync" (last-wins) — the stub still shadows fab on PATH.
+	env := append(stubFabEnv(t, 3), "WORKTREE_INIT_SCRIPT=fab sync")
+
+	r := runWt(t, repo, env, "create", "--non-interactive",
+		"--worktree-name", "explicit-fabsync",
+		"--worktree-open", "skip")
+
+	// Exit 7 — explicit script provenance means the failure is the user's to see.
+	assertExitCode(t, r, 7)
+	assertWorktreeExists(t, repo, "explicit-fabsync")
+	assertContains(t, r.Stderr, "wt delete")
+
+	// The graceful-skip path must NOT engage for an explicitly-configured script.
+	assertNotContains(t, r.Stderr, "not a fab-managed repo — skipping init")
 }
 
 // TestIntegration_Go_FromSiblingWorktree exercises the core gap this change

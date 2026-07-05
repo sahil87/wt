@@ -11,12 +11,13 @@ Run `wt <command> --help` for the full inline reference.
 | Constant | Value | Meaning |
 |----------|-------|---------|
 | `ExitSuccess` | 0 | Command completed successfully |
-| `ExitGeneralError` | 1 | Non-specific failure (cannot resolve repo context, init failed, no default app, etc.) |
+| `ExitGeneralError` | 1 | Non-specific failure (cannot resolve repo context, no default app, unresolved target, etc.) |
 | `ExitInvalidArgs` | 2 | Caller supplied incompatible flags or invalid input (bad branch name, bad `--base` ref, mutually exclusive flags) |
 | `ExitGitError` | 3 | A `git` invocation failed or the working dir is not a git repository |
 | `ExitRetryExhausted` | 4 | Random-name generator could not find a non-colliding name after retries |
 | `ExitByobuTabError` | 5 | Failed to open the worktree in a byobu tab |
 | `ExitTmuxWindowError` | 6 | Failed to open the worktree in a tmux window |
+| `ExitInitFailed` | 7 | The init script ran but exited non-zero (`wt create` keeps the worktree; `wt init` too). Distinct from `ExitGeneralError` so operators can detect "worktree exists, init didn't complete". See [`init-protocol.md`](init-protocol.md). |
 
 Subcommands map domain failures to these codes via `wt.ExitWithError`. SIGINT
 during `wt create` exits 130 after rolling back partial state (standard Unix
@@ -47,7 +48,12 @@ when the chosen app was `open_here` because the wrapper consumed it via
 
 Exit codes: `ExitInvalidArgs` for flag misuse or invalid `--base`/branch name;
 `ExitGitError` for `git worktree add` failures; `ExitRetryExhausted` for name
-generation; `ExitGeneralError` for init script failure.
+generation; `ExitInitFailed` (7) when the init script runs but exits non-zero
+(the worktree is kept; the code holds on every init-failure path, including a
+successful interactive open-anyway open). Two init outcomes are **not** failures
+and exit 0: a graceful skip when the init command/file is missing, and — for the
+built-in default `fab sync` only — the default-not-applicable skip when the repo
+is not fab-managed. See [`init-protocol.md`](init-protocol.md).
 
 ## `wt list`
 
@@ -174,12 +180,17 @@ lookup contract is documented in [`init-protocol.md`](init-protocol.md).
 
 No flags. No positional args.
 
-Exit codes: `ExitGitError` when not in a repo; `ExitGeneralError` (1) when the
-init script runs but exits non-zero (the script's exit code is **not**
-preserved — `RunE` returns an error, which `main.go` maps to
-`ExitGeneralError`). Missing init command/file results in a graceful skip with
-guidance — exit 0. See [`init-protocol.md`](init-protocol.md) for full
-semantics.
+Exit codes: `ExitGitError` when not in a repo; `ExitInitFailed` (7) when the
+init script runs but exits non-zero (the script's own exit code is **not**
+preserved — `runInitScript` maps every hard init failure to the typed
+`ExitInitFailed` via an explicit `os.Exit(wt.ExitInitFailed)`, matching
+`wt create`, rather than returning the error to `RunE` — which would map to
+`ExitGeneralError`). Three init outcomes are non-failures and exit 0 with
+guidance: (1) the init command is not on PATH, (2) the init file path does not
+exist, and (3) — for the built-in default `fab sync` only — the repo is not
+fab-managed and `fab sync` exits `ExitNotManaged = 3` (run-time skip;
+provenance-gated, so an explicit `WORKTREE_INIT_SCRIPT` still exits 7). See
+[`init-protocol.md`](init-protocol.md) for full semantics.
 
 ## `wt update`
 

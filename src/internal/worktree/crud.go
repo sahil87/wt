@@ -123,16 +123,21 @@ func CreateExploratoryWorktree(name string, ctx *RepoContext, rb *Rollback, star
 // runs it in the worktree directory.
 //   - On structured not-found, prints the unified warning to stderr and
 //     returns nil (init step is treated as a no-op).
-//   - Returns the exec error verbatim on init-script non-zero exit so callers
-//     can extract *exec.ExitError via errors.As.
+//   - On the default-not-applicable skip (isDefault AND exit 3, per
+//     DefaultNotApplicable), prints the skip warning to stderr and returns nil.
+//   - Returns the exec error verbatim on any other init-script non-zero exit so
+//     callers can extract *exec.ExitError via errors.As.
+//
+// isDefault carries InitScriptPath's provenance (true only for the built-in
+// "fab sync" default) so an explicitly configured script always fails hard.
 //
 // Callers that want to confirm with the user before running MUST call
 // ConfirmYesNo themselves first — confirmation is no longer part of the
 // runner so wt create's SIGINT-during-init handler can be installed AFTER
 // the prompt completes (installing it before would consume Ctrl-C during
 // the prompt with no init child to target).
-func RunWorktreeSetup(wtPath, initScript, repoRoot string) error {
-	return RunWorktreeSetupWithObserver(wtPath, initScript, repoRoot, nil)
+func RunWorktreeSetup(wtPath, initScript string, isDefault bool, repoRoot string) error {
+	return RunWorktreeSetupWithObserver(wtPath, initScript, isDefault, repoRoot, nil)
 }
 
 // RunWorktreeSetupWithObserver is like RunWorktreeSetup but invokes observer
@@ -140,7 +145,7 @@ func RunWorktreeSetup(wtPath, initScript, repoRoot string) error {
 // lets wt create's SIGINT-during-init handler capture a reference to the
 // in-flight init child without growing the public API surface. Pass nil to
 // behave identically to RunWorktreeSetup.
-func RunWorktreeSetupWithObserver(wtPath, initScript, repoRoot string, observer func(cmd *exec.Cmd)) error {
+func RunWorktreeSetupWithObserver(wtPath, initScript string, isDefault bool, repoRoot string, observer func(cmd *exec.Cmd)) error {
 	cmd, notFound, err := ResolveInitInvocation(initScript, repoRoot)
 	if err != nil {
 		return err
@@ -164,6 +169,16 @@ func RunWorktreeSetupWithObserver(wtPath, initScript, repoRoot string, observer 
 		observer(cmd)
 	}
 	if err := cmd.Run(); err != nil {
+		// Default-not-applicable skip: the built-in "fab sync" default ran in a
+		// repo that is not fab-managed and exited ExitNotManaged (3). Treat this
+		// as an init no-op — warn on stderr and return nil so wt create proceeds
+		// to the Open phase exactly as on success (no banner, no prompt, exit 0).
+		// An explicitly configured script (isDefault=false) never reaches this
+		// branch; it falls through to the hard-failure return below.
+		if DefaultNotApplicable(err, isDefault) {
+			fmt.Fprintln(os.Stderr, RenderDefaultSkipWarning())
+			return nil
+		}
 		return fmt.Errorf("init script failed: %w", err)
 	}
 	fmt.Fprintln(os.Stderr, "Worktree init complete.")

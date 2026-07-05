@@ -68,18 +68,39 @@ func TestDeriveWorktreeName(t *testing.T) {
 }
 
 func TestInitScriptPath_Default(t *testing.T) {
-	// When WORKTREE_INIT_SCRIPT is not set, should return default
+	// When WORKTREE_INIT_SCRIPT is unset/empty, returns the built-in default
+	// with isDefault=true (provenance).
 	t.Setenv("WORKTREE_INIT_SCRIPT", "")
-	got := InitScriptPath()
+	got, isDefault := InitScriptPath()
 	if got != "fab sync" {
-		t.Errorf("InitScriptPath() = %q, want %q", got, "fab sync")
+		t.Errorf("InitScriptPath() script = %q, want %q", got, "fab sync")
+	}
+	if !isDefault {
+		t.Errorf("InitScriptPath() isDefault = false, want true (unset env)")
 	}
 }
 
 func TestInitScriptPath_Custom(t *testing.T) {
 	t.Setenv("WORKTREE_INIT_SCRIPT", "custom/init.sh")
-	got := InitScriptPath()
+	got, isDefault := InitScriptPath()
 	if got != "custom/init.sh" {
-		t.Errorf("InitScriptPath() = %q, want %q", got, "custom/init.sh")
+		t.Errorf("InitScriptPath() script = %q, want %q", got, "custom/init.sh")
+	}
+	if isDefault {
+		t.Errorf("InitScriptPath() isDefault = true, want false (explicit env)")
+	}
+}
+
+// TestInitScriptPath_ExplicitFabSync verifies provenance keys on env-var
+// presence, NOT string equality: an explicit WORKTREE_INIT_SCRIPT="fab sync"
+// yields isDefault=false even though the value matches the built-in default.
+func TestInitScriptPath_ExplicitFabSync(t *testing.T) {
+	t.Setenv("WORKTREE_INIT_SCRIPT", "fab sync")
+	got, isDefault := InitScriptPath()
+	if got != "fab sync" {
+		t.Errorf("InitScriptPath() script = %q, want %q", got, "fab sync")
+	}
+	if isDefault {
+		t.Errorf("InitScriptPath() isDefault = true, want false (explicit \"fab sync\" is not the built-in default)")
 	}
 }

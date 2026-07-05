@@ -172,10 +172,19 @@ func CurrentBranch() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// InitScriptPath returns the path to the init script, respecting WORKTREE_INIT_SCRIPT env var.
-func InitScriptPath() string {
+// InitScriptPath returns the init-script value plus its provenance, respecting
+// the WORKTREE_INIT_SCRIPT env var.
+//
+// isDefault is true ONLY when WORKTREE_INIT_SCRIPT is unset/empty and the
+// built-in "fab sync" default is used. It is provenance, NOT string equality:
+// an explicit WORKTREE_INIT_SCRIPT="fab sync" returns ("fab sync", false),
+// because the user opted into that script. The run-time skip classification
+// (see DefaultNotApplicable in init.go) keys on this flag so an explicitly
+// configured script always fails hard while the built-in default may skip
+// gracefully in a non-fab-managed repo.
+func InitScriptPath() (script string, isDefault bool) {
 	if v := os.Getenv("WORKTREE_INIT_SCRIPT"); v != "" {
-		return v
+		return v, false
 	}
-	return "fab sync"
+	return "fab sync", true
 }

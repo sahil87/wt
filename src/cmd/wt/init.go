@@ -60,7 +60,7 @@ func runInitScript() error {
 	}
 	currentRoot := strings.TrimSpace(string(topOut))
 
-	initScriptRel := wt.InitScriptPath()
+	initScriptRel, isDefault := wt.InitScriptPath()
 
 	// Single resolution contract — same helper that wt create's init step uses.
 	cmd, notFound, err := wt.ResolveInitInvocation(initScriptRel, repoRoot)
@@ -113,15 +113,27 @@ func runInitScript() error {
 	}
 
 	if err := cmd.Run(); err != nil {
+		// Reclaim the terminal foreground BEFORE any further stderr write so it
+		// cannot SIGTTOU — this ordering is load-bearing for both the skip
+		// warning and the failure trailer below.
+		if reclaimTTY {
+			reclaimTerminalForeground(ttyFd, wtPgid)
+		}
+		// Default-not-applicable skip: the built-in "fab sync" default ran in a
+		// repo that is not fab-managed and exited ExitNotManaged (3). Treat it as
+		// success — warn on stderr and return nil (exit 0), no ExitInitFailed, no
+		// "Worktree init complete." trailer. An explicitly configured script
+		// (isDefault=false) or any other exit code falls through to the hard
+		// failure below.
+		if wt.DefaultNotApplicable(err, isDefault) {
+			fmt.Fprintln(os.Stderr, wt.RenderDefaultSkipWarning())
+			return nil
+		}
 		// Use the typed ExitInitFailed exit code so operators / shell
 		// wrappers can distinguish "init script failed" from generic
 		// errors — matches the contract `wt create` uses. The actual
 		// init-script output streamed to stderr above; we add a one-line
 		// trailer with the underlying error and exit.
-		if reclaimTTY {
-			// Reclaim before the failure trailer write so it cannot SIGTTOU.
-			reclaimTerminalForeground(ttyFd, wtPgid)
-		}
 		fmt.Fprintf(os.Stderr, "\nInit script failed: %v\n", err)
 		os.Exit(wt.ExitInitFailed)
 	}
