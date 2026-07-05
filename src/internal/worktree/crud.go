@@ -125,8 +125,8 @@ func CreateExploratoryWorktree(name string, ctx *RepoContext, rb *Rollback, star
 //     returns nil (init step is treated as a no-op).
 //   - On the default-not-applicable skip (isDefault AND exit 3, per
 //     DefaultNotApplicable), prints the skip warning to stderr and returns nil.
-//   - Returns the exec error verbatim on any other init-script non-zero exit so
-//     callers can extract *exec.ExitError via errors.As.
+//   - Wraps the exec error (via %w) on any other init-script non-zero exit so
+//     callers can still extract *exec.ExitError via errors.As.
 //
 // isDefault carries InitScriptPath's provenance (true only for the built-in
 // "fab sync" default) so an explicitly configured script always fails hard.
