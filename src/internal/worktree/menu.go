@@ -892,8 +892,11 @@ func runInteractiveMenuCore(w io.Writer, reader *blockingByteReader, prompt stri
 	// rowsRendered tracks how many lines the menu currently occupies on
 	// screen so the next redraw knows how far up to move the cursor. It is the
 	// *windowed* row count (1 prompt + indicators + visible options + 1 Cancel)
-	// and never exceeds the terminal height — this is what keeps the cursor-up
-	// in-place redraw sound for lists taller than the terminal.
+	// and stays within menuLayout's budget — rowsRendered <= height-1 (one
+	// reserved row keeps the `\r\n`-terminated footprint from scrolling the
+	// terminal), the only exception being degenerate heights 1–3 where the
+	// ≥1-option escape hatch necessarily overshoots. This is what keeps the
+	// cursor-up in-place redraw sound for lists taller than the terminal.
 	rowsRendered := paintMenu(w, prompt, options, state, initialHeight)
 
 	for {
@@ -933,8 +936,10 @@ func runInteractiveMenuCore(w io.Writer, reader *blockingByteReader, prompt stri
 // paintMenu writes the (windowed) menu region for the first time and returns
 // the number of lines written (so redraw / finalize know how far to move up).
 // height drives the scrolling viewport; the returned count is the windowed
-// total (prompt + indicators + visible options + Cancel) and never exceeds
-// height, keeping the cursor-up in-place redraw sound for over-tall lists.
+// total (prompt + indicators + visible options + Cancel) and stays within
+// menuLayout's budget of height-1 (one reserved row), except at degenerate
+// heights 1–3 where the ≥1-option escape hatch overshoots. This keeps the
+// cursor-up in-place redraw sound for over-tall lists.
 func paintMenu(w io.Writer, prompt string, options []string, st menuState, height int) int {
 	return renderRows(w, prompt, options, st, "", height)
 }
