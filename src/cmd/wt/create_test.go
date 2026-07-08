@@ -752,3 +752,28 @@ func TestCreate_WorktreeOpenDefault(t *testing.T) {
 	// VSCode-during-test regression class.
 	assertContains(t, r.Stderr, "[wt-test-no-launch]")
 }
+
+// TestCreate_DirtyStateWarningCopy asserts the corrected dirty-state warning
+// string. The checks (HasUncommittedChanges/HasUntrackedFiles) run in the
+// process CWD — any checkout, linked or main — so the copy must describe the
+// "current worktree", not the "main repo". Running interactively (no
+// --non-interactive) with a dirty repo reaches the dirty-state menu; feeding
+// "3\n" (Abort) via the non-TTY fallback menu returns cleanly BEFORE any
+// worktree is created, so the test leaks no side effects to the host.
+func TestCreate_DirtyStateWarningCopy(t *testing.T) {
+	repo := createTestRepo(t)
+
+	// Make the current checkout dirty with an untracked file.
+	if err := os.WriteFile(filepath.Join(repo, "dirty.txt"), []byte("uncommitted\n"), 0644); err != nil {
+		t.Fatalf("WriteFile dirty.txt: %v", err)
+	}
+
+	r := runWtStdin(t, repo, nil, "3\n", "create", "--worktree-name", "dirty-abort-test")
+
+	// The corrected copy is on stderr (human-facing); the stale copy is gone.
+	assertContains(t, r.Stderr, "current worktree has uncommitted changes")
+	assertNotContains(t, r.Stderr, "main repo has uncommitted changes")
+
+	// Abort returns before creating anything — no worktree leaked.
+	assertWorktreeNotExists(t, repo, "dirty-abort-test")
+}

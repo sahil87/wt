@@ -174,3 +174,273 @@ func TestMenuSession_ThreeMenusNoTheft(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// REGRESSION: menu → line-prompt byte theft (the `wt create` name-prompt bug)
+// =============================================================================
+//
+// `wt create` shows the dirty-state menu and then immediately prompts
+// "Worktree name [<suggested>]:". Before the fix the menu built its own
+// blockingByteReader over os.Stdin and the prompt built a FRESH bufio.Reader
+// over the same fd. The menu's pump parked one byte ahead on the shared stream
+// after submit — an orphan — and in cooked mode the kernel delivers a typed
+// line to ONE reader; the orphan (queued first) won and slurped the line into
+// its buffer, so the real prompt hung and the user's name was lost.
+//
+// The fix routes the line prompt through the session's SHARED reader
+// (MenuSession.PromptWithDefault → blockingByteReader.readLine), so there is
+// never a second reader to race — the pump's pending byte is delivered to the
+// prompt instead of being stolen.
+
+// pushString feeds each byte of s onto the shared stream. It blocks once more
+// than the stream's channel buffer is queued, so callers with a feed longer
+// than the buffer must run it concurrently with a consuming reader — use
+// feedAsync for that.
+func pushString(s *sharedStream, str string) {
+	for i := 0; i < len(str); i++ {
+		s.push(str[i])
+	}
+}
+
+// feedAsync pushes str onto the stream from a separate goroutine (so a feed
+// longer than the channel buffer does not block the test goroutine before a
+// reader starts draining), optionally closing the channel afterward to
+// simulate EOF.
+func feedAsync(s *sharedStream, str string, closeEOF bool) {
+	go func() {
+		pushString(s, str)
+		if closeEOF {
+			close(s.bytes)
+		}
+	}()
+}
+
+// TestUnderlyingReadAhead_MenuToLinePromptTheft characterizes WHY the menu →
+// line-prompt bug existed: a blockingByteReader (the menu's) parked on a shared
+// stream reads one byte ahead, so an independent second reader (a fresh
+// prompt's) does NOT receive the user's typed line intact — the menu's orphan
+// steals whatever byte(s) it had already pulled off the stream. This is the
+// exact corruption the shared-reader fix routes around. Analogue of
+// TestUnderlyingReadAhead_DemonstratesTheft for the menu→line-prompt seam.
+func TestUnderlyingReadAhead_MenuToLinePromptTheft(t *testing.T) {
+	stream := newSharedStream()
+
+	// The "menu" reader consumes its Enter and its pump parks one byte ahead.
+	menuReader := newBlockingByteReader(stream)
+	stream.push('\r')
+	if bt, ok := menuReader.readByteBlocking(); !ok || bt != '\r' {
+		t.Fatalf("menuReader = (%q,%v); want ('\\r',true)", bt, ok)
+	}
+	time.Sleep(20 * time.Millisecond) // let the pump re-enter its blocking read
+
+	// A fresh, independent reader for the "prompt" — the pre-fix shape (a fresh
+	// bufio.Reader over the same fd). Feed the full typed line concurrently; the
+	// menu's orphan is parked first and steals the leading byte(s), so the
+	// prompt reader never assembles the intact "my-name".
+	promptReader := newBlockingByteReader(stream)
+	feedAsync(stream, "my-name\n", false)
+
+	got := make(chan string, 1)
+	go func() {
+		line, ok := promptReader.readLine()
+		if !ok {
+			got <- "<eof>"
+			return
+		}
+		got <- line
+	}()
+	select {
+	case line := <-got:
+		if line == "my-name" {
+			t.Fatalf("expected the menu's orphan to steal bytes so the prompt reader cannot read %q intact; it read the full line anyway", "my-name")
+		}
+		// Corrupted/partial (e.g. "-name") — the theft the shared-reader fix avoids.
+	case <-time.After(500 * time.Millisecond):
+		// Starved — also a valid manifestation of the theft.
+	}
+}
+
+// TestMenuSession_LinePromptAfterMenuNoTheft is the regression guard for the
+// fix. It drives a session.Show (the dirty-state menu) followed by a
+// session.PromptWithDefault (the "Worktree name" prompt) over ONE shared
+// stream — exactly the wt-create shape — and asserts the prompt receives the
+// full typed line. Before the fix (a fresh reader per prompt) the line was
+// stolen by the menu's orphaned pump and this would hang/starve.
+func TestMenuSession_LinePromptAfterMenuNoTheft(t *testing.T) {
+	withDisabledColors(t)
+
+	stream := newSharedStream()
+	session := &MenuSession{
+		interactive: true,
+		reader:      newBlockingByteReader(stream),
+	}
+	noopRestore := func() {}
+
+	// Menu: submit the default row via Enter (defaultIdx 1 → submit 1).
+	m := make(chan int, 1)
+	go func() {
+		c, _ := session.showInteractive(io.Discard, "How to proceed?", []string{"Continue anyway", "Stash", "Abort"}, 1, noopRestore)
+		m <- c
+	}()
+	stream.push('\r')
+	select {
+	case c := <-m:
+		if c != 1 {
+			t.Fatalf("menu submitted %d; want 1", c)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("menu did not submit on Enter")
+	}
+
+	// Line prompt on the SAME session reader: the user types a name + Enter.
+	// With the shared reader this line is NOT stolen by the menu's parked pump.
+	//
+	// PromptWithDefault writes its prompt to os.Stdout; the test only cares
+	// about the returned value, so we let that write go to the real stdout
+	// (harmless) and assert on the return.
+	p := make(chan string, 1)
+	go func() { p <- session.PromptWithDefault("Worktree name", "lively-tamarin") }()
+	pushString(stream, "chosen-name\n")
+	select {
+	case name := <-p:
+		if name != "chosen-name" {
+			t.Fatalf("BUG: prompt returned %q; want %q — the menu's orphan stole the line", name, "chosen-name")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("BUG: the line prompt after the menu hung — its input was stolen by the menu's orphaned reader")
+	}
+}
+
+// =============================================================================
+// blockingByteReader.readLine — unit coverage
+// =============================================================================
+
+func TestBlockingByteReader_ReadLine(t *testing.T) {
+	tests := []struct {
+		name     string
+		feed     string // bytes to push
+		closeEOF bool   // close the stream after feeding (simulates EOF)
+		want     string
+		wantOK   bool
+	}{
+		{name: "multi-byte line", feed: "hello\n", want: "hello", wantOK: true},
+		{name: "empty line", feed: "\n", want: "", wantOK: true},
+		{name: "crlf stripped", feed: "a\r\n", want: "a", wantOK: true},
+		{name: "multi-byte crlf", feed: "swift-fox\r\n", want: "swift-fox", wantOK: true},
+		{name: "eof before newline discards partial", feed: "xy", closeEOF: true, want: "", wantOK: false},
+		{name: "eof immediately", feed: "", closeEOF: true, want: "", wantOK: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := newSharedStream()
+			r := newBlockingByteReader(stream)
+			feedAsync(stream, tc.feed, tc.closeEOF)
+			got := make(chan struct {
+				line string
+				ok   bool
+			}, 1)
+			go func() {
+				line, ok := r.readLine()
+				got <- struct {
+					line string
+					ok   bool
+				}{line, ok}
+			}()
+			select {
+			case res := <-got:
+				if res.line != tc.want || res.ok != tc.wantOK {
+					t.Fatalf("readLine() = (%q, %v); want (%q, %v)", res.line, res.ok, tc.want, tc.wantOK)
+				}
+			case <-time.After(500 * time.Millisecond):
+				t.Fatalf("readLine() did not return within timeout")
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Session-aware PromptWithDefault / ConfirmYesNo — semantics (no PTY)
+// =============================================================================
+//
+// These drive the interactive-mode methods through the injected shared-reader
+// seam (a MenuSession with interactive=true over a sharedStream), so the prompt
+// semantics are exercised without a real terminal. The prompt text itself goes
+// to the process's real stdout/stderr (harmless); the tests assert on the
+// returned value.
+
+func newInteractiveSessionOver(stream *sharedStream) *MenuSession {
+	return &MenuSession{interactive: true, reader: newBlockingByteReader(stream)}
+}
+
+func TestMenuSession_PromptWithDefault_Semantics(t *testing.T) {
+	tests := []struct {
+		name     string
+		feed     string
+		closeEOF bool
+		want     string
+	}{
+		{name: "typed value", feed: "my-name\n", want: "my-name"},
+		{name: "empty line uses default", feed: "\n", want: "lively-tamarin"},
+		{name: "eof before newline uses default", feed: "part", closeEOF: true, want: "lively-tamarin"},
+		// Trimming matches the package-level function (fallback mode), so both
+		// modes behave identically on padded input.
+		{name: "whitespace-only line uses default", feed: "   \n", want: "lively-tamarin"},
+		{name: "typed value is trimmed", feed: "  my-name  \n", want: "my-name"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := newSharedStream()
+			session := newInteractiveSessionOver(stream)
+			feedAsync(stream, tc.feed, tc.closeEOF)
+			got := make(chan string, 1)
+			go func() { got <- session.PromptWithDefault("Worktree name", "lively-tamarin") }()
+			select {
+			case v := <-got:
+				if v != tc.want {
+					t.Fatalf("PromptWithDefault = %q; want %q", v, tc.want)
+				}
+			case <-time.After(500 * time.Millisecond):
+				t.Fatalf("PromptWithDefault did not return within timeout")
+			}
+		})
+	}
+}
+
+func TestMenuSession_ConfirmYesNo_Semantics(t *testing.T) {
+	tests := []struct {
+		name     string
+		feed     string
+		closeEOF bool
+		want     bool
+	}{
+		{name: "empty line is default yes", feed: "\n", want: true},
+		{name: "y is yes", feed: "y\n", want: true},
+		{name: "Y is yes", feed: "Y\n", want: true},
+		{name: "yes word is yes", feed: "yes\n", want: true},
+		{name: "n is no", feed: "n\n", want: false},
+		{name: "no word is no", feed: "no\n", want: false},
+		{name: "eof is no", feed: "", closeEOF: true, want: false},
+		// Trimming matches the package-level function (fallback mode), so both
+		// modes behave identically on padded input.
+		{name: "whitespace-only line is default yes", feed: "   \n", want: true},
+		{name: "padded y is yes", feed: " y \n", want: true},
+		{name: "padded n is no", feed: " n \n", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := newSharedStream()
+			session := newInteractiveSessionOver(stream)
+			feedAsync(stream, tc.feed, tc.closeEOF)
+			got := make(chan bool, 1)
+			go func() { got <- session.ConfirmYesNo("Initialize worktree?") }()
+			select {
+			case v := <-got:
+				if v != tc.want {
+					t.Fatalf("ConfirmYesNo = %v; want %v", v, tc.want)
+				}
+			case <-time.After(500 * time.Millisecond):
+				t.Fatalf("ConfirmYesNo did not return within timeout")
+			}
+		})
+	}
+}
