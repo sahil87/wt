@@ -231,14 +231,26 @@ func TestUnderlyingReadAhead_MenuToLinePromptTheft(t *testing.T) {
 	if bt, ok := menuReader.readByteBlocking(); !ok || bt != '\r' {
 		t.Fatalf("menuReader = (%q,%v); want ('\\r',true)", bt, ok)
 	}
-	time.Sleep(20 * time.Millisecond) // let the pump re-enter its blocking read
+
+	// Force the theft deterministically: push the FIRST byte of the typed line
+	// and drain it back through the menu's own reader. Both operations are hard
+	// synchronization points (push blocks until the parked pump receives; the
+	// read-back blocks until that pump forwards), so the 'm' is provably held in
+	// the menu reader's buffer — off the shared stream, unreachable by any later
+	// reader — before the prompt reader is even created. No sleep, no goroutine
+	// race decides who wins: the menu's orphan has already stolen the byte.
+	stream.push('m')
+	if bt, ok := menuReader.readByteBlocking(); !ok || bt != 'm' {
+		t.Fatalf("menuReader stole byte = (%q,%v); want ('m',true) — the orphan must consume the line's first byte", bt, ok)
+	}
 
 	// A fresh, independent reader for the "prompt" — the pre-fix shape (a fresh
-	// bufio.Reader over the same fd). Feed the full typed line concurrently; the
-	// menu's orphan is parked first and steals the leading byte(s), so the
-	// prompt reader never assembles the intact "my-name".
+	// bufio.Reader over the same fd). Feed the REMAINDER of the line; because the
+	// menu's orphan already ate the leading 'm', the prompt reader can never
+	// assemble the intact "my-name" — it sees at most "y-name". This is the exact
+	// corruption the shared-reader fix routes around.
 	promptReader := newBlockingByteReader(stream)
-	feedAsync(stream, "my-name\n", false)
+	feedAsync(stream, "y-name\n", false)
 
 	got := make(chan string, 1)
 	go func() {
@@ -252,11 +264,11 @@ func TestUnderlyingReadAhead_MenuToLinePromptTheft(t *testing.T) {
 	select {
 	case line := <-got:
 		if line == "my-name" {
-			t.Fatalf("expected the menu's orphan to steal bytes so the prompt reader cannot read %q intact; it read the full line anyway", "my-name")
+			t.Fatalf("expected the menu's orphan to steal the leading byte so the prompt reader cannot read %q intact; it read the full line anyway", "my-name")
 		}
-		// Corrupted/partial (e.g. "-name") — the theft the shared-reader fix avoids.
+		// Corrupted/partial ("y-name") — the theft the shared-reader fix avoids.
 	case <-time.After(500 * time.Millisecond):
-		// Starved — also a valid manifestation of the theft.
+		t.Fatalf("prompt reader neither returned a corrupted line nor was starved within timeout")
 	}
 }
 
