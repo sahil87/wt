@@ -122,10 +122,19 @@ or creates a new branch.`,
 				}
 			}
 
+			// One MenuSession threaded through every interactive stdin consumer
+			// in this flow (both menus + all three line prompts). Sharing one
+			// reader is what prevents a menu's parked read-ahead pump from
+			// stealing the next consumer's first line/keystroke — see the
+			// MenuSession doc comment in internal/worktree/menu.go. Matches the
+			// session-threading pattern already used by wt open/delete/go.
+			session := wt.NewMenuSession()
+			defer session.Close()
+
 			// Dirty-state check
 			if !nonInteractive && (wt.HasUncommittedChanges() || wt.HasUntrackedFiles()) {
-				wt.Warn("main repo has uncommitted changes")
-				choice, err := wt.ShowMenu("How to proceed?", []string{
+				wt.Warn("current worktree has uncommitted changes")
+				choice, err := session.Show("How to proceed?", []string{
 					"Continue anyway",
 					"Stash changes first",
 					"Abort",
@@ -173,7 +182,7 @@ or creates a new branch.`,
 			} else if nonInteractive {
 				finalName = suggestedName
 			} else {
-				finalName = wt.PromptWithDefault("Worktree name", suggestedName)
+				finalName = session.PromptWithDefault("Worktree name", suggestedName)
 			}
 
 			// Check collision
@@ -254,7 +263,7 @@ or creates a new branch.`,
 			//      inside the runner).
 			runInit := worktreeInit == "true"
 			if runInit && !(nonInteractive || branchArg == "") {
-				runInit = wt.ConfirmYesNo("Initialize worktree?")
+				runInit = session.ConfirmYesNo("Initialize worktree?")
 			}
 
 			// Emit deferred summary (still under rollback handler). The Git
@@ -386,7 +395,7 @@ or creates a new branch.`,
 					// signal, already computed above). Non-interactive / piped /
 					// CI keeps today's exact behavior: banner + exit 7, NO prompt.
 					if !nonInteractive && reclaimTTY {
-						if !wt.ConfirmYesNo("Continue and open the worktree anyway?") {
+						if !session.ConfirmYesNo("Continue and open the worktree anyway?") {
 							// No: do not open. The banner's Go: line already shows
 							// how to reach the worktree, so no app menu is shown.
 							worktreeOpen = "skip"
@@ -420,7 +429,7 @@ or creates a new branch.`,
 					for i, a := range apps {
 						appNames[i] = a.Name
 					}
-					choice, err := wt.ShowMenu("Open in:", appNames, defaultIdx)
+					choice, err := session.Show("Open in:", appNames, defaultIdx)
 					if err == nil && choice > 0 && choice <= len(apps) {
 						selected := apps[choice-1]
 						wt.SaveLastApp(selected.Cmd)

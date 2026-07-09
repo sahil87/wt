@@ -131,7 +131,22 @@ type wtResult struct {
 
 // runWt runs the wt binary with the given args, with cwd set to dir.
 // Environment variables can be passed as "KEY=VALUE" strings via env.
+// Stdin is an empty reader (immediate EOF, never a TTY); tests that need to
+// feed input to the child use runWtStdin directly.
 func runWt(t *testing.T, dir string, env []string, args ...string) wtResult {
+	t.Helper()
+	return runWtStdin(t, dir, env, "", args...)
+}
+
+// runWtStdin runs the wt binary like runWt but feeds `stdin` to the child's
+// standard input. The stdin is a plain string reader (never a TTY), so
+// interactive commands land on their non-TTY fallback path — which is exactly
+// what lets a test drive a fallback numbered-menu choice deterministically
+// (e.g. selecting "Abort" on the dirty-state menu).
+//
+// This is the single core runner: runWt delegates here with empty stdin, so
+// the host-isolation env list below exists exactly once.
+func runWtStdin(t *testing.T, dir string, env []string, stdin string, args ...string) wtResult {
 	t.Helper()
 	cmd := exec.Command(wtBinary, args...)
 	cmd.Dir = dir
@@ -166,6 +181,7 @@ func runWt(t *testing.T, dir string, env []string, args ...string) wtResult {
 	)
 	// Append test-provided env vars last so they can override defaults above
 	cmd.Env = append(cmd.Env, env...)
+	cmd.Stdin = strings.NewReader(stdin)
 
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

@@ -147,6 +147,63 @@ func (s *MenuSession) showInteractive(w io.Writer, prompt string, options []stri
 // Close and so the contract survives future changes that acquire resources.
 func (s *MenuSession) Close() {}
 
+// PromptWithDefault prompts for a line of input with a default value, reading
+// through the session's SHARED stdin reader. This is the line-prompt analogue
+// of Show: a session that mixes menus and line prompts (e.g. `wt create`'s
+// dirty-state menu → "Worktree name" prompt) must route every stdin consumer
+// through the one shared reader, or a preceding menu's parked read-ahead pump
+// steals the prompt's first typed line (the menu→line-prompt byte-theft seam —
+// see the MenuSession doc comment and TestUnderlyingReadAhead_DemonstratesTheft).
+//
+// In fallback mode (non-TTY / Windows) it delegates to the package-level
+// PromptWithDefault so piped-stdin behavior is byte-for-byte identical to the
+// standalone function. (A raw-mode-entry failure does NOT flip the session to
+// fallback — that degrades only the affected Show call; s.interactive is
+// decided once at NewMenuSession from TTY detection.)
+//
+// No raw mode is entered — line prompts run in cooked mode exactly as the
+// package-level function does (the kernel line-buffers and echoes). EOF/empty
+// semantics match that function: EOF before a newline or an empty (or
+// whitespace-only, after trimming) line returns defaultValue.
+func (s *MenuSession) PromptWithDefault(prompt, defaultValue string) string {
+	if !s.interactive {
+		return PromptWithDefault(prompt, defaultValue)
+	}
+	fmt.Printf(promptWithDefaultFmt, prompt, defaultValue)
+	line, ok := s.reader.readLine()
+	if !ok {
+		return defaultValue
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return defaultValue
+	}
+	return line
+}
+
+// ConfirmYesNo prompts for a Y/n confirmation (default yes), reading through the
+// session's SHARED stdin reader — the confirmation analogue of Show and the
+// same byte-theft-avoiding contract as PromptWithDefault above.
+//
+// In fallback mode (non-TTY / Windows) it delegates to the package-level
+// ConfirmYesNo so piped-stdin behavior is byte-for-byte identical. The prompt
+// is written to stderr (human copy) and EOF/empty semantics match the
+// package-level function: EOF before a newline returns false; an empty (or
+// whitespace-only, after trimming) line returns true (the default). Answer
+// parsing is shared with that function via parseYesNoLine: a line starting
+// with "y"/"Y" is yes.
+func (s *MenuSession) ConfirmYesNo(prompt string) bool {
+	if !s.interactive {
+		return ConfirmYesNo(prompt)
+	}
+	fmt.Fprintf(os.Stderr, confirmYesNoFmt, prompt)
+	line, ok := s.reader.readLine()
+	if !ok {
+		return false
+	}
+	return parseYesNoLine(strings.TrimSpace(line))
+}
+
 // runFallbackMenu is the historical numbered-prompt body, preserved verbatim
 // so the byte-for-byte output contract holds for piped/redirected callers.
 func runFallbackMenu(prompt string, options []string, defaultIdx int) (int, error) {
@@ -206,27 +263,55 @@ func runFallbackMenu(prompt string, options []string, defaultIdx int) (int, erro
 	}
 }
 
-// ConfirmYesNo prompts for a Y/n confirmation. Returns true if yes (default).
-// The prompt is written to stderr (human-facing copy), keeping stdout reserved
-// for machine-readable results even when the caller's stdout is redirected
-// while stdin remains a TTY.
-func ConfirmYesNo(prompt string) bool {
-	fmt.Fprintf(os.Stderr, "%s [Y/n] ", prompt)
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		return false
-	}
-	line = strings.TrimSpace(line)
+// Prompt rendering and answer-parsing pieces shared by the package-level
+// prompts and their MenuSession variants, so the prompt text and grammar
+// cannot drift between the standalone and session-aware paths.
+const (
+	promptWithDefaultFmt = "%s [%s]: " // stdout — PromptWithDefault
+	confirmYesNoFmt      = "%s [Y/n] " // stderr — ConfirmYesNo
+)
+
+// parseYesNoLine interprets an already-trimmed ConfirmYesNo answer line:
+// empty means yes (the default); otherwise a line starting with "y"/"Y" is
+// yes and anything else is no.
+func parseYesNoLine(line string) bool {
 	if line == "" {
 		return true
 	}
 	return strings.HasPrefix(strings.ToLower(line), "y")
 }
 
+// ConfirmYesNo prompts for a Y/n confirmation. Returns true if yes (default).
+// The prompt is written to stderr (human-facing copy), keeping stdout reserved
+// for machine-readable results even when the caller's stdout is redirected
+// while stdin remains a TTY.
+//
+// This standalone form reads a line synchronously via a fresh bufio.Reader over
+// os.Stdin (cooked mode), so it leaves no parked read-ahead goroutine and is
+// safe for one-off use. It MUST NOT be used in a flow that also shows an
+// interactive menu on the same stdin — a preceding menu's parked pump would
+// steal this prompt's first line. Such mixed flows MUST use
+// MenuSession.ConfirmYesNo, which reads through the session's shared reader.
+func ConfirmYesNo(prompt string) bool {
+	fmt.Fprintf(os.Stderr, confirmYesNoFmt, prompt)
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return false
+	}
+	return parseYesNoLine(strings.TrimSpace(line))
+}
+
 // PromptWithDefault prompts for input with a default value.
+//
+// This standalone form reads a line synchronously via a fresh bufio.Reader over
+// os.Stdin (cooked mode), so it leaves no parked read-ahead goroutine and is
+// safe for one-off use. It MUST NOT be used in a flow that also shows an
+// interactive menu on the same stdin — a preceding menu's parked pump would
+// steal this prompt's first typed line. Such mixed flows MUST use
+// MenuSession.PromptWithDefault, which reads through the session's shared reader.
 func PromptWithDefault(prompt, defaultValue string) string {
-	fmt.Printf("%s [%s]: ", prompt, defaultValue)
+	fmt.Printf(promptWithDefaultFmt, prompt, defaultValue)
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil {
@@ -724,6 +809,37 @@ func (b *blockingByteReader) readByteWithin(timeout time.Duration) (byte, bool) 
 		return r.bt, true
 	case <-time.After(timeout):
 		return 0, false
+	}
+}
+
+// readLine reads a full line through the same single pump goroutine that Show's
+// key reads use, accumulating one byte at a time via readByteBlocking until a
+// '\n' arrives, then stripping a trailing "\r\n" or "\n". It returns
+// (line, true) on a complete line and ("", false) on a read failure/EOF before
+// any newline (partial input before the failure is discarded — matching the
+// err != nil short-circuit in the package-level PromptWithDefault/ConfirmYesNo).
+//
+// Reading through the shared reader is the whole point: it is what lets a menu
+// (Show) and a line prompt (MenuSession.PromptWithDefault/ConfirmYesNo) run back
+// to back on one stdin without the menu's parked pump stealing the prompt's
+// first line. No raw mode is involved — line prompts run in cooked mode, so the
+// kernel line-buffers and echoes; this helper only reassembles the bytes the
+// pump forwards.
+func (b *blockingByteReader) readLine() (string, bool) {
+	var sb strings.Builder
+	for {
+		bt, ok := b.readByteBlocking()
+		if !ok {
+			// EOF/error before a newline: discard partial input, signal failure.
+			return "", false
+		}
+		if bt == byteLF {
+			line := sb.String()
+			// Strip a trailing "\r" so "\r\n" and "\n" line endings both yield
+			// the bare line (the '\n' itself is already excluded above).
+			return strings.TrimSuffix(line, "\r"), true
+		}
+		sb.WriteByte(bt)
 	}
 }
 
