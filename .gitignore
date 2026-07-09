@@ -56,3 +56,5 @@ dist/
 .uploads/
 
 .status.yaml.lock
+
+!fab/.fab-version
