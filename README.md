@@ -10,6 +10,18 @@ are memorable random adjective-noun pairs, and a shell wrapper makes
 `cd`-into-worktree from a menu actually work. Designed for the parallel-edit
 workflow where each branch (or each AI session) gets its own checkout.
 
+## Install
+
+```sh
+curl -fsSL https://shll.ai/install | sh -s -- wt
+```
+
+Installs wt (plus the shll meta-CLI) via Homebrew, handling tap trust automatically. To install the entire sahil87 toolkit instead:
+
+```sh
+curl -fsSL https://shll.ai/install | sh
+```
+
 ## Why wt?
 
 - **Sibling layout, not clutter** — worktrees go in `<repo>.worktrees/<name>/`, never inside the main repo.
@@ -17,13 +29,7 @@ workflow where each branch (or each AI session) gets its own checkout.
 - **Real `cd` from a menu** — the shell wrapper lets `wt open` actually change your shell's directory (something a plain binary can't do).
 - **Per-worktree init** — each new worktree runs an init script (default `fab sync`, override via `WORKTREE_INIT_SCRIPT`) so it's ready to use immediately.
 
-## Install
-
-Homebrew (preferred):
-
-```bash
-brew install sahil87/tap/wt
-```
+## Other ways to install
 
 Manual (requires Go and `just`):
 
