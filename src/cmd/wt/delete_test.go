@@ -867,6 +867,73 @@ func TestDelete_DryRunStashByNameNoStash(t *testing.T) {
 	assertNotContains(t, stashOut, "wt-delete")
 }
 
+// TestDelete_DryRunByNameDiscardsHazardReport verifies the ByName path reports
+// the discard hazard under --dry-run without --stash: the live path force-removes
+// the worktree (RemoveWorktree(..., true)), which discards uncommitted/untracked
+// changes, so the preview must surface it (R6, preview↔live alignment).
+func TestDelete_DryRunByNameDiscardsHazardReport(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "discard-name-dry")
+	os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("uncommitted"), 0644)
+
+	r := runWtSuccess(t, repo, nil, "delete", "--worktree-name", "discard-name-dry", "--non-interactive", "--dry-run")
+	assertContains(t, r.Stdout, "Would discard uncommitted changes (use --stash to preserve them)")
+	assertContains(t, r.Stdout, "Would remove worktree: discard-name-dry")
+	assertNotContains(t, r.Stdout, "Discarding")
+
+	// Nothing discarded — worktree and dirty file survive.
+	assertWorktreeExists(t, repo, "discard-name-dry")
+	assertFileExists(t, filepath.Join(wtPath, "dirty.txt"))
+}
+
+// TestDelete_DryRunByNameCleanNoDiscardReport verifies the discard line is NOT
+// printed for a clean worktree (worktreeIsDirty gates it).
+func TestDelete_DryRunByNameCleanNoDiscardReport(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "clean-name-dry")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--worktree-name", "clean-name-dry", "--non-interactive", "--dry-run")
+	assertContains(t, r.Stdout, "Would remove worktree: clean-name-dry")
+	assertNotContains(t, r.Stdout, "Would discard uncommitted changes")
+}
+
+// TestDelete_DryRunMultipleDiscardsHazardReport verifies the Multiple path emits
+// the discard hazard per dirty target under --dry-run without --stash (R6).
+func TestDelete_DryRunMultipleDiscardsHazardReport(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath1 := createWorktreeViaWt(t, repo, "discard-multi-1")
+	createWorktreeViaWt(t, repo, "discard-multi-2") // stays clean
+	os.WriteFile(filepath.Join(wtPath1, "dirty.txt"), []byte("uncommitted"), 0644)
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "discard-multi-1", "discard-multi-2", "--dry-run")
+	assertContains(t, r.Stdout, "Would discard uncommitted changes (use --stash to preserve them)")
+	assertContains(t, r.Stdout, "Would remove worktree: discard-multi-1")
+	assertContains(t, r.Stdout, "Would remove worktree: discard-multi-2")
+	// Only the dirty target reports the discard hazard — exactly one occurrence.
+	if got := strings.Count(r.Stdout, "Would discard uncommitted changes"); got != 1 {
+		t.Fatalf("expected exactly 1 discard-hazard line (only the dirty target), got %d\nstdout:\n%s", got, r.Stdout)
+	}
+
+	assertWorktreeExists(t, repo, "discard-multi-1")
+	assertWorktreeExists(t, repo, "discard-multi-2")
+	assertFileExists(t, filepath.Join(wtPath1, "dirty.txt"))
+}
+
+// TestDelete_DryRunAllDiscardsHazardReport verifies the All path emits the
+// discard hazard for a dirty target under --dry-run without --stash (R6).
+func TestDelete_DryRunAllDiscardsHazardReport(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "discard-all-dry")
+	os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("uncommitted"), 0644)
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--all", "--dry-run")
+	assertContains(t, r.Stdout, "Would discard uncommitted changes (use --stash to preserve them)")
+	assertContains(t, r.Stdout, "Would remove worktree: discard-all-dry")
+
+	assertWorktreeExists(t, repo, "discard-all-dry")
+	assertFileExists(t, filepath.Join(wtPath, "dirty.txt"))
+}
+
 // TestDelete_DryRunAllPreviewsAllNoMutation verifies --all × --dry-run keeps
 // the per-worktree block structure and mutates nothing (R2, R8).
 func TestDelete_DryRunAllPreviewsAllNoMutation(t *testing.T) {

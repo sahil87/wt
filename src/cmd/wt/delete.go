@@ -290,6 +290,23 @@ func printDryRunHeader(dryRun bool) {
 	}
 }
 
+// previewDiscardWhenDirty emits the dry-run discard-hazard line for the
+// ByName/Multiple/All paths, which target worktrees at arbitrary paths and force-
+// remove them live (RemoveWorktree(..., true) discards uncommitted/untracked
+// changes). Only the no-stash case is handled here — the stash case is surfaced
+// by handleStashInDir's own "Would stash …" line. This keeps preview↔live aligned
+// (R6): without --stash, a real invocation silently discards a dirty worktree's
+// changes, so the preview must say so. Mirrors handleUncommittedChanges's wording
+// (the current-worktree path's equivalent). No-op when not dirty or when stashing.
+func previewDiscardWhenDirty(wtPath, stashMode string) {
+	if stashMode == "stash" {
+		return
+	}
+	if worktreeIsDirty(wtPath) {
+		fmt.Println("Would discard uncommitted changes (use --stash to preserve them)")
+	}
+}
+
 func handleDeleteByName(session *wt.MenuSession, name string, nonInteractive bool, deleteBranch, deleteRemote, stashMode string, dryRun bool, rb *wt.Rollback) error {
 	if err := wt.ValidateGitRepo(); err != nil {
 		wt.ExitWithError(wt.ExitGitError, "Not a git repository", err.Error(), "")
@@ -341,6 +358,7 @@ func handleDeleteByName(session *wt.MenuSession, name string, nonInteractive boo
 	}
 
 	if dryRun {
+		previewDiscardWhenDirty(wtPath, stashMode)
 		fmt.Printf("Would remove worktree: %s\n", name)
 		handleBranchCleanup(branch, name, deleteBranch, deleteRemote, dryRun)
 		return nil
@@ -465,6 +483,7 @@ func handleDeleteMultiple(session *wt.MenuSession, names []string, nonInteractiv
 		}
 
 		if dryRun {
+			previewDiscardWhenDirty(w.path, stashMode)
 			fmt.Printf("Would remove worktree: %s\n", w.name)
 			handleBranchCleanup(w.branch, w.name, deleteBranch, deleteRemote, dryRun)
 			continue
@@ -554,6 +573,7 @@ func handleDeleteAll(session *wt.MenuSession, nonInteractive bool, deleteBranch,
 		fmt.Printf("Path: %s\n\n", w.path)
 
 		if dryRun {
+			previewDiscardWhenDirty(w.path, stashMode)
 			fmt.Printf("Would remove worktree: %s\n", w.name)
 			handleBranchCleanup(w.branch, w.name, deleteBranch, deleteRemote, dryRun)
 			continue
@@ -920,29 +940,39 @@ func handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote string, dryR
 	}
 }
 
-func handleStashInDir(wtPath, name string, dryRun bool) {
-	// Check if there are changes to stash. These probes are read-only and run
-	// live in both modes; only the stash mutation below is gated.
+// worktreeIsDirty reports whether the worktree at wtPath has uncommitted
+// tracked changes (working-tree or staged) or untracked files. It probes the
+// target path directly (cmd.Dir = wtPath) rather than the process CWD, so it
+// works for the ByName/Multiple/All paths that target arbitrary worktrees —
+// unlike the CWD-scoped wt.HasUncommittedChanges/HasUntrackedFiles used by the
+// current-worktree path. All three probes are read-only and safe under dry-run.
+func worktreeIsDirty(wtPath string) bool {
 	cmd := exec.Command("git", "diff", "--quiet", "HEAD")
 	cmd.Dir = wtPath
-	hasChanges := cmd.Run() != nil
-
-	if !hasChanges {
-		cmd = exec.Command("git", "diff", "--cached", "--quiet", "HEAD")
-		cmd.Dir = wtPath
-		hasChanges = cmd.Run() != nil
+	if cmd.Run() != nil {
+		return true
 	}
 
-	if !hasChanges {
-		cmd = exec.Command("git", "ls-files", "--others", "--exclude-standard")
-		cmd.Dir = wtPath
-		out, err := cmd.Output()
-		if err == nil && strings.TrimSpace(string(out)) != "" {
-			hasChanges = true
-		}
+	cmd = exec.Command("git", "diff", "--cached", "--quiet", "HEAD")
+	cmd.Dir = wtPath
+	if cmd.Run() != nil {
+		return true
 	}
 
-	if !hasChanges {
+	cmd = exec.Command("git", "ls-files", "--others", "--exclude-standard")
+	cmd.Dir = wtPath
+	out, err := cmd.Output()
+	if err == nil && strings.TrimSpace(string(out)) != "" {
+		return true
+	}
+
+	return false
+}
+
+func handleStashInDir(wtPath, name string, dryRun bool) {
+	// Check if there are changes to stash. worktreeIsDirty's probes are
+	// read-only and run live in both modes; only the stash mutation below is gated.
+	if !worktreeIsDirty(wtPath) {
 		return
 	}
 
