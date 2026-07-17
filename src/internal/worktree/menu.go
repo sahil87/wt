@@ -240,11 +240,15 @@ func runFallbackMenu(prompt string, options []string, defaultIdx int) (int, erro
 		// only fall into the error path when EOF arrives with no pending input.
 		if err != nil && (!errors.Is(err, io.EOF) || strings.TrimSpace(line) == "") {
 			if errors.Is(err, io.EOF) {
-				// Non-TTY / piped-empty stdin: the menu has no one to answer it.
-				// Refuse with an actionable, flag-naming error instead of hanging
-				// or surfacing a bare "reading input: EOF" (principles №1 / №4).
+				// Input ended before a choice was entered — piped-empty stdin,
+				// or an end-of-input (Ctrl-D) at the prompt. Refuse with an
+				// actionable, flag-naming error instead of hanging or surfacing a
+				// bare "reading input: EOF" (principles №1 / №4). Note: this path
+				// is also reached when an interactive TTY degrades to the fallback
+				// prompt (raw-mode entry failed), so the message describes the
+				// input condition rather than asserting stdin is not a terminal.
 				return 0, fmt.Errorf("%s", WtError(
-					"This is an interactive selection menu and stdin is not a terminal",
+					"this selection menu reached end of input before a choice was entered",
 					"no choice can be read, so the menu cannot run non-interactively",
 					"pass a worktree name (e.g. wt open <name> / wt go <name> / wt delete <name>), or add --non-interactive where the command supports it"))
 			}

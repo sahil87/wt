@@ -499,7 +499,7 @@ func TestShowMenu_FallbackPath_EOFNoInputActionableError(t *testing.T) {
 		t.Errorf("error should be actionable, not the bare %q:\n%s", "reading input: EOF", msg)
 	}
 	// It must carry the structured what/why/fix shape and name the escape.
-	for _, want := range []string{"Error:", "Why:", "Fix:", "not a terminal", "--non-interactive"} {
+	for _, want := range []string{"Error:", "Why:", "Fix:", "end of input", "--non-interactive"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("actionable EOF error missing %q:\n%s", want, msg)
 		}

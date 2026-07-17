@@ -579,7 +579,7 @@ func TestIntegration_NonTTYMenuActionableRefusal(t *testing.T) {
 			// ExitGeneralError (1): the menu returns an error, main.go maps it.
 			assertExitCode(t, r, 1)
 			// Actionable structured refusal on stderr, naming the escape.
-			assertContains(t, r.Stderr, "not a terminal")
+			assertContains(t, r.Stderr, "end of input")
 			assertContains(t, r.Stderr, "--non-interactive")
 			// The bare cause must NOT be surfaced.
 			assertNotContains(t, r.Stderr, "reading input: EOF")
