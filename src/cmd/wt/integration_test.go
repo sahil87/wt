@@ -547,3 +547,42 @@ func TestIntegration_OpenGo_Deprecated(t *testing.T) {
 		t.Errorf("expected cd file to contain %q, got %q", pathB, string(data))
 	}
 }
+
+// TestIntegration_NonTTYMenuActionableRefusal asserts the toolkit-standards
+// principles №1 (non-interactive by default) / №4 (fail fast with actionable
+// errors): when an interactive selection menu is reached with stdin that is not
+// a terminal (runWt feeds an empty, immediate-EOF reader), the command MUST
+// refuse with an actionable, flag-naming error on stderr — never hang, and never
+// surface the bare "reading input: EOF". Covers the three menu entry points
+// (wt open main-repo menu, wt go no-name, wt delete no-name) through the single
+// shared fallback-menu choke point.
+func TestIntegration_NonTTYMenuActionableRefusal(t *testing.T) {
+	repo := createTestRepo(t)
+	// Two worktrees so each menu has entries (an empty menu short-circuits before
+	// the prompt — we want to exercise the prompt-then-EOF refusal path).
+	createWorktreeViaWt(t, repo, "menu-a")
+	createWorktreeViaWt(t, repo, "menu-b")
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"open", []string{"open"}},
+		{"go", []string{"go"}},
+		{"delete", []string{"delete"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// runWt feeds an empty stdin (immediate EOF, never a TTY).
+			r := runWt(t, repo, nil, tc.args...)
+			// ExitGeneralError (1): the menu returns an error, main.go maps it.
+			assertExitCode(t, r, 1)
+			// Actionable structured refusal on stderr, naming the escape.
+			assertContains(t, r.Stderr, "end of input")
+			assertContains(t, r.Stderr, "--non-interactive")
+			// The bare cause must NOT be surfaced.
+			assertNotContains(t, r.Stderr, "reading input: EOF")
+		})
+	}
+}

@@ -1,0 +1,56 @@
+id: 6end
+name: 260717-6end-toolkit-standards-conformance
+created: 2026-07-17T20:12:49Z
+created_by: sahil-noon
+change_type: fix
+issues: []
+progress:
+    intake: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: done
+    review-pr: done
+plan:
+    generated: true
+    task_count: 8
+    acceptance_count: 14
+    acceptance_completed: 14
+confidence:
+    certain: 4
+    confident: 3
+    tentative: 0
+    unresolved: 0
+    score: 4.8
+    fuzzy: true
+    dimensions:
+        signal: 85.0
+        reversibility: 85.0
+        competence: 87.9
+        disambiguation: 81.4
+stage_metrics:
+    intake: {started_at: "2026-07-17T20:12:49Z", driver: fab-new, iterations: 1, completed_at: "2026-07-17T20:17:40Z"}
+    apply: {started_at: "2026-07-17T20:17:40Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-17T20:29:57Z"}
+    review: {started_at: "2026-07-17T20:29:57Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-17T20:40:23Z"}
+    hydrate: {started_at: "2026-07-17T20:40:23Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-17T20:47:05Z"}
+    ship: {started_at: "2026-07-17T20:47:05Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-17T20:51:04Z"}
+    review-pr: {started_at: "2026-07-17T20:51:04Z", driver: git-pr, iterations: 1, completed_at: "2026-07-17T21:05:40Z"}
+prs:
+    - https://github.com/sahil87/wt/pull/37
+true_impact:
+    added: 630
+    deleted: 6
+    net: 624
+    excluding:
+        added: 102
+        deleted: 2
+        net: 100
+    tests:
+        added: 87
+        deleted: 0
+        net: 87
+    computed_at: "2026-07-17T20:51:04Z"
+    computed_at_stage: ship
+summary: 'Toolkit-standards conformance audit (shll v0.0.23): new conformance baseline; non-TTY fallback-menu EOF now a structured actionable refusal (principles No.1/No.4) + partial-line-at-EOF honored; deferred skill adoption [v7xy], wt delete stdout->stderr [ohwb], wt delete --dry-run [p5m9]'
+# true_impact: lazily created on first stage-finish that computes it (no placeholder here).
+last_updated: 2026-07-17T21:05:40Z

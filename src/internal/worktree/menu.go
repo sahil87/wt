@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -234,7 +235,23 @@ func runFallbackMenu(prompt string, options []string, defaultIdx int) (int, erro
 		}
 
 		line, err := reader.ReadString('\n')
-		if err != nil {
+		// ReadString returns any bytes read so far alongside the error, so a
+		// choice typed without a trailing newline before EOF is still honored:
+		// only fall into the error path when EOF arrives with no pending input.
+		if err != nil && (!errors.Is(err, io.EOF) || strings.TrimSpace(line) == "") {
+			if errors.Is(err, io.EOF) {
+				// Input ended before a choice was entered — piped-empty stdin,
+				// or an end-of-input (Ctrl-D) at the prompt. Refuse with an
+				// actionable, flag-naming error instead of hanging or surfacing a
+				// bare "reading input: EOF" (principles №1 / №4). Note: this path
+				// is also reached when an interactive TTY degrades to the fallback
+				// prompt (raw-mode entry failed), so the message describes the
+				// input condition rather than asserting stdin is not a terminal.
+				return 0, fmt.Errorf("%s", WtError(
+					"this selection menu reached end of input before a choice was entered",
+					"no choice can be read, so the menu cannot run non-interactively",
+					"pass a worktree name (e.g. wt open <name> / wt go <name> / wt delete <name>), or add --non-interactive where the command supports it"))
+			}
 			return 0, fmt.Errorf("reading input: %w", err)
 		}
 		line = strings.TrimSpace(line)

@@ -82,7 +82,7 @@ $ wt delete lively-otter      # removes worktree (and optionally the branch)
 | `wt init` | Run the worktree init script (default `fab sync`, override via `WORKTREE_INIT_SCRIPT`). |
 | `wt shell-init` | Print a shell wrapper function for `eval` in your shell profile. |
 
-Run `wt <command> --help` for inline flag details. For every flag and exit code, see the auto-generated [command reference](https://shll.ai/tools/wt/commands/); for the `--base` start-point rules and the `wt open` launcher matrix, see the [workflows guide](docs/site/workflows.md).
+Run `wt <command> --help` for inline flag details. For every flag and exit code, see the auto-generated [command reference](https://shll.ai/wt/commands/); for the `--base` start-point rules and the `wt open` launcher matrix, see the [workflows guide](docs/site/workflows.md).
 
 ### `wt create --base` — branch start-point
 
