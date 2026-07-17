@@ -103,6 +103,52 @@ func TestCreate_NewBranch(t *testing.T) {
 	assertBranchExists(t, repo, "new-feature")
 }
 
+// TestCreate_SummaryFrom_NewBranchWithBase asserts the Git-phase summary's
+// From: line shows the --base ref verbatim for a new positional branch.
+func TestCreate_SummaryFrom_NewBranchWithBase(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive",
+		"--worktree-name", "from-base-wt", "new-feature", "--base", "main")
+
+	assertContains(t, r.Stderr, "From: main")
+}
+
+// TestCreate_SummaryFrom_NewBranchNoBase asserts the From: line shows the
+// current branch label (the fixture repo is on "main") when no --base is given.
+func TestCreate_SummaryFrom_NewBranchNoBase(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive",
+		"--worktree-name", "from-head-wt", "new-feature")
+
+	assertContains(t, r.Stderr, "From: main")
+}
+
+// TestCreate_SummaryFrom_Checkout asserts the From: line uses the fixed
+// existing-branch copy on the --checkout path.
+func TestCreate_SummaryFrom_Checkout(t *testing.T) {
+	repo := createTestRepo(t)
+
+	gitRun(t, repo, "checkout", "-b", "feature/auth")
+	gitRun(t, repo, "checkout", "main")
+
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive",
+		"--worktree-name", "from-checkout-wt", "--checkout", "feature/auth")
+
+	assertContains(t, r.Stderr, "From: existing branch 'feature/auth' (checked out directly)")
+}
+
+// TestCreate_SummaryFrom_BareExploratory asserts the From: line shows the
+// current branch label for a bare exploratory create.
+func TestCreate_SummaryFrom_BareExploratory(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive")
+
+	assertContains(t, r.Stderr, "From: main")
+}
+
 // TestCreate_CheckoutMissingBranchRejected asserts --checkout on a branch that
 // exists neither locally nor remotely fails with exit 2 and the create-new
 // hint, leaving no worktree behind.

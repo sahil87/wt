@@ -140,6 +140,26 @@ the documented exit-2 class "mutually exclusive flags". Both are pure argument-p
 `ExitInvalidArgs` = 2, `ExitGitError` = 3 (`git worktree add` failure), both from
 `src/internal/worktree/errors.go`.
 
+### The creation mode is visible at creation time in the summary output (`260717-aeka`)
+
+As of `260717-aeka-create-summary-base-ref`, the three creation modes are **visually distinguished
+in the Git-phase summary output** by a fourth `From:` line — so a user can tell from the output
+which of this file's modes ran and what ref the branch was based on (the exact create-vs-checkout
+confusion this contract's flag split targets, now surfaced at the output layer too). This is a
+*display* addition only — **no branch-selection semantics change**; the `From:` value is derived
+from the same `checkout` / `base` inputs and the mode dispatch stays exactly as defined above:
+
+| This file's mode | `From:` summary value |
+|------------------|-----------------------|
+| positional new / bare, `--base` given | the `--base` ref verbatim as typed |
+| positional new / bare, no `--base` | the resolved HEAD label (`DescribeHead()` — current branch, or short SHA when detached) |
+| `--checkout <branch>` (local or remote-only) | `existing branch '<branch>' (checked out directly)` |
+| `--reuse` | *(no summary block — no `From:` line)* |
+
+The line's full contract (stderr-only, pre-dispatch resolution outside the reinstall window, the
+best-effort `DescribeHead()` helper) lives in [`create-output-phases`](/wt-cli/create-output-phases.md)
+"The Git-phase summary block carries a fourth `From:` line".
+
 ### `--reuse` is unchanged
 
 `--reuse` still requires `--worktree-name`, and on name collision it reuses the existing worktree
@@ -286,7 +306,8 @@ author — hence the hard break above).
   `Long` help text with no schema change (see `/wt-cli/help-dump-contract.md`).
 - Sibling memory: [`create-output-phases`](/wt-cli/create-output-phases.md) — the Git / Init /
   Open phase-separator + stdout-path-line contract shared by every create mode (new-branch,
-  `--checkout`, and bare). [`init-failure-contract`](/wt-cli/init-failure-contract.md) — the
+  `--checkout`, and bare); as of `260717-aeka` it also owns the fourth `From:` summary line that
+  *names* which of this file's modes ran (base ref verbatim / resolved HEAD / existing-branch copy). [`init-failure-contract`](/wt-cli/init-failure-contract.md) — the
   kept-worktree / `ExitInitFailed` / open-anyway / SIGINT-Option-B / foreground-reclaim behavior
   that runs identically on the `--checkout` path and the positional-new path; also the source of
   the `--reuse` init warn-but-continue exemption. [`help-dump-contract`](/wt-cli/help-dump-contract.md)

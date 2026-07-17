@@ -1,6 +1,9 @@
 package worktree
 
 import (
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -102,5 +105,45 @@ func TestInitScriptPath_ExplicitFabSync(t *testing.T) {
 	}
 	if isDefault {
 		t.Errorf("InitScriptPath() isDefault = true, want false (explicit \"fab sync\" is not the built-in default)")
+	}
+}
+
+// TestDescribeHead_OnBranch verifies DescribeHead returns the branch name when
+// HEAD points at a named branch.
+func TestDescribeHead_OnBranch(t *testing.T) {
+	dir := setupGitRepo(t)
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	if got := DescribeHead(); got != "main" {
+		t.Errorf("DescribeHead() = %q, want %q", got, "main")
+	}
+}
+
+// TestDescribeHead_Detached verifies DescribeHead returns the short SHA (not the
+// literal "HEAD") when HEAD is detached.
+func TestDescribeHead_Detached(t *testing.T) {
+	dir := setupGitRepo(t)
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	// Detach HEAD onto the current commit.
+	shaOut, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse --short HEAD: %v", err)
+	}
+	shortSHA := strings.TrimSpace(string(shaOut))
+	if out, err := exec.Command("git", "checkout", "--detach", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("checkout --detach: %s: %v", out, err)
+	}
+
+	got := DescribeHead()
+	if got == "HEAD" {
+		t.Errorf("DescribeHead() = %q, want the short SHA on detached HEAD", got)
+	}
+	if got != shortSHA {
+		t.Errorf("DescribeHead() = %q, want %q", got, shortSHA)
 	}
 }
