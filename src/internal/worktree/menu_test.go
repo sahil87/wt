@@ -476,6 +476,54 @@ func TestShowMenu_FallbackPath_EmptyInputUsesDefault(t *testing.T) {
 	}
 }
 
+// TestShowMenu_FallbackPath_EOFNoInputActionableError asserts principles №1/№4:
+// when stdin is not a TTY and reaches EOF with no choice entered (the piped-
+// empty / non-interactive case), the fallback menu refuses with a non-nil,
+// actionable error naming the escape (a worktree name or --non-interactive) —
+// NOT the bare "reading input: EOF", and never a hang. This is the single choke
+// point that covers wt open (main-repo menu), wt go (no name), and wt delete
+// (no name) at once.
+func TestShowMenu_FallbackPath_EOFNoInputActionableError(t *testing.T) {
+	withDisabledColors(t)
+
+	// Empty input, no newline → ReadString returns io.EOF with an empty line.
+	_, choice, err := withPipedStdinCapturedStdout(t, "", func() (int, error) {
+		return ShowMenu("Pick:", []string{"a", "b"}, 1)
+	})
+	if err == nil {
+		t.Fatalf("expected a non-nil error on EOF with no input; got nil (choice=%d)", choice)
+	}
+	msg := err.Error()
+	// The bare cause must NOT be surfaced verbatim.
+	if strings.Contains(msg, "reading input: EOF") {
+		t.Errorf("error should be actionable, not the bare %q:\n%s", "reading input: EOF", msg)
+	}
+	// It must carry the structured what/why/fix shape and name the escape.
+	for _, want := range []string{"Error:", "Why:", "Fix:", "not a terminal", "--non-interactive"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("actionable EOF error missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+// TestShowMenu_FallbackPath_PartialLineNoNewlineAtEOF asserts that a valid
+// choice typed WITHOUT a trailing newline before EOF is still honored (ReadString
+// returns the bytes-so-far alongside io.EOF) — the EOF refusal fires only when
+// there is genuinely no pending input.
+func TestShowMenu_FallbackPath_PartialLineNoNewlineAtEOF(t *testing.T) {
+	withDisabledColors(t)
+
+	_, choice, err := withPipedStdinCapturedStdout(t, "0", func() (int, error) {
+		return ShowMenu("Pick:", []string{"a", "b"}, 1)
+	})
+	if err != nil {
+		t.Fatalf("a choice without a trailing newline should be honored, got error: %v", err)
+	}
+	if choice != 0 {
+		t.Errorf("choice = %d; want 0 (Cancel) from partial-line '0' at EOF", choice)
+	}
+}
+
 // =============================================================================
 // runInteractiveMenuCore — panic-restore seam (T017 / A-011 / A-028)
 // =============================================================================
