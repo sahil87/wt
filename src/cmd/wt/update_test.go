@@ -47,24 +47,6 @@ func TestUpdate_AppearsInHelp(t *testing.T) {
 	}
 }
 
-// TestUpdate_SkipBrewUpdateFlagHiddenFromHelp asserts the deprecated
-// --skip-brew-update alias is HIDDEN from `wt update --help` (pflag auto-hides
-// MarkDeprecated flags) after the rename to --no-brew-update (change 59u8). The
-// primary flag's help visibility is guarded by
-// TestUpdate_NoBrewUpdateFlagInHelp; the deprecated alias' continued acceptance
-// is guarded by TestUpdate_SkipBrewUpdateFlagAccepted / _Deprecated.
-func TestUpdate_SkipBrewUpdateFlagHiddenFromHelp(t *testing.T) {
-	repo := createTestRepo(t)
-	r := runWt(t, repo, nil, "update", "--help")
-	if r.ExitCode != 0 {
-		t.Fatalf("wt update --help failed (exit %d)\nstdout: %s\nstderr: %s",
-			r.ExitCode, r.Stdout, r.Stderr)
-	}
-	if strings.Contains(r.Stdout, "--skip-brew-update") {
-		t.Fatalf("expected deprecated `--skip-brew-update` to be hidden from `wt update --help`, got:\n%s", r.Stdout)
-	}
-}
-
 // TestUpdate_SkipBrewUpdateFlagAccepted asserts that `wt update
 // --skip-brew-update` is parsed and accepted by cobra (no unknown-flag error),
 // reaching the internal/update.Run code path. As with TestUpdate_NonBrewBranch,
