@@ -15,6 +15,12 @@ func TestDelete_ByName(t *testing.T) {
 	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--worktree-name", "test-wt")
 	combined := r.Stdout + r.Stderr
 	assertContains(t, combined, "Deleted worktree")
+	// stdout is reserved for a future machine-readable contract: every non-error
+	// human line in wt delete goes to stderr, so a completed delete leaves stdout
+	// empty (mirrors create_test.go's one-line-stdout pin).
+	if r.Stdout != "" {
+		t.Errorf("expected empty stdout on a completed delete, got %q", r.Stdout)
+	}
 	assertWorktreeNotExists(t, repo, "test-wt")
 }
 
@@ -564,7 +570,7 @@ func TestDelete_StaleNoMatchesPrintsMessage(t *testing.T) {
 	chtimesWorktree(t, repo, "fresh", time.Now())
 
 	r := runWtSuccess(t, repo, nil, "delete", "--stale", "--non-interactive")
-	assertContains(t, r.Stdout, "No idle worktrees (threshold: 7d).")
+	assertContains(t, r.Stderr, "No idle worktrees (threshold: 7d).")
 	assertWorktreeExists(t, repo, "fresh")
 }
 
@@ -619,7 +625,7 @@ func TestDelete_StaleNeverTargetsMain(t *testing.T) {
 	r := runWtSuccess(t, repo, nil, "delete", "--stale", "--non-interactive")
 	// Main is excluded; only fresh would be eligible and it is not idle, so no
 	// matches. Main repo dir still present.
-	assertContains(t, r.Stdout, "No idle worktrees")
+	assertContains(t, r.Stderr, "No idle worktrees")
 	assertDirExists(t, repo)
 }
 
@@ -773,7 +779,9 @@ func TestDelete_DryRunAutoModeSkipMessageStillShows(t *testing.T) {
 
 	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "auto-dry", "--dry-run")
 	assertContains(t, r.Stdout, "Would remove worktree: auto-dry")
-	assertContains(t, r.Stdout, "Skipped branch deletion")
+	// Live-path copy (the auto-mode skip report) is stderr per the [ohwb]
+	// realignment; only preview lines belong to stdout.
+	assertContains(t, r.Stderr, "Skipped branch deletion")
 	// Auto mode skips the mismatched branch → no local-delete preview line.
 	assertNotContains(t, r.Stdout, "Would delete branch: feature/mismatch")
 
@@ -978,7 +986,9 @@ func TestDelete_DryRunStaleNoMatchesKeepsEmptyState(t *testing.T) {
 	chtimesWorktree(t, repo, "fresh-only", time.Now())
 
 	r := runWtSuccess(t, repo, nil, "delete", "--stale", "--non-interactive", "--dry-run")
-	assertContains(t, r.Stdout, "No idle worktrees (threshold: 7d).")
+	// The empty-state line is live-path copy — stderr per the [ohwb]
+	// realignment, preserved under dry-run.
+	assertContains(t, r.Stderr, "No idle worktrees (threshold: 7d).")
 	assertWorktreeExists(t, repo, "fresh-only")
 }
 

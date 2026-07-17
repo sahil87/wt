@@ -180,9 +180,12 @@ per-mutation lines and prints **once per invocation** (R8). Multi-target forms
 (`--all`, `--stale`, positionals) keep their per-worktree block structure with
 the same `Would …` lines per block; `--stale` with zero matches keeps its live
 `No idle worktrees (threshold: Nd).` empty-state (R8). The `[ohwb]` realignment
-of the *existing* live-path human chatter to stderr is a separately tracked
-deferral and is **out of scope** here — this change adds only the new preview
-copy on stdout.
+of the *existing* live-path human chatter to stderr was a separately tracked
+deferral, **since landed** as `260717-ohwb-delete-copy-stderr-realign` (see
+[create-output-phases](/wt-cli/create-output-phases.md)): all live human copy —
+including that empty-state line — now prints to **stderr**, so under `--dry-run`
+stdout carries *exactly* the `Dry run` header + `Would …` preview lines, and on
+live paths stdout is empty.
 
 Example (single dirty worktree whose branch matches its name and exists on
 origin):

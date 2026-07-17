@@ -104,7 +104,13 @@ zero recency, 7d          → idle (vanished worktree is a candidate)
   worktrees, the command prints `No idle worktrees (threshold: Nd).` and exits
   `ExitSuccess` (R17). The `Nd` rendering comes from the local `formatThreshold`
   helper (`fmt.Sprintf("%dd", int(d.Hours())/24)`), which round-trips the
-  resolved duration back to the `--stale=Nd` input form.
+  resolved duration back to the `--stale=Nd` input form. As of
+  `260717-ohwb-delete-copy-stderr-realign`, this empty-state message is emitted
+  on **stderr** (`fmt.Fprintf(os.Stderr, ...)`), not stdout — part of the
+  command-wide realignment that put all of `wt delete`'s non-error human copy on
+  stderr (stdout is now empty on every delete path). See
+  [create-output-phases](/wt-cli/create-output-phases.md) § `wt delete`'s entire
+  non-error human copy is on stderr.
 
 #### Mutex constraints
 

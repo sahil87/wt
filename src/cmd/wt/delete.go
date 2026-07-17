@@ -72,7 +72,7 @@ only the mutations are suppressed.`,
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 			go func() {
 				<-sigCh
-				fmt.Println()
+				fmt.Fprintln(os.Stderr)
 				rb.Execute()
 				os.Exit(130)
 			}()
@@ -217,9 +217,9 @@ func handleDeleteCurrent(session *wt.MenuSession, nonInteractive bool, deleteBra
 		wt.ExitWithError(wt.ExitGeneralError, "Cannot determine current branch", err.Error(), "")
 	}
 
-	fmt.Printf("Worktree: %s%s%s\n", wt.ColorBold, wtName, wt.ColorReset)
-	fmt.Printf("Branch: %s\n", branch)
-	fmt.Printf("Path: %s\n\n", wtPath)
+	fmt.Fprintf(os.Stderr, "Worktree: %s%s%s\n", wt.ColorBold, wtName, wt.ColorReset)
+	fmt.Fprintf(os.Stderr, "Branch: %s\n", branch)
+	fmt.Fprintf(os.Stderr, "Path: %s\n\n", wtPath)
 
 	printDryRunHeader(dryRun)
 
@@ -244,7 +244,7 @@ func handleDeleteCurrent(session *wt.MenuSession, nonInteractive bool, deleteBra
 			return err
 		}
 		if choice == 0 {
-			fmt.Println("Cancelled.")
+			fmt.Fprintln(os.Stderr, "Cancelled.")
 			return nil
 		}
 	}
@@ -265,17 +265,17 @@ func handleDeleteCurrent(session *wt.MenuSession, nonInteractive bool, deleteBra
 			"Check if the main repository still exists")
 	}
 
-	fmt.Println("Removing worktree...")
+	fmt.Fprintln(os.Stderr, "Removing worktree...")
 	if err := wt.RemoveWorktree(wtPath, true); err != nil {
 		wt.ExitWithError(wt.ExitGitError, "Failed to remove worktree", err.Error(), "")
 	}
-	fmt.Printf("Deleted worktree: %s%s%s\n", wt.ColorGreen, wtName, wt.ColorReset)
+	fmt.Fprintf(os.Stderr, "Deleted worktree: %s%s%s\n", wt.ColorGreen, wtName, wt.ColorReset)
 
 	handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote, dryRun)
 
-	fmt.Println()
-	fmt.Println("You are no longer in a valid directory.")
-	fmt.Printf("Run: %scd %s%s\n", wt.ColorBold, ctx.RepoRoot, wt.ColorReset)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "You are no longer in a valid directory.")
+	fmt.Fprintf(os.Stderr, "Run: %scd %s%s\n", wt.ColorBold, ctx.RepoRoot, wt.ColorReset)
 
 	return nil
 }
@@ -334,9 +334,9 @@ func handleDeleteByName(session *wt.MenuSession, name string, nonInteractive boo
 		os.Exit(wt.ExitGeneralError)
 	}
 
-	fmt.Printf("Worktree: %s%s%s\n", wt.ColorBold, name, wt.ColorReset)
-	fmt.Printf("Branch: %s\n", branch)
-	fmt.Printf("Path: %s\n\n", wtPath)
+	fmt.Fprintf(os.Stderr, "Worktree: %s%s%s\n", wt.ColorBold, name, wt.ColorReset)
+	fmt.Fprintf(os.Stderr, "Branch: %s\n", branch)
+	fmt.Fprintf(os.Stderr, "Path: %s\n\n", wtPath)
 
 	printDryRunHeader(dryRun)
 
@@ -352,7 +352,7 @@ func handleDeleteByName(session *wt.MenuSession, name string, nonInteractive boo
 			return err
 		}
 		if choice == 0 {
-			fmt.Println("Cancelled.")
+			fmt.Fprintln(os.Stderr, "Cancelled.")
 			return nil
 		}
 	}
@@ -364,11 +364,11 @@ func handleDeleteByName(session *wt.MenuSession, name string, nonInteractive boo
 		return nil
 	}
 
-	fmt.Println("Removing worktree...")
+	fmt.Fprintln(os.Stderr, "Removing worktree...")
 	if err := wt.RemoveWorktree(wtPath, true); err != nil {
 		wt.ExitWithError(wt.ExitGitError, "Failed to remove worktree", err.Error(), "")
 	}
-	fmt.Printf("Deleted worktree: %s%s%s\n", wt.ColorGreen, name, wt.ColorReset)
+	fmt.Fprintf(os.Stderr, "Deleted worktree: %s%s%s\n", wt.ColorGreen, name, wt.ColorReset)
 
 	handleBranchCleanup(branch, name, deleteBranch, deleteRemote, dryRun)
 
@@ -447,11 +447,11 @@ func handleDeleteMultiple(session *wt.MenuSession, names []string, nonInteractiv
 	}
 
 	// Display summary
-	fmt.Printf("Worktrees to delete (%d):\n", len(resolved))
+	fmt.Fprintf(os.Stderr, "Worktrees to delete (%d):\n", len(resolved))
 	for _, w := range resolved {
-		fmt.Printf("  %s%s%s  (branch: %s, path: %s)\n", wt.ColorBold, w.name, wt.ColorReset, w.branch, w.path)
+		fmt.Fprintf(os.Stderr, "  %s%s%s  (branch: %s, path: %s)\n", wt.ColorBold, w.name, wt.ColorReset, w.branch, w.path)
 	}
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 
 	printDryRunHeader(dryRun)
 
@@ -465,17 +465,17 @@ func handleDeleteMultiple(session *wt.MenuSession, names []string, nonInteractiv
 			return err
 		}
 		if choice == 0 {
-			fmt.Println("Cancelled.")
+			fmt.Fprintln(os.Stderr, "Cancelled.")
 			return nil
 		}
 	}
 
 	// Sequential deletion with continue-on-error
 	for _, w := range resolved {
-		fmt.Printf("\n--- Deleting: %s ---\n", w.name)
-		fmt.Printf("Worktree: %s%s%s\n", wt.ColorBold, w.name, wt.ColorReset)
-		fmt.Printf("Branch: %s\n", w.branch)
-		fmt.Printf("Path: %s\n\n", w.path)
+		fmt.Fprintf(os.Stderr, "\n--- Deleting: %s ---\n", w.name)
+		fmt.Fprintf(os.Stderr, "Worktree: %s%s%s\n", wt.ColorBold, w.name, wt.ColorReset)
+		fmt.Fprintf(os.Stderr, "Branch: %s\n", w.branch)
+		fmt.Fprintf(os.Stderr, "Path: %s\n\n", w.path)
 
 		// Handle stash per worktree
 		if stashMode == "stash" {
@@ -489,12 +489,12 @@ func handleDeleteMultiple(session *wt.MenuSession, names []string, nonInteractiv
 			continue
 		}
 
-		fmt.Println("Removing worktree...")
+		fmt.Fprintln(os.Stderr, "Removing worktree...")
 		if err := wt.RemoveWorktree(w.path, true); err != nil {
 			wt.Warn("failed to remove %s: %s", w.name, err)
 			continue
 		}
-		fmt.Printf("Deleted worktree: %s%s%s\n", wt.ColorGreen, w.name, wt.ColorReset)
+		fmt.Fprintf(os.Stderr, "Deleted worktree: %s%s%s\n", wt.ColorGreen, w.name, wt.ColorReset)
 		handleBranchCleanup(w.branch, w.name, deleteBranch, deleteRemote, dryRun)
 	}
 
@@ -539,15 +539,15 @@ func handleDeleteAll(session *wt.MenuSession, nonInteractive bool, deleteBranch,
 	}
 
 	if len(worktrees) == 0 {
-		fmt.Println("No worktrees found.")
+		fmt.Fprintln(os.Stderr, "No worktrees found.")
 		return nil
 	}
 
-	fmt.Printf("Found %d worktree(s):\n", len(worktrees))
+	fmt.Fprintf(os.Stderr, "Found %d worktree(s):\n", len(worktrees))
 	for _, w := range worktrees {
-		fmt.Printf("  %s\n", w.name)
+		fmt.Fprintf(os.Stderr, "  %s\n", w.name)
 	}
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 
 	printDryRunHeader(dryRun)
 
@@ -561,16 +561,16 @@ func handleDeleteAll(session *wt.MenuSession, nonInteractive bool, deleteBranch,
 			return err
 		}
 		if choice == 0 {
-			fmt.Println("Cancelled.")
+			fmt.Fprintln(os.Stderr, "Cancelled.")
 			return nil
 		}
 	}
 
 	for _, w := range worktrees {
-		fmt.Printf("\n--- Deleting: %s ---\n", w.name)
-		fmt.Printf("Worktree: %s%s%s\n", wt.ColorBold, w.name, wt.ColorReset)
-		fmt.Printf("Branch: %s\n", w.branch)
-		fmt.Printf("Path: %s\n\n", w.path)
+		fmt.Fprintf(os.Stderr, "\n--- Deleting: %s ---\n", w.name)
+		fmt.Fprintf(os.Stderr, "Worktree: %s%s%s\n", wt.ColorBold, w.name, wt.ColorReset)
+		fmt.Fprintf(os.Stderr, "Branch: %s\n", w.branch)
+		fmt.Fprintf(os.Stderr, "Path: %s\n\n", w.path)
 
 		if dryRun {
 			previewDiscardWhenDirty(w.path, stashMode)
@@ -579,12 +579,12 @@ func handleDeleteAll(session *wt.MenuSession, nonInteractive bool, deleteBranch,
 			continue
 		}
 
-		fmt.Println("Removing worktree...")
+		fmt.Fprintln(os.Stderr, "Removing worktree...")
 		if err := wt.RemoveWorktree(w.path, true); err != nil {
 			wt.Warn("failed to remove %s: %s", w.name, err)
 			continue
 		}
-		fmt.Printf("Deleted worktree: %s%s%s\n", wt.ColorGreen, w.name, wt.ColorReset)
+		fmt.Fprintf(os.Stderr, "Deleted worktree: %s%s%s\n", wt.ColorGreen, w.name, wt.ColorReset)
 		handleBranchCleanup(w.branch, w.name, deleteBranch, deleteRemote, dryRun)
 	}
 
@@ -631,7 +631,7 @@ func handleDeleteStale(session *wt.MenuSession, staleValue string, nonInteractiv
 	}
 
 	if len(idleNames) == 0 {
-		fmt.Printf("No idle worktrees (threshold: %s).\n", formatThreshold(threshold))
+		fmt.Fprintf(os.Stderr, "No idle worktrees (threshold: %s).\n", formatThreshold(threshold))
 		return nil
 	}
 
@@ -674,7 +674,7 @@ func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch
 	}
 
 	if len(options) == 0 {
-		fmt.Println("No worktrees found.")
+		fmt.Fprintln(os.Stderr, "No worktrees found.")
 		return nil
 	}
 
@@ -733,7 +733,7 @@ func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch
 		return err
 	}
 	if choice == 0 {
-		fmt.Println("Cancelled.")
+		fmt.Fprintln(os.Stderr, "Cancelled.")
 		return nil
 	}
 
@@ -768,19 +768,19 @@ func handleUncommittedChanges(session *wt.MenuSession, wtName, stashMode string,
 	}
 
 	if stashMode == "stash" {
-		fmt.Println("Stashing changes...")
+		fmt.Fprintln(os.Stderr, "Stashing changes...")
 		hash, err := wt.StashCreate(fmt.Sprintf("wt-delete: saved from worktree '%s' on %s", wtName, dateStr))
 		if err != nil {
 			return err
 		}
 		if hash != "" {
-			fmt.Printf("Changes stashed (hash: %s). Recover with 'git stash list' or 'git stash apply %s'\n", hash, hash)
+			fmt.Fprintf(os.Stderr, "Changes stashed (hash: %s). Recover with 'git stash list' or 'git stash apply %s'\n", hash, hash)
 		}
 		return nil
 	}
 
 	if nonInteractive {
-		fmt.Println("Discarding uncommitted changes...")
+		fmt.Fprintln(os.Stderr, "Discarding uncommitted changes...")
 		return nil
 	}
 
@@ -800,18 +800,18 @@ func handleUncommittedChanges(session *wt.MenuSession, wtName, stashMode string,
 
 	switch choice {
 	case 1:
-		fmt.Println("Stashing changes...")
+		fmt.Fprintln(os.Stderr, "Stashing changes...")
 		hash, err := wt.StashCreate(fmt.Sprintf("wt-delete: saved from worktree '%s' on %s", wtName, dateStr))
 		if err != nil {
 			return err
 		}
 		if hash != "" {
-			fmt.Printf("Changes stashed (hash: %s). Recover with 'git stash list' or 'git stash apply %s'\n", hash, hash)
+			fmt.Fprintf(os.Stderr, "Changes stashed (hash: %s). Recover with 'git stash list' or 'git stash apply %s'\n", hash, hash)
 		}
 	case 2:
-		fmt.Println("Discarding changes...")
+		fmt.Fprintln(os.Stderr, "Discarding changes...")
 	case 0:
-		fmt.Println("Cancelled.")
+		fmt.Fprintln(os.Stderr, "Cancelled.")
 		os.Exit(wt.ExitSuccess)
 	}
 	return nil
@@ -839,15 +839,15 @@ func handleUnpushedCommits(session *wt.MenuSession, branch string, nonInteractiv
 	wt.Warn("Branch has %d unpushed commit(s)", count)
 	fmt.Fprintln(os.Stderr)
 
-	fmt.Println("Commits that will be lost:")
+	fmt.Fprintln(os.Stderr, "Commits that will be lost:")
 	lines := wt.GetUnpushedCommitLines(branch, 5)
 	for _, line := range lines {
-		fmt.Printf("  %s\n", line)
+		fmt.Fprintf(os.Stderr, "  %s\n", line)
 	}
 	if count > 5 {
-		fmt.Printf("  ... and %d more\n", count-5)
+		fmt.Fprintf(os.Stderr, "  ... and %d more\n", count-5)
 	}
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 
 	choice, err := session.Show("Continue anyway?", []string{
 		"Yes, delete (commits will be lost)",
@@ -856,7 +856,7 @@ func handleUnpushedCommits(session *wt.MenuSession, branch string, nonInteractiv
 		return err
 	}
 	if choice == 0 {
-		fmt.Println("Cancelled.")
+		fmt.Fprintln(os.Stderr, "Cancelled.")
 		os.Exit(wt.ExitSuccess)
 	}
 	return nil
@@ -881,7 +881,7 @@ func handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote string, dryR
 		if branch == wtName {
 			shouldDelete = true
 		} else {
-			fmt.Printf("Skipped branch deletion: branch '%s' does not match worktree name '%s'; use --branch=true to force\n", branch, wtName)
+			fmt.Fprintf(os.Stderr, "Skipped branch deletion: branch '%s' does not match worktree name '%s'; use --branch=true to force\n", branch, wtName)
 		}
 	}
 
@@ -896,14 +896,14 @@ func handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote string, dryR
 			}
 		} else {
 			if err := wt.DeleteLocalBranch(branch, true); err == nil {
-				fmt.Printf("Deleted branch: %s (local)\n", branch)
+				fmt.Fprintf(os.Stderr, "Deleted branch: %s (local)\n", branch)
 			}
 
 			if deleteRemote == "true" && wt.BranchExistsRemotely(branch) {
 				if err := wt.DeleteRemoteBranch(branch); err == nil {
-					fmt.Printf("Deleted branch: %s (remote)\n", branch)
+					fmt.Fprintf(os.Stderr, "Deleted branch: %s (remote)\n", branch)
 				} else {
-					fmt.Printf("%sNote:%s Could not delete remote branch\n", wt.ColorYellow, wt.ColorReset)
+					fmt.Fprintf(os.Stderr, "%sNote:%s Could not delete remote branch\n", wt.ColorYellow, wt.ColorReset)
 				}
 			}
 		}
@@ -929,11 +929,11 @@ func handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote string, dryR
 			}
 		} else {
 			if err := wt.DeleteLocalBranch(wtOriginBranch, true); err == nil {
-				fmt.Printf("Deleted branch: %s (local)\n", wtOriginBranch)
+				fmt.Fprintf(os.Stderr, "Deleted branch: %s (local)\n", wtOriginBranch)
 			}
 			if deleteRemote == "true" && wt.BranchExistsRemotely(wtOriginBranch) {
 				if err := wt.DeleteRemoteBranch(wtOriginBranch); err == nil {
-					fmt.Printf("Deleted branch: %s (remote)\n", wtOriginBranch)
+					fmt.Fprintf(os.Stderr, "Deleted branch: %s (remote)\n", wtOriginBranch)
 				}
 			}
 		}
@@ -981,7 +981,7 @@ func handleStashInDir(wtPath, name string, dryRun bool) {
 		return
 	}
 
-	fmt.Println("Stashing changes...")
+	fmt.Fprintln(os.Stderr, "Stashing changes...")
 	dateStr := time.Now().Format("2006-01-02")
 	msg := fmt.Sprintf("wt-delete: saved from worktree '%s' on %s", name, dateStr)
 
@@ -1014,5 +1014,5 @@ func handleStashInDir(wtPath, name string, dryRun bool) {
 	cleanCmd.Dir = wtPath
 	cleanCmd.Run()
 
-	fmt.Printf("Changes stashed (hash: %s). Recover with 'git stash list' or 'git stash apply %s'\n", hash, hash)
+	fmt.Fprintf(os.Stderr, "Changes stashed (hash: %s). Recover with 'git stash list' or 'git stash apply %s'\n", hash, hash)
 }
