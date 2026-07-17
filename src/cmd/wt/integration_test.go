@@ -96,7 +96,7 @@ func TestIntegration_BranchDeletePreservesOthers(t *testing.T) {
 	gitRun(t, repo, "checkout", "-b", "feature/delete-me")
 	gitRun(t, repo, "checkout", "main")
 
-	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "del-branch", "feature/delete-me")
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "del-branch", "--checkout", "feature/delete-me")
 
 	runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--worktree-name", "del-branch", "--delete-branch", "true")
 

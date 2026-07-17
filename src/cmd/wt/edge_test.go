@@ -94,7 +94,8 @@ func TestEdge_BranchWithSpecialChars(t *testing.T) {
 	gitRun(t, repo, "checkout", "-b", "feature/my_special-branch")
 	gitRun(t, repo, "checkout", "main")
 
-	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "feature/my_special-branch")
+	// Existing branch → --checkout (the positional creates new branches only).
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--checkout", "feature/my_special-branch")
 	_ = r
 }
 

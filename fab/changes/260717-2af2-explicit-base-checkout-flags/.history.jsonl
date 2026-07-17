@@ -1,0 +1,9 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-07-17T07:28:16Z"}
+{"args":"wt create's trailing positional arg silently overloads two meanings: an unused name branches new, an EXISTING branch name checks it out directly in-place with no warning -- dangerous for shared/collector branches. Split into explicit flags: --base \u003cref\u003e (always branch new off ref) vs --checkout \u003cbranch\u003e (explicit opt-in to shared checkout); remove the ambiguous bare-positional overload.","cmd":"fab-new","event":"command","ts":"2026-07-17T07:28:16Z"}
+{"delta":"+4.3","event":"confidence","score":4.3,"trigger":"calc-score","ts":"2026-07-17T07:33:43Z"}
+{"cmd":"fab-fff","event":"command","ts":"2026-07-17T07:37:13Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-07-17T07:37:23Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-07-17T07:48:36Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-07-17T07:59:42Z"}
+{"event":"review","result":"passed","ts":"2026-07-17T07:59:42Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-07-17T08:04:41Z"}

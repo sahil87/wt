@@ -23,7 +23,9 @@ Run `wt <command> --help` for the same reference inline at your terminal.
 Creates a git worktree as a sibling of the main repo
 (`<repo>.worktrees/<name>/`). With no `branch` argument it makes an exploratory
 worktree on a new branch named after the random worktree name; with a `branch`
-argument it checks out that branch (existing) or creates it (new).
+argument it creates a **new** branch with that name (an existing branch name is
+an error — put a worktree on an existing branch explicitly with
+`--checkout <branch>`).
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -33,6 +35,7 @@ argument it checks out that branch (existing) or creates it (new).
 | `--reuse` | `false` | If a worktree with `--worktree-name` already exists, reuse it instead of erroring. Requires `--worktree-name`. |
 | `--non-interactive` | `false` | No prompts; fail or use defaults rather than prompting. |
 | `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for new branches. See the table below. |
+| `--checkout <branch>` | (none) | Check out an **existing** branch (local or remote) into the new worktree. Mutually exclusive with the positional and `--base`. |
 
 On success the worktree path is written as the last line of stdout (suppressed
 when the chosen app was "Open here", because the shell wrapper consumed it via
@@ -120,8 +123,8 @@ whether the branch already exists:
 |----------|----------|----------|
 | New branch (doesn't exist locally or remotely) | provided | Branch created from the `--base` ref. |
 | New branch | omitted | Branch created from `HEAD` (default). |
-| Existing local branch | provided | Warning: `--base ignored: branch already exists locally`. |
-| Existing remote branch | provided | Warning: `--base ignored: fetching existing remote branch`. |
+| Positional names an existing branch (local or remote) | either | Error (exit 2): the positional only creates new branches — use `--checkout <branch>`. |
+| With `--checkout <branch>` | provided | Error (exit 2): `--base` sets a new branch's start-point; `--checkout` targets an existing branch. |
 | Exploratory (no branch arg) | provided | Exploratory branch created from the `--base` ref. |
 | Exploratory | omitted | Branch created from the current `HEAD` (default). |
 | With `--reuse` (worktree exists) | provided | `--reuse` takes precedence; `--base` has no effect. |
@@ -206,9 +209,10 @@ but for a worktree created on an existing branch they differ freely.
   bug. `eval "$(wt shell-init)"` installs a shell function that wraps the binary
   so the "Open here" menu option actually works. See the
   [install guide](./install.md#shell-wrapper-enables-open-here).
-- **`--base` is ignored when the branch already exists** (locally or on the
-  remote) — `wt` checks out the existing branch instead and prints a warning.
-  `--reuse` also takes precedence over `--base`.
+- **The `wt create` positional never checks out an existing branch.** Naming a
+  branch that already exists (locally or on the remote) is an error (exit 2) —
+  checkout of an existing branch is an explicit opt-in via `--checkout <branch>`.
+  `--reuse` takes precedence over `--base`.
 - **Worktrees survive `cd` into deleted directories.** If you delete a worktree
   from outside (`rm -rf`), run `git worktree prune` in the main repo to clean up
   git's bookkeeping.

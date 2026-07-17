@@ -322,7 +322,7 @@ func TestDelete_AutoModeSkipsBranchWhenNameMismatch(t *testing.T) {
 	// Create a branch with a different name than the worktree
 	gitRun(t, repo, "checkout", "-b", "feature/different-branch")
 	gitRun(t, repo, "checkout", "main")
-	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "auto-skip-wt", "feature/different-branch")
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "auto-skip-wt", "--checkout", "feature/different-branch")
 
 	// Delete the worktree WITHOUT --delete-branch (auto mode)
 	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--worktree-name", "auto-skip-wt")

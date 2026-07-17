@@ -1,11 +1,28 @@
 package worktree
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+)
+
+// Sentinel errors for the branch-selection contract. cmd/create.go maps these
+// (via errors.Is) to ExitInvalidArgs with the user-facing fix hint pointing at
+// the correct flag, keeping the existence business-rule inside internal/
+// (Constitution V) while cmd/ only routes flags.
+var (
+	// ErrBranchExists is returned by CreateNewBranchWorktree when the named
+	// branch already exists locally or remotely. The positional argument only
+	// creates NEW branches; an existing branch is a --checkout job.
+	ErrBranchExists = errors.New("branch already exists")
+
+	// ErrBranchNotFound is returned by CheckoutBranchWorktree when the named
+	// branch exists neither locally nor remotely. --checkout requires an
+	// existing branch; a missing branch is a create-new job.
+	ErrBranchNotFound = errors.New("branch not found")
 )
 
 // EnsureWorktreesDir creates the worktrees directory if it doesn't exist.
@@ -65,10 +82,38 @@ func RemoveWorktree(path string, force bool) error {
 	return nil
 }
 
-// CreateBranchWorktree creates a worktree for a specified branch (local, remote, or new).
-// startPoint is only used when creating a new branch; it is ignored for existing local/remote branches.
+// CreateNewBranchWorktree creates a worktree on a NEW branch. If the branch
+// already exists locally or remotely it returns ErrBranchExists and creates
+// nothing — checking out an existing branch is CheckoutBranchWorktree's job
+// (the positional argument only creates new branches). startPoint, when
+// non-empty, is the git start-point for the new branch (else HEAD).
 // Returns the worktree path.
-func CreateBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback, startPoint string) (string, error) {
+func CreateNewBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback, startPoint string) (string, error) {
+	if BranchExistsLocally(branch) || BranchExistsRemotely(branch) {
+		return "", ErrBranchExists
+	}
+
+	if err := EnsureWorktreesDir(ctx.WorktreesDir); err != nil {
+		return "", err
+	}
+
+	wtPath := filepath.Join(ctx.WorktreesDir, name)
+
+	if err := CreateWorktree(wtPath, branch, true, startPoint); err != nil {
+		return "", err
+	}
+	rb.Register("git", "worktree", "remove", "--force", wtPath)
+	rb.Register("git", "branch", "-D", branch)
+
+	return wtPath, nil
+}
+
+// CheckoutBranchWorktree creates a worktree on an EXISTING branch — a local
+// branch is checked out as-is; a remote-only branch is fetched then checked
+// out. If the branch exists neither locally nor remotely it returns
+// ErrBranchNotFound and creates nothing (--checkout requires an existing
+// branch). Returns the worktree path.
+func CheckoutBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback) (string, error) {
 	if err := EnsureWorktreesDir(ctx.WorktreesDir); err != nil {
 		return "", err
 	}
@@ -89,11 +134,7 @@ func CreateBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback, s
 		}
 		rb.Register("git", "worktree", "remove", "--force", wtPath)
 	} else {
-		if err := CreateWorktree(wtPath, branch, true, startPoint); err != nil {
-			return "", err
-		}
-		rb.Register("git", "worktree", "remove", "--force", wtPath)
-		rb.Register("git", "branch", "-D", branch)
+		return "", ErrBranchNotFound
 	}
 
 	return wtPath, nil

@@ -75,7 +75,7 @@ $ wt delete lively-otter      # removes worktree (and optionally the branch)
 
 | Command | Summary |
 |---------|---------|
-| `wt create [branch]` | Create a worktree (random name + new branch, or named branch). Key flags: `--base <ref>`, `--reuse`, `--worktree-name`, `--non-interactive`. |
+| `wt create [branch]` | Create a worktree on a **new** branch (random name, or the named positional). Key flags: `--checkout <branch>` (existing branch), `--base <ref>`, `--reuse`, `--worktree-name`, `--non-interactive`. |
 | `wt list` | List all worktrees with name, branch, and path. Add `--status` for dirty/unpushed indicators; `--path` and `--json` for scripting. |
 | `wt open [name\|path]` | Open a worktree in a detected app (editor, terminal, file manager). `--app` to skip the menu. |
 | `wt delete [names...]` | Delete one or more worktrees with optional branch cleanup. |
@@ -92,12 +92,17 @@ Run `wt <command> --help` for inline flag details. For every flag and exit code,
 |----------|----------|----------|
 | New branch (doesn't exist locally or remotely) | provided | Branch created from `--base` ref |
 | New branch | omitted | Branch created from `HEAD` (default) |
-| Existing local branch | provided | Warning: `--base ignored: branch already exists locally` |
-| Existing remote branch | provided | Warning: `--base ignored: fetching existing remote branch` |
+| Positional names an existing branch (local or remote) | either | Error (exit 2): the positional only creates new branches — use `--checkout <branch>` |
+| With `--checkout <branch>` | provided | Error (exit 2): `--base` sets a new branch's start-point; `--checkout` targets an existing branch |
 | Exploratory (no branch arg) | provided | Exploratory branch created from `--base` ref |
 | Exploratory | omitted | Branch created from current `HEAD` (default) |
 | With `--reuse` (worktree exists) | provided | `--reuse` takes precedence; `--base` has no effect |
 | Invalid ref | provided | Error exit; no worktree or branch created |
+
+To put a worktree on an **existing** branch (local or remote), opt in explicitly
+with `--checkout <branch>` — e.g. `wt create --checkout sockets-v2`. A remote-only
+branch is fetched first; a branch that exists nowhere is an error pointing you
+back at the positional/`--base` form.
 
 The ref is validated via `git rev-parse --verify` before worktree creation, so invalid refs produce a clear error rather than a partial failure.
 
@@ -149,5 +154,5 @@ detected app, or `7` to copy the absolute path to your clipboard.
 ## Gotchas
 
 - **`wt open` can't `cd` without the shell wrapper.** A child process can't change its parent shell's directory — that's a Unix constraint, not a wt bug. `eval "$(wt shell-init)"` installs a shell function that wraps the binary so the "Open here" menu option actually works.
-- **`--base` is ignored when the branch already exists** (locally or on the remote) — wt checks out the existing branch instead and prints a warning. `--reuse` also takes precedence over `--base`.
+- **The `wt create` positional never checks out an existing branch.** Naming a branch that already exists (locally or on the remote) is an error (exit 2) — checkout of an existing branch is an explicit opt-in via `--checkout <branch>`. `--reuse` takes precedence over `--base`.
 - **Worktrees survive `cd` into deleted directories.** If you delete a worktree from outside (`rm -rf`), run `git worktree prune` in the main repo to clean up git's bookkeeping.
