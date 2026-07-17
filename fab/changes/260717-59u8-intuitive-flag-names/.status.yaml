@@ -9,8 +9,8 @@ progress:
     apply: done
     review: done
     hydrate: done
-    ship: active
-    review-pr: pending
+    ship: done
+    review-pr: active
 plan:
     generated: true
     task_count: 15
@@ -33,22 +33,24 @@ stage_metrics:
     apply: {started_at: "2026-07-17T19:05:01Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-17T19:22:05Z"}
     review: {started_at: "2026-07-17T19:22:05Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-17T19:37:42Z"}
     hydrate: {started_at: "2026-07-17T19:37:42Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-17T19:47:10Z"}
-    ship: {started_at: "2026-07-17T19:47:10Z", driver: fab-fff, iterations: 1}
-prs: []
+    ship: {started_at: "2026-07-17T19:47:10Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-17T19:51:14Z"}
+    review-pr: {started_at: "2026-07-17T19:51:14Z", driver: git-pr, iterations: 1}
+prs:
+    - https://github.com/sahil87/wt/pull/36
 true_impact:
-    added: 0
-    deleted: 0
-    net: 0
+    added: 1340
+    deleted: 138
+    net: 1202
     excluding:
-        added: 0
-        deleted: 0
-        net: 0
+        added: 495
+        deleted: 38
+        net: 457
     tests:
-        added: 0
-        deleted: 0
-        net: 0
-    computed_at: "2026-07-17T19:47:10Z"
-    computed_at_stage: hydrate
+        added: 398
+        deleted: 10
+        net: 388
+    computed_at: "2026-07-17T19:51:14Z"
+    computed_at_stage: ship
 summary: Renamed wt flags to intuitive names (--no-* negation, no command-noun prefixes, short flags, command aliases) with permanent deprecated aliases; added wt-cli/flag-naming-conventions memory file.
 # true_impact: lazily created on first stage-finish that computes it (no placeholder here).
-last_updated: 2026-07-17T19:47:10Z
+last_updated: 2026-07-17T19:51:14Z
