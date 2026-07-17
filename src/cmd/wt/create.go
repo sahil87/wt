@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ func createCmd() *cobra.Command {
 		reuse          bool
 		nonInteractive bool
 		base           string
+		checkout       string
 	)
 
 	cmd := &cobra.Command{
@@ -29,9 +31,16 @@ func createCmd() *cobra.Command {
 		Short: "Create a git worktree",
 		Long: `Create a git worktree for parallel development.
 
-When BRANCH is omitted, creates an exploratory worktree with a random name.
-When BRANCH is provided, checks out that branch (fetching from remote if needed)
-or creates a new branch.`,
+When BRANCH is omitted, creates an exploratory worktree with a random name (or
+the value of --worktree-name, if given) on a new branch of the same name.
+
+When BRANCH is provided, it names a NEW branch to create (off --base, else
+HEAD). If that branch already exists locally or remotely, the command fails —
+use --checkout to put a worktree on an existing branch.
+
+--checkout <branch> checks out an EXISTING branch (local as-is, or remote-only
+fetched then checked out). --checkout cannot be combined with a positional
+branch argument or with --base.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var branchArg string
@@ -58,6 +67,22 @@ or creates a new branch.`,
 					"--reuse only works with an explicit worktree name",
 					"Example: wt create --reuse --worktree-name my-feature branch-name")
 				os.Exit(wt.ExitInvalidArgs)
+			}
+
+			// --checkout selects an existing branch; the positional creates a
+			// new one. They are mutually exclusive modes, as are --checkout and
+			// --base (--base is the start-point for a NEW branch only).
+			if checkout != "" && branchArg != "" {
+				wt.ExitWithError(wt.ExitInvalidArgs,
+					"--checkout cannot be combined with a positional branch argument",
+					"The positional creates a new branch; --checkout checks out an existing one",
+					"Use one of: wt create <new-branch> | wt create --checkout <existing-branch>")
+			}
+			if checkout != "" && base != "" {
+				wt.ExitWithError(wt.ExitInvalidArgs,
+					"--base cannot be combined with --checkout",
+					"--base is the start-point for a NEW branch; --checkout targets an existing branch",
+					"Drop --base, or create a new branch: wt create <name> --base <ref>")
 			}
 
 			// Validate git repo
@@ -90,35 +115,32 @@ or creates a new branch.`,
 				rb.Execute()
 			}()
 
-			// Validate branch name
-			if branchArg != "" {
-				if err := wt.ValidateBranchName(branchArg); err != nil {
+			// Validate branch name — the positional (new branch) or the
+			// --checkout target (existing branch) are validated the same way.
+			branchToValidate := branchArg
+			if checkout != "" {
+				branchToValidate = checkout
+			}
+			if branchToValidate != "" {
+				if err := wt.ValidateBranchName(branchToValidate); err != nil {
 					wt.ExitWithError(wt.ExitInvalidArgs,
 						"Invalid branch name",
-						fmt.Sprintf("Branch name '%s' contains invalid characters", branchArg),
+						fmt.Sprintf("Branch name '%s' contains invalid characters", branchToValidate),
 						"Use alphanumeric characters, hyphens, and single slashes")
 				}
 			}
 
-			// Validate --base ref only when it will actually be used.
-			// When --reuse is set, or when BRANCH already exists locally/remotely,
-			// later logic ignores --base, so we skip validation here to avoid
-			// failing commands like `wt create --reuse --base <bad>` or
-			// `wt create <existing-branch> --base <bad>`.
+			// Validate --base ref whenever it is set and --reuse is not.
+			// The positional is always a NEW branch now, so --base always
+			// applies to it; only --reuse short-circuits before --base is used
+			// (so `wt create --reuse --base <bad>` must not fail on the ref).
+			// (--base + --checkout was already rejected above.)
 			if base != "" && !reuse {
-				existingBranch := false
-				if branchArg != "" {
-					if err := exec.Command("git", "rev-parse", "--verify", branchArg).Run(); err == nil {
-						existingBranch = true
-					}
-				}
-				if !existingBranch {
-					if err := exec.Command("git", "rev-parse", "--verify", base).Run(); err != nil {
-						wt.ExitWithError(wt.ExitInvalidArgs,
-							fmt.Sprintf("Invalid --base ref: %s", base),
-							fmt.Sprintf("'%s' does not resolve to a valid git object", base),
-							"Provide a valid branch name, tag, or commit SHA")
-					}
+				if err := exec.Command("git", "rev-parse", "--verify", base).Run(); err != nil {
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						fmt.Sprintf("Invalid --base ref: %s", base),
+						fmt.Sprintf("'%s' does not resolve to a valid git object", base),
+						"Provide a valid branch name, tag, or commit SHA")
 				}
 			}
 
@@ -161,9 +183,16 @@ or creates a new branch.`,
 				}
 			}
 
-			// Determine suggested name
+			// Determine suggested name. Bare create → random unique name;
+			// a named branch (new via positional, or existing via --checkout)
+			// → derived from the branch name.
 			var suggestedName string
-			if branchArg == "" {
+			switch {
+			case checkout != "":
+				suggestedName = wt.DeriveWorktreeName(checkout)
+			case branchArg != "":
+				suggestedName = wt.DeriveWorktreeName(branchArg)
+			default:
 				suggestedName, err = wt.GenerateUniqueName(ctx.WorktreesDir, 10)
 				if err != nil {
 					wt.ExitWithError(wt.ExitRetryExhausted,
@@ -171,8 +200,6 @@ or creates a new branch.`,
 						"All 10 random name attempts collided with existing worktrees",
 						fmt.Sprintf("Remove some worktrees from %s or increase retries", ctx.WorktreesDir))
 				}
-			} else {
-				suggestedName = wt.DeriveWorktreeName(branchArg)
 			}
 
 			// Resolve final name
@@ -213,38 +240,51 @@ or creates a new branch.`,
 			// Reinstall-window contract (spec § Signal Handling During Init):
 			// no I/O, user prompts, or nontrivial work between the worktree-add
 			// returning and the signal.Reset below. The "Created worktree:"
-			// summary lines and any --base warn-and-ignore notices are
-			// deferred until AFTER the signal swap. If init is disabled
-			// (worktreeInit != "true"), the summary still gets printed via the
-			// late-print path below.
+			// summary lines are deferred until AFTER the signal swap. If init is
+			// disabled (worktreeInit != "true"), the summary still gets printed
+			// via the late-print path below.
+			//
+			// Three modes route here: bare create (exploratory new branch),
+			// a positional (NEW branch — existing → ExitInvalidArgs pointing at
+			// --checkout), and --checkout (EXISTING branch — missing →
+			// ExitInvalidArgs pointing at create-new). The existence rules live
+			// in internal/worktree; cmd/ maps the sentinel errors to exit codes.
 			var wtPath string
 			var createdSummaryBranch string // branch label shown in the summary
-			var baseWarnings []string       // --base ignored notices, printed after signal swap
-			if branchArg == "" {
+			switch {
+			case checkout != "":
+				wtPath, err = wt.CheckoutBranchWorktree(checkout, finalName, ctx, rb)
+				if err != nil {
+					if errors.Is(err, wt.ErrBranchNotFound) {
+						wt.ExitWithError(wt.ExitInvalidArgs,
+							fmt.Sprintf("Branch '%s' not found", checkout),
+							"--checkout requires an existing local or remote branch",
+							fmt.Sprintf("To create a new branch: wt create %s [--base <ref>]", checkout))
+					}
+					wt.ExitWithError(wt.ExitGitError, "Failed to create worktree", err.Error(),
+						"The branch may already be checked out in another worktree")
+				}
+				createdSummaryBranch = checkout
+			case branchArg != "":
+				wtPath, err = wt.CreateNewBranchWorktree(branchArg, finalName, ctx, rb, base)
+				if err != nil {
+					if errors.Is(err, wt.ErrBranchExists) {
+						wt.ExitWithError(wt.ExitInvalidArgs,
+							fmt.Sprintf("Branch '%s' already exists", branchArg),
+							"The positional argument only creates new branches",
+							fmt.Sprintf("To put a worktree on the existing branch: wt create --checkout %s", branchArg))
+					}
+					wt.ExitWithError(wt.ExitGitError, "Failed to create worktree", err.Error(),
+						"The branch may already be checked out in another worktree")
+				}
+				createdSummaryBranch = branchArg
+			default:
 				wtPath, err = wt.CreateExploratoryWorktree(finalName, ctx, rb, base)
 				if err != nil {
 					wt.ExitWithError(wt.ExitGitError, "Failed to create worktree", err.Error(),
 						"Check if the branch already exists or if there are permission issues")
 				}
 				createdSummaryBranch = finalName
-			} else {
-				// Warn-and-ignore --base for existing branches; deferred to after signal swap.
-				effectiveBase := base
-				if base != "" {
-					if wt.BranchExistsLocally(branchArg) {
-						baseWarnings = append(baseWarnings, "--base ignored: branch already exists locally")
-						effectiveBase = ""
-					} else if wt.BranchExistsRemotely(branchArg) {
-						baseWarnings = append(baseWarnings, "--base ignored: fetching existing remote branch")
-						effectiveBase = ""
-					}
-				}
-				wtPath, err = wt.CreateBranchWorktree(branchArg, finalName, ctx, rb, effectiveBase)
-				if err != nil {
-					wt.ExitWithError(wt.ExitGitError, "Failed to create worktree", err.Error(),
-						"The branch may already be checked out in another worktree")
-				}
-				createdSummaryBranch = branchArg
 			}
 
 			// Setup
@@ -261,8 +301,11 @@ or creates a new branch.`,
 			//   3. Swap to the init-phase handler with NO I/O in between.
 			//   4. Run init via RunWorktreeSetupWithObserver (no prompt
 			//      inside the runner).
+			// The confirm fires whenever a branch was explicitly named —
+			// positional (new branch) or --checkout (existing branch) — and is
+			// skipped for the bare exploratory create.
 			runInit := worktreeInit == "true"
-			if runInit && !(nonInteractive || branchArg == "") {
+			if runInit && !(nonInteractive || (branchArg == "" && checkout == "")) {
 				runInit = session.ConfirmYesNo("Initialize worktree?")
 			}
 
@@ -271,9 +314,6 @@ or creates a new branch.`,
 			// (the Git phase's output) and stays before the init-phase
 			// signal.Reset, so no new I/O enters the tight reinstall window.
 			fmt.Fprintln(os.Stderr, wt.PhaseSeparator("Git"))
-			for _, w := range baseWarnings {
-				fmt.Fprintln(os.Stderr, w)
-			}
 			fmt.Fprintf(os.Stderr, "Created worktree: %s\nPath: %s\nBranch: %s\n",
 				finalName, wtPath, createdSummaryBranch)
 
@@ -500,6 +540,7 @@ or creates a new branch.`,
 	cmd.Flags().BoolVar(&reuse, "reuse", false, "Reuse existing worktree if name collides (requires --worktree-name)")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts; use defaults and skip menus")
 	cmd.Flags().StringVar(&base, "base", "", "Git ref (branch, tag, SHA) to use as start-point for new branch")
+	cmd.Flags().StringVar(&checkout, "checkout", "", "Check out an EXISTING branch (local or remote) into the worktree instead of creating a new one")
 
 	return cmd
 }

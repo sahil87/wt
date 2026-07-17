@@ -7,6 +7,7 @@ description: "Behavior contracts for the `wt` CLI binary — commands, exit code
 
 | File | Description |
 |------|-------------|
+| [create-branch-semantics](create-branch-semantics.md) | The `wt create` branch-selection contract — positional = new-branch-only, `--checkout` = existing-branch opt-in, `--base` = new-branch start-point, the conflict/exit-code matrix, and the internal seam (CreateNewBranchWorktree / CheckoutBranchWorktree + sentinel errors). |
 | [create-output-phases](create-output-phases.md) | Phase-separator output contract for `wt create` / `wt init` — Git/Init/Open separators on stderr, stdout reserved for the machine result. |
 | [go-command-contract](go-command-contract.md) | `wt go` worktree-selection contract — selection-only navigation via `WT_CD_FILE`/stdout (no launch), exit codes, the current-worktree-included menu, and the `wt open --go` composition. |
 | [help-dump-contract](help-dump-contract.md) | Contract for the hidden `wt help-dump` command — the JSON envelope shll.ai's scheduled puller consumes. |

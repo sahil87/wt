@@ -52,11 +52,11 @@ func TestCreate_WorktreeNameFlag(t *testing.T) {
 func TestCreate_BranchNameDerivation(t *testing.T) {
 	repo := createTestRepo(t)
 
-	// Create a local branch
+	// Create a local branch, then --checkout it (existing branch → derived name)
 	gitRun(t, repo, "checkout", "-b", "feature/login")
 	gitRun(t, repo, "checkout", "main")
 
-	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "feature/login")
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--checkout", "feature/login")
 
 	// Should derive "login" from "feature/login"
 	combined := r.Stdout + r.Stderr
@@ -69,7 +69,7 @@ func TestCreate_ExistingLocalBranch(t *testing.T) {
 	gitRun(t, repo, "checkout", "-b", "feature/auth")
 	gitRun(t, repo, "checkout", "main")
 
-	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "my-feature", "feature/auth")
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "my-feature", "--checkout", "feature/auth")
 
 	assertContains(t, r.Stderr, "Created worktree: my-feature")
 	assertContains(t, r.Stderr, "Branch: feature/auth")
@@ -88,7 +88,7 @@ func TestCreate_RemoteBranch(t *testing.T) {
 	gitRun(t, repo, "checkout", "main")
 	gitRun(t, repo, "branch", "-D", "remote-feature")
 
-	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "remote-wt", "remote-feature")
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "remote-wt", "--checkout", "remote-feature")
 
 	assertContains(t, r.Stderr, "remote-wt")
 	assertWorktreeExists(t, repo, "remote-wt")
@@ -101,6 +101,37 @@ func TestCreate_NewBranch(t *testing.T) {
 
 	assertWorktreeExists(t, repo, "new-branch-wt")
 	assertBranchExists(t, repo, "new-feature")
+}
+
+// TestCreate_CheckoutMissingBranchRejected asserts --checkout on a branch that
+// exists neither locally nor remotely fails with exit 2 and the create-new
+// hint, leaving no worktree behind.
+func TestCreate_CheckoutMissingBranchRejected(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--worktree-name", "missing-wt",
+		"--worktree-init", "false", "--checkout", "does-not-exist")
+
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "Branch 'does-not-exist' not found")
+	assertContains(t, r.Stderr, "wt create does-not-exist")
+	assertWorktreeNotExists(t, repo, "missing-wt")
+}
+
+// TestCreate_CheckoutWithPositionalConflict asserts --checkout and a positional
+// branch argument are mutually exclusive.
+func TestCreate_CheckoutWithPositionalConflict(t *testing.T) {
+	repo := createTestRepo(t)
+
+	gitRun(t, repo, "checkout", "-b", "existing-branch")
+	gitRun(t, repo, "checkout", "main")
+
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--worktree-name", "conflict-pos",
+		"--worktree-init", "false", "--checkout", "existing-branch", "new-branch")
+
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "--checkout cannot be combined with a positional branch argument")
+	assertWorktreeNotExists(t, repo, "conflict-pos")
 }
 
 func TestCreate_NameCollision(t *testing.T) {
@@ -221,7 +252,7 @@ func TestCreate_ExistingBranchUnaffectedByCurrentBranch(t *testing.T) {
 	gitRun(t, repo, "commit", "-q", "-m", "Add b.txt")
 
 	// While on branch-b, check out branch-a into a worktree
-	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "checkout-a", "branch-a")
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "checkout-a", "--checkout", "branch-a")
 
 	wtPath := strings.TrimSpace(r.Stdout)
 	assertFileExists(t, filepath.Join(wtPath, "a.txt"))
@@ -412,44 +443,52 @@ func TestCreate_BaseExploratoryWorktree(t *testing.T) {
 	}
 }
 
-func TestCreate_BaseWithExistingLocalBranch(t *testing.T) {
+// TestCreate_CheckoutWithBaseConflict asserts --checkout and --base are
+// mutually exclusive (--base is the start-point for a NEW branch; --checkout
+// targets an EXISTING one). This replaces the removed warn-and-ignore behavior
+// that --base-on-an-existing-branch used to have.
+func TestCreate_CheckoutWithBaseConflict(t *testing.T) {
 	repo := createTestRepo(t)
 
-	// Create an existing local branch with its own history
+	// Create an existing local branch to --checkout
 	gitRun(t, repo, "checkout", "-b", "existing-branch")
-	os.WriteFile(filepath.Join(repo, "existing.txt"), []byte("existing"), 0644)
-	gitRun(t, repo, "add", "existing.txt")
-	gitRun(t, repo, "commit", "-q", "-m", "Add existing.txt")
-	existingTip := gitRun(t, repo, "rev-parse", "HEAD")
 	gitRun(t, repo, "checkout", "main")
 
-	// Create another branch to use as --base
-	gitRun(t, repo, "checkout", "-b", "other-branch")
-	os.WriteFile(filepath.Join(repo, "other.txt"), []byte("other"), 0644)
-	gitRun(t, repo, "add", "other.txt")
-	gitRun(t, repo, "commit", "-q", "-m", "Add other.txt")
-	gitRun(t, repo, "checkout", "main")
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--worktree-name", "conflict-wt",
+		"--worktree-init", "false", "--checkout", "existing-branch", "--base", "main")
 
-	// Create worktree for existing branch with --base (should be ignored)
-	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "exist-local",
-		"--worktree-init", "false", "existing-branch", "--base", "other-branch")
-
-	// Stderr should contain the warning
-	assertContains(t, r.Stderr, "--base ignored: branch already exists locally")
-
-	wtPath := strings.TrimSpace(r.Stdout)
-
-	// The worktree should be on the existing branch, not other-branch
-	wtCommit := gitRun(t, wtPath, "rev-parse", "HEAD")
-	if wtCommit != existingTip {
-		t.Errorf("worktree HEAD %s != existing branch tip %s", wtCommit, existingTip)
-	}
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "--base cannot be combined with --checkout")
+	// No worktree should have been created.
+	assertWorktreeNotExists(t, repo, "conflict-wt")
 }
 
-func TestCreate_BaseWithExistingRemoteBranch(t *testing.T) {
+// TestCreate_PositionalExistingLocalBranchRejected asserts that naming an
+// existing local branch positionally fails with exit 2 and the --checkout
+// hint, leaving no state behind (the positional creates NEW branches only).
+func TestCreate_PositionalExistingLocalBranchRejected(t *testing.T) {
 	repo := createTestRepo(t)
 
-	// Create a branch, push it, then delete locally
+	gitRun(t, repo, "checkout", "-b", "existing-branch")
+	gitRun(t, repo, "checkout", "main")
+
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--worktree-name", "reject-local",
+		"--worktree-init", "false", "existing-branch")
+
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "Branch 'existing-branch' already exists")
+	assertContains(t, r.Stderr, "wt create --checkout existing-branch")
+	// No worktree left behind.
+	assertWorktreeNotExists(t, repo, "reject-local")
+}
+
+// TestCreate_PositionalExistingRemoteBranchRejected asserts the exact danger
+// case from the backlog: a positional naming a remote-only shared branch is
+// rejected (remote-only existence counts), pointing at --checkout.
+func TestCreate_PositionalExistingRemoteBranchRejected(t *testing.T) {
+	repo := createTestRepo(t)
+
+	// Create a branch, push it, then delete locally (remote-only).
 	gitRun(t, repo, "checkout", "-b", "remote-only")
 	os.WriteFile(filepath.Join(repo, "remote-file.txt"), []byte("remote"), 0644)
 	gitRun(t, repo, "add", "remote-file.txt")
@@ -458,14 +497,13 @@ func TestCreate_BaseWithExistingRemoteBranch(t *testing.T) {
 	gitRun(t, repo, "checkout", "main")
 	gitRun(t, repo, "branch", "-D", "remote-only")
 
-	// Create worktree for remote branch with --base (should be ignored)
-	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "exist-remote",
-		"--worktree-init", "false", "remote-only", "--base", "main")
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--worktree-name", "reject-remote",
+		"--worktree-init", "false", "remote-only")
 
-	// Stderr should contain the warning
-	assertContains(t, r.Stderr, "--base ignored: fetching existing remote branch")
-
-	assertWorktreeExists(t, repo, "exist-remote")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "Branch 'remote-only' already exists")
+	assertContains(t, r.Stderr, "wt create --checkout remote-only")
+	assertWorktreeNotExists(t, repo, "reject-remote")
 }
 
 func TestCreate_BaseInvalidRef(t *testing.T) {
@@ -484,7 +522,12 @@ func TestCreate_BaseInvalidRef(t *testing.T) {
 	assertBranchNotExists(t, repo, "new-branch")
 }
 
-func TestCreate_BaseInvalidRefExistingBranch(t *testing.T) {
+// TestCreate_BaseValidatedEvenWithExistingPositional asserts --base is now
+// validated whenever it is set (and --reuse is not), even when the positional
+// names an already-existing branch. The old warn-and-ignore behavior (which
+// skipped --base validation for existing branches) is gone — the positional is
+// always a NEW branch, so --base always applies and an invalid ref fails.
+func TestCreate_BaseValidatedEvenWithExistingPositional(t *testing.T) {
 	repo := createTestRepo(t)
 
 	// Create an existing branch with a commit
@@ -494,13 +537,13 @@ func TestCreate_BaseInvalidRefExistingBranch(t *testing.T) {
 	gitRun(t, repo, "commit", "-q", "-m", "Add existing.txt")
 	gitRun(t, repo, "checkout", "main")
 
-	// Create a worktree for the existing branch with an invalid --base; it should be ignored
-	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "exist-branch",
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--worktree-name", "exist-branch",
 		"--worktree-init", "false", "existing-branch", "--base", "nonexistent-ref")
 
-	// Command should succeed and worktree should exist, despite invalid --base
-	assertContains(t, r.Stderr, "--base ignored: branch already exists locally")
-	assertWorktreeExists(t, repo, "exist-branch")
+	// --base is validated up front now, so this fails on the invalid ref.
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "Invalid --base ref")
+	assertWorktreeNotExists(t, repo, "exist-branch")
 }
 
 func TestCreate_BaseInvalidRefWithReuse(t *testing.T) {
@@ -603,7 +646,7 @@ func TestCreate_InitFailureKeepsWorktree_ExistingBranch(t *testing.T) {
 	r := runWt(t, repo, env, "create", "--non-interactive",
 		"--worktree-name", "branch-fail",
 		"--worktree-open", "skip",
-		"feature/keep-on-fail")
+		"--checkout", "feature/keep-on-fail")
 
 	assertExitCode(t, r, 7)
 	assertWorktreeExists(t, repo, "branch-fail")

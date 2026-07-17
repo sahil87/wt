@@ -48,7 +48,7 @@ func TestList_ShowsBranchNames(t *testing.T) {
 
 	gitRun(t, repo, "checkout", "-b", "feature/test")
 	gitRun(t, repo, "checkout", "main")
-	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "my-feature", "feature/test")
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "my-feature", "--checkout", "feature/test")
 
 	r := runWtSuccess(t, repo, nil, "list")
 	assertContains(t, r.Stdout, "my-feature")
@@ -515,9 +515,9 @@ func TestList_SortBranch(t *testing.T) {
 	for _, b := range []string{"charlie", "alpha", "bravo"} {
 		gitRun(t, repo, "branch", b)
 	}
-	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "wt-x", "--worktree-init", "false", "charlie")
-	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "wt-y", "--worktree-init", "false", "alpha")
-	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "wt-z", "--worktree-init", "false", "bravo")
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "wt-x", "--worktree-init", "false", "--checkout", "charlie")
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "wt-y", "--worktree-init", "false", "--checkout", "alpha")
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "wt-z", "--worktree-init", "false", "--checkout", "bravo")
 
 	r := runWtSuccess(t, repo, nil, "list", "--sort=branch")
 	got := humanNonMainOrder(r.Stdout, []string{"wt-x", "wt-y", "wt-z"})

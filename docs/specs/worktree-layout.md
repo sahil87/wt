@@ -56,17 +56,20 @@ returned instead of created).
 The branch checked out in a worktree is **independent** of the worktree
 directory name. Two illustrative cases:
 
-1. **Exploratory worktree** (no positional `branch` arg): a new branch is
-   created with the same name as the worktree (`swift-fox` worktree on
-   `swift-fox` branch). The two strings happen to match, but they are
-   independent values — renaming the branch later does not move the directory.
-2. **Worktree for an existing branch** (positional `branch` arg given): the
-   worktree directory still gets a random or user-supplied name, while the
-   branch stays whatever the user passed (`<repo>.worktrees/swift-fox/`
-   checked out on branch `feature/oauth`). When deriving a default worktree
-   name from a branch, `DeriveWorktreeName` takes the last path segment after
-   `/` and replaces non-alphanumeric characters (except `-` and `_`) with `-`
-   — so branch `feature/oauth-pkce` yields suggestion `oauth-pkce`.
+1. **Exploratory / new-branch worktree** (no positional, or a positional
+   naming a *new* branch): a new branch is created — named after the worktree
+   for the bare case (`swift-fox` worktree on `swift-fox` branch), or the
+   positional name otherwise. The two strings happen to match in the bare case,
+   but they are independent values — renaming the branch later does not move the
+   directory. A positional naming an *already-existing* branch is rejected (see
+   [cli-surface.md](cli-surface.md) § `wt create`) — use `--checkout` for that.
+2. **Worktree for an existing branch** (`--checkout <branch>`): the worktree
+   directory still gets a random or user-supplied name, while the branch stays
+   whatever the user passed (`<repo>.worktrees/swift-fox/` checked out on branch
+   `feature/oauth`). When deriving a default worktree name from the `--checkout`
+   branch, `DeriveWorktreeName` takes the last path segment after `/` and
+   replaces non-alphanumeric characters (except `-` and `_`) with `-` — so
+   branch `feature/oauth-pkce` yields suggestion `oauth-pkce`.
 
 `wt delete --delete-branch auto` collapses these two cases by deleting the
 branch only when it matches the worktree name — the typical exploratory case.

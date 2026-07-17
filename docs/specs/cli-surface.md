@@ -34,21 +34,37 @@ Create a git worktree as a sibling of the main repo (`<repo>.worktrees/<name>/`)
 | `--worktree-open <prompt\|default\|skip\|<app>>` | `prompt` (`skip` when `--non-interactive`) | Behavior after creation: show app menu, open in detected default, skip, or open in a specific app (e.g. `code`, `cursor`). |
 | `--reuse` | `false` | If a worktree with `--worktree-name` already exists, reuse it instead of erroring. Requires `--worktree-name`. |
 | `--non-interactive` | `false` | No prompts; fail or use defaults rather than prompting. |
-| `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for new branches. Validated via `git rev-parse --verify`. Ignored for existing branches and when `--reuse` is set. |
+| `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for the NEW branch. Validated via `git rev-parse --verify` whenever set and `--reuse` is not. Cannot be combined with `--checkout`. |
+| `--checkout <branch>` | (none) | Check out an EXISTING branch (local as-is, or remote-only fetched then checked out) into the worktree, instead of creating a new one. Cannot be combined with a positional branch argument or with `--base`. |
 
-Positional arg `branch` (optional):
+Positional arg `branch` (optional) — **names a NEW branch only**:
 
 - Omitted: exploratory worktree on a new branch named after the random worktree name.
-- Provided, branch exists locally or remotely: checks out that branch into the new worktree.
 - Provided, branch does not exist: creates a new branch, optionally from `--base`.
+- Provided, branch already exists (locally **or** remotely): the command fails
+  with `ExitInvalidArgs` **before any worktree mutation**, pointing at
+  `--checkout` (`wt create --checkout <branch>`). The positional never checks
+  out an existing branch — that is `--checkout`'s job. Checking out a shared /
+  collector branch is now an explicit opt-in, not a silent side effect of a
+  name collision.
+
+To put a worktree on an existing branch, use `--checkout <branch>`: a local
+branch is checked out as-is, a remote-only branch is fetched then checked out,
+and a branch that exists neither locally nor remotely fails with
+`ExitInvalidArgs` pointing at the create-new form (`wt create <branch>
+[--base <ref>]`). The worktree name is suggested from the branch name via
+`DeriveWorktreeName`.
 
 On success, the worktree path is written as the last line of stdout (suppressed
 when the chosen app was `open_here` because the wrapper consumed it via
 `WT_CD_FILE`).
 
-Exit codes: `ExitInvalidArgs` for flag misuse or invalid `--base`/branch name;
-`ExitGitError` for `git worktree add` failures; `ExitRetryExhausted` for name
-generation; `ExitInitFailed` (7) when the init script runs but exits non-zero
+Exit codes: `ExitInvalidArgs` for flag misuse (including `--checkout` combined
+with a positional argument or with `--base`), invalid `--base`/branch name, a
+positional naming an already-existing branch, or `--checkout` on a branch that
+does not exist; `ExitGitError` for `git worktree add` failures;
+`ExitRetryExhausted` for name generation; `ExitInitFailed` (7) when the init
+script runs but exits non-zero
 (the worktree is kept; the code holds on every init-failure path, including a
 successful interactive open-anyway open). Two init outcomes are **not** failures
 and exit 0: a graceful skip when the init command/file is missing, and — for the
