@@ -31,8 +31,8 @@ func createCmd() *cobra.Command {
 		Short: "Create a git worktree",
 		Long: `Create a git worktree for parallel development.
 
-When BRANCH is omitted, creates an exploratory worktree with a random name on a
-new branch of the same name.
+When BRANCH is omitted, creates an exploratory worktree with a random name (or
+the value of --worktree-name, if given) on a new branch of the same name.
 
 When BRANCH is provided, it names a NEW branch to create (off --base, else
 HEAD). If that branch already exists locally or remotely, the command fails —
