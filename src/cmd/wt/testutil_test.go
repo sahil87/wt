@@ -314,6 +314,30 @@ func assertBranchNotExists(t *testing.T, repoPath, branch string) {
 	}
 }
 
+// assertRemoteBranchExists checks that a branch exists on the origin remote.
+func assertRemoteBranchExists(t *testing.T, repoPath, branch string) {
+	t.Helper()
+	out, err := exec.Command("git", "-C", repoPath, "ls-remote", "--heads", "origin", branch).Output()
+	if err != nil {
+		t.Fatalf("git ls-remote: %v", err)
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		t.Errorf("expected remote branch %q to exist on origin", branch)
+	}
+}
+
+// assertRemoteBranchNotExists checks that a branch does NOT exist on the origin remote.
+func assertRemoteBranchNotExists(t *testing.T, repoPath, branch string) {
+	t.Helper()
+	out, err := exec.Command("git", "-C", repoPath, "ls-remote", "--heads", "origin", branch).Output()
+	if err != nil {
+		t.Fatalf("git ls-remote: %v", err)
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Errorf("expected remote branch %q NOT to exist on origin", branch)
+	}
+}
+
 // assertGitStateClean runs git fsck and fails if there are issues.
 func assertGitStateClean(t *testing.T, repoPath string) {
 	t.Helper()

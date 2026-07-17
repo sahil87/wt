@@ -1,22 +1,29 @@
 ---
 type: memory
-description: "`wt go` worktree-selection contract — selection-only navigation via `WT_CD_FILE`/stdout (no launch), exit codes, the current-worktree-included menu, and the `wt open --go` composition."
+description: "`wt go` worktree-selection contract — selection-only navigation via `WT_CD_FILE`/stdout (no launch), exit codes, the current-worktree-included menu, and the `wt open --select` composition (`--go` deprecated alias)."
 ---
 # wt-cli: Go Command Contract
 
 > Post-implementation behavior capture for the `wt go` worktree-selection verb
-> and the `wt open --go` select-then-launch composition.
+> and the `wt open --select` select-then-launch composition.
 > Source change: `260620-3pp5-open-worktree-from-worktree`
-> (stderr navigation confirmation added by `260622-log5-dx-copy-polish`).
+> (stderr navigation confirmation added by `260622-log5-dx-copy-polish`;
+> the `wt open` composition flag renamed `--go` → `--select` with a deprecated
+> alias by `260717-59u8-intuitive-flag-names`).
 
-This file documents the contract `wt go` honors and how `wt open --go` composes
-it. `wt go` is the **selector** half of the selector/launcher split: it picks a
-worktree of the current repo and navigates there, launching nothing. `wt open`
-remains the **launcher** (`go` selects, `open` launches) — the launcher surface
-is unchanged and is documented in `docs/specs/launcher-contract.md`. Future
-changes touching `src/cmd/wt/go.go`, the `--go` path in `src/cmd/wt/open.go`, or
-the shared `selectWorktree` helper should preserve these invariants unless an
-explicit spec amendment supersedes them.
+This file documents the contract `wt go` honors and how `wt open --select`
+composes it. `wt go` is the **selector** half of the selector/launcher split: it
+picks a worktree of the current repo and navigates there, launching nothing.
+`wt open` remains the **launcher** (`go` selects, `open` launches) — the launcher
+surface is unchanged and is documented in `docs/specs/launcher-contract.md`.
+Note the split between the **command** and the **flag**: the standalone `wt go`
+command keeps its name; only the composition **flag** on `wt open` was renamed
+`--go` → `--select` (`--go` retained as a hidden deprecated alias) by `260717-59u8`
+— `--select` says what it does (run the worktree selector first) rather than
+naming the sibling `wt go` command. Future changes touching `src/cmd/wt/go.go`,
+the `--select`/`--go` path in `src/cmd/wt/open.go`, or the shared `selectWorktree`
+helper should preserve these invariants unless an explicit spec amendment
+supersedes them.
 
 ## Requirements
 
@@ -169,7 +176,7 @@ explicit spec amendment supersedes them.
   `ShowMenu`/`MenuSession` non-TTY fallback (numbered-prompt path), the same
   fallback every `wt` menu uses — see `/wt-cli/menu-navigation-contract.md`.
 
-### Shared `selectWorktree` helper — single source of truth (open / go / open --go)
+### Shared `selectWorktree` helper — single source of truth (open / go / open --select)
 
 - The worktree-selection logic was extracted out of `selectAndOpen` into
   `selectWorktree(ctx *wt.RepoContext, session *wt.MenuSession, prompt string)
@@ -181,7 +188,7 @@ explicit spec amendment supersedes them.
     (behavior-preserving — `TestOpen_MenuOrdersNewestFirst` and the other `open`
     tests still pass).
   - `wt go` no-arg (prompt `"Select worktree to go to:"`).
-  - `openGo` — `wt open --go` no-arg (prompt `"Select worktree to open:"`).
+  - `openGo` — `wt open --select` no-arg (prompt `"Select worktree to open:"`).
 - The helper owns the menu UX: filter out the main repo (`ctx.RepoRoot`),
   newest-first `wt.SortByRecency` ordering, per-entry `"name (branch)"` rows via
   `getBranchForPath`, `defaultIdx = 1`, and rendering via the **caller-supplied**
@@ -211,28 +218,37 @@ explicit spec amendment supersedes them.
   "Cancelled." line is the caller's. A nil error with `cancelled=false`
   guarantees `path` and `name` are populated.
 
-### `wt open --go` composes selection then launch
+### `wt open --select` composes selection then launch (`--go` deprecated alias)
 
-- A boolean `--go` flag on `wt open` (`openCmd()` in `src/cmd/wt/open.go`). When
-  set, `RunE` delegates to `openGo(target, appFlag)` **before** any of the
-  non-`--go` resolution branches — the non-`--go` code paths are left untouched.
+- A boolean `--select` flag on `wt open` (`openCmd()` in `src/cmd/wt/open.go`),
+  the **primary** name as of `260717-59u8`. When set, `RunE` delegates to
+  `openGo(target, appFlag)` **before** any of the non-select resolution branches —
+  those code paths are left untouched.
+- **Back-compat**: `--go` is retained as a **hidden deprecated alias** bound to
+  the **same** bool variable (`goFlag`) — a shared pointer is correct (same
+  type). `cmd.Flags().MarkDeprecated("go", "use --select instead")` auto-hides it
+  from `wt open --help` and prints a stderr deprecation warning when `--go` is
+  passed (never stdout); `--select` prints no warning. No short flag for
+  `--select`. See [flag-naming-conventions](/wt-cli/flag-naming-conventions.md)
+  for the shared rename mechanism. (The internal helper name `openGo` and the
+  `goFlag` variable are unchanged — the rename is a pure flag-surface change.)
 - `openGo` requires a git repo (else `ExitGitError` (3), same precondition as
   `wt go`), then obtains a worktree path by **selection**:
-  - `wt open --go <name>` — resolve `<name>` via `resolveWorktreeByName`
+  - `wt open --select <name>` — resolve `<name>` via `resolveWorktreeByName`
     (not-found → `ExitGeneralError`, list-fail → `ExitGitError`, same mapping as
     `wt go`).
-  - `wt open --go` (no name) — `selectWorktree` on a shared session (cancel →
+  - `wt open --select` (no name) — `selectWorktree` on a shared session (cancel →
     `Cancelled.` + exit `0`; no-worktrees → `No worktrees found.`).
 - It then **launches** the selected worktree via the existing launcher path:
-  `--app <app>` opens directly through `openInNamedApp`; otherwise
-  `handleAppMenuWithSession` renders the "Open in:" menu on the **same** session
-  as the selection menu. `--go` + `--app` compose (select, then open directly in
-  the named app).
+  `--app <app>` (short `-a` as of `260717-59u8`) opens directly through
+  `openInNamedApp`; otherwise `handleAppMenuWithSession` renders the "Open in:"
+  menu on the **same** session as the selection menu. `--select` + `--app`
+  compose (select, then open directly in the named app).
 - `wt open`'s existing surface is **unchanged**: no-arg in a worktree opens the
   current folder; no-arg in the main repo shows menu+launch (`selectAndOpen`);
   `wt open <name>` / `<path>` / `--app` resolve-AND-launch. The `hop`
   launcher-contract surface (`wt open <name>` / `<path>` / `--app` / exit codes /
-  `WT_CD_FILE`) is not altered by the `--go` addition.
+  `WT_CD_FILE`) is not altered by the `--select` flag or its `-a` short.
 
 ## Design Decisions
 
@@ -274,7 +290,7 @@ compact-arrow form was the user's explicit choice over both); a fresh
 **Decision**: extract the menu logic from `selectAndOpen` into one helper that
 takes a `*MenuSession` and a `prompt`, and returns the chosen `path`+`name`, a
 `cancelled` flag, and a `noWorktrees` flag.
-**Why**: the `MenuSession` parameter lets `wt open --go` chain the "Open in:"
+**Why**: the `MenuSession` parameter lets `wt open --select` chain the "Open in:"
 menu on one stdin reader (the documented byte-theft fix in `MenuSession`); the
 `name` return covers tab-naming for the launch flows; the `cancelled` +
 `noWorktrees` pair lets the helper own the single `No worktrees found.` message
@@ -325,14 +341,15 @@ otherwise does not want).
   `selectAndOpen`/`openGo`.
 - Spec doc: `docs/specs/cli-surface.md` — the `## wt go [name]` section (behavior
   matrix, exit codes, `--non-interactive`, `WT_CD_FILE`/stdout navigation) and
-  the `## wt open [name|path]` `--go` flag / launcher-vs-selector framing.
+  the `## wt open [name|path]` `--select` flag (deprecated `--go`) / launcher-vs-selector framing.
 - Spec doc: `docs/specs/launcher-contract.md` — §3 (`WT_CD_FILE`, "Reused by
   `wt go`" note), §4 (`WT_WRAPPER` hint), §5 (exit-code contract `wt go` mirrors),
   §6 (stability guarantees, unchanged — no new env var).
 - Source: `src/cmd/wt/go.go` — `goCmd`, `navigateTo`.
-- Source: `src/cmd/wt/open.go` — `openCmd` (`--go` flag), `openGo`,
-  `selectWorktree` (shared helper), `selectAndOpen` (re-expressed on the helper),
-  `resolveWorktreeByName` / `errWorktreeNotFound` (shared resolver/sentinel),
+- Source: `src/cmd/wt/open.go` — `openCmd` (`--select` primary + `--go` deprecated
+  alias on the shared `goFlag` var + `MarkDeprecated`; `--app` gains short `-a`),
+  `openGo`, `selectWorktree` (shared helper), `selectAndOpen` (re-expressed on the
+  helper), `resolveWorktreeByName` / `errWorktreeNotFound` (shared resolver/sentinel),
   `handleAppMenuWithSession`, `openInNamedApp`, `getBranchForPath`.
 - Source: `src/cmd/wt/main.go` — `goCmd()` registered in `root.AddCommand(...)`.
 - Tests: `src/cmd/wt/go_test.go` (unit: name happy path → `WT_CD_FILE`+stdout,
@@ -341,7 +358,7 @@ otherwise does not want).
   indented-path confirmation on stderr while stdout stays exactly the bare path,
   and the confirmation is absent on the no-worktrees menu path),
   `src/cmd/wt/integration_test.go` (end-to-end `wt go <name>` from a sibling
-  worktree, no-arg menu newest-first ordering, `wt open --go <name> --app open_here`).
+  worktree, no-arg menu newest-first ordering, `wt open --select <name> --app open_here`).
 - Sibling memory: `/wt-cli/create-output-phases.md` — the canonical stdout =
   machine-result / stderr = human-diagnostic stream-discipline contract this
   confirmation honors; it also documents the `wt.Warn` shared one-line warning

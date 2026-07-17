@@ -28,10 +28,10 @@ When called without arguments from a non-git directory, opens the current workin
 Path arguments are accepted regardless of git context. Worktree-name resolution
 requires a git repository.
 
-With --go, "wt open" first performs "wt go"'s worktree selection (a menu when no
-name is given, or resolve-by-name when a name is given) and then launches the
-selected worktree — composing the selector and the launcher. --go requires a git
-repository and composes with --app.`,
+With --select, "wt open" first performs "wt go"'s worktree selection (a menu when
+no name is given, or resolve-by-name when a name is given) and then launches the
+selected worktree — composing the selector and the launcher. --select requires a
+git repository and composes with --app.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var target string
@@ -39,8 +39,9 @@ repository and composes with --app.`,
 				target = args[0]
 			}
 
-			// --go: compose "wt go"'s selection with "wt open"'s launcher.
-			// Self-contained so the non--go paths below stay untouched.
+			// --select (deprecated alias: --go): compose "wt go"'s selection with
+			// "wt open"'s launcher. Self-contained so the non-select paths below
+			// stay untouched. goFlag holds either flag (shared variable).
 			if goFlag {
 				return openGo(target, appFlag)
 			}
@@ -150,8 +151,13 @@ repository and composes with --app.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&appFlag, "app", "", "Open in specified app, skipping the menu")
+	cmd.Flags().StringVarP(&appFlag, "app", "a", "", "Open in specified app, skipping the menu")
+	// --select is primary; --go is the deprecated alias bound to the same bool
+	// variable. No short flag for --select. --select says what it does (run the
+	// worktree selector first) rather than naming the sibling `wt go` command.
+	cmd.Flags().BoolVar(&goFlag, "select", false, "Select a worktree (menu or by name) first, then launch it")
 	cmd.Flags().BoolVar(&goFlag, "go", false, "Select a worktree (menu or by name) first, then launch it")
+	cmd.Flags().MarkDeprecated("go", "use --select instead")
 
 	return cmd
 }

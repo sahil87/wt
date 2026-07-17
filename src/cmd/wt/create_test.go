@@ -217,9 +217,9 @@ func TestCreate_ReuseRequiresWorktreeName(t *testing.T) {
 
 	r := runWt(t, repo, nil, "create", "--non-interactive", "--reuse")
 	if r.ExitCode == 0 {
-		t.Error("expected failure: --reuse without --worktree-name")
+		t.Error("expected failure: --reuse without --name")
 	}
-	assertContains(t, r.Stderr, "--reuse requires --worktree-name")
+	assertContains(t, r.Stderr, "--reuse requires --name")
 }
 
 func TestCreate_ErrorOutsideGitRepo(t *testing.T) {
@@ -865,4 +865,104 @@ func TestCreate_DirtyStateWarningCopy(t *testing.T) {
 
 	// Abort returns before creating anything — no worktree leaked.
 	assertWorktreeNotExists(t, repo, "dirty-abort-test")
+}
+
+// ---------- Intuitive flag names (change 59u8) ----------
+
+// TestCreate_NameFlagAndShort verifies the new --name flag and its -n short
+// create a named worktree (equivalent to the deprecated --worktree-name), with
+// no deprecation warning on the happy path.
+func TestCreate_NameFlagAndShort(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "-n", "short-name", "--no-init", "-o", "skip")
+	assertWorktreeExists(t, repo, "short-name")
+	assertNotContains(t, r.Stderr, "deprecated")
+
+	r = runWtSuccess(t, repo, nil, "create", "--non-interactive", "--name", "long-name", "--no-init", "-o", "skip")
+	assertWorktreeExists(t, repo, "long-name")
+	assertNotContains(t, r.Stderr, "deprecated")
+}
+
+// TestCreate_NewAlias verifies `wt new` invokes `wt create` identically.
+func TestCreate_NewAlias(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "new", "--non-interactive", "-n", "via-new", "--no-init", "-o", "skip")
+	assertWorktreeExists(t, repo, "via-new")
+	// stdout is the machine path (porcelain contract), unchanged by the alias.
+	if strings.TrimSpace(r.Stdout) != worktreePath(repo, "via-new") {
+		t.Errorf("wt new stdout path mismatch: got %q", strings.TrimSpace(r.Stdout))
+	}
+}
+
+// TestCreate_NoInitFlagSkipsInit verifies the new real-bool --no-init skips the
+// init script (parity with the deprecated --worktree-init false).
+func TestCreate_NoInitFlagSkipsInit(t *testing.T) {
+	repo := createTestRepo(t)
+	createInitScript(t, repo)
+	gitRun(t, repo, "add", "scripts/worktree-init.sh")
+	gitRun(t, repo, "commit", "-q", "-m", "Add init script")
+
+	r := runWtSuccess(t, repo, []string{"WORKTREE_INIT_SCRIPT=scripts/worktree-init.sh"},
+		"create", "--non-interactive", "-n", "noinit-flag", "--no-init", "-o", "skip")
+	wtPath := strings.TrimSpace(r.Stdout)
+	if _, err := os.Stat(filepath.Join(wtPath, ".init-script-ran")); err == nil {
+		t.Error("init script should not have run with --no-init")
+	}
+}
+
+// TestCreate_NoInitDefaultRunsInit verifies that WITHOUT --no-init (and without
+// the old string flag) the init script still runs — the string→bool conversion
+// preserves default behavior.
+func TestCreate_NoInitDefaultRunsInit(t *testing.T) {
+	repo := createTestRepo(t)
+	createInitScript(t, repo)
+	gitRun(t, repo, "add", "scripts/worktree-init.sh")
+	gitRun(t, repo, "commit", "-q", "-m", "Add init script")
+
+	r := runWtSuccess(t, repo, []string{"WORKTREE_INIT_SCRIPT=scripts/worktree-init.sh"},
+		"create", "--non-interactive", "-n", "init-default", "-o", "skip")
+	wtPath := strings.TrimSpace(r.Stdout)
+	assertFileExists(t, filepath.Join(wtPath, ".init-script-ran"))
+}
+
+// TestCreate_OpenFlagShort verifies the new --open/-o flag controls the open
+// phase (skip here) equivalently to the deprecated --worktree-open.
+func TestCreate_OpenFlagShort(t *testing.T) {
+	repo := createTestRepo(t)
+
+	// -o skip suppresses the Open phase separator (no open phase runs).
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "-n", "open-skip", "--no-init", "-o", "skip")
+	assertNotContains(t, r.Stderr, "-- Open")
+	assertWorktreeExists(t, repo, "open-skip")
+}
+
+// TestCreate_DeprecatedFlagsStillWork verifies the deprecated create flags still
+// behave as before AND emit a stderr deprecation warning naming the new flag.
+func TestCreate_DeprecatedFlagsStillWork(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive",
+		"--worktree-name", "legacy-create", "--worktree-init", "false", "--worktree-open", "skip")
+	assertWorktreeExists(t, repo, "legacy-create")
+	assertContains(t, r.Stderr, "deprecated")
+	// stdout stays the clean machine path — warnings are stderr-only.
+	if strings.TrimSpace(r.Stdout) != worktreePath(repo, "legacy-create") {
+		t.Errorf("stdout should be the bare path; got %q", strings.TrimSpace(r.Stdout))
+	}
+}
+
+// TestCreate_HelpHidesDeprecatedShowsNew verifies `wt create --help` shows the
+// new flags and hides the deprecated aliases.
+func TestCreate_HelpHidesDeprecatedShowsNew(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "create", "--help")
+	for _, want := range []string{"--name", "--open", "--no-init"} {
+		assertContains(t, r.Stdout, want)
+	}
+	for _, hidden := range []string{"--worktree-name", "--worktree-open", "--worktree-init"} {
+		assertNotContains(t, r.Stdout, hidden)
+	}
 }

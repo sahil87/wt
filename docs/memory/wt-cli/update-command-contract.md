@@ -1,28 +1,30 @@
 ---
 type: memory
-description: "`wt update` self-upgrade contract and the cross-toolkit `--skip-brew-update` flag."
+description: "`wt update` self-upgrade contract and the cross-toolkit brew-metadata-refresh flag — `--no-brew-update` primary, `--skip-brew-update` deprecated alias."
 ---
 # wt-cli: Update Command Contract
 
-> Post-implementation behavior capture for the `wt update` self-upgrade flow and the `--skip-brew-update` flag.
-> Source change: `260531-ipe5-skip-brew-update-flag`.
+> Post-implementation behavior capture for the `wt update` self-upgrade flow and the brew-metadata-refresh flag.
+> Source change: `260531-ipe5-skip-brew-update-flag`
+> (flag renamed `--skip-brew-update` → `--no-brew-update` with a deprecated alias by `260717-59u8-intuitive-flag-names`).
 
 This file documents the contract that `wt update` honors. Future changes touching `cmd/wt/update.go` or `src/internal/update/update.go` should preserve these invariants unless an explicit spec amendment supersedes them.
 
-The `--skip-brew-update` flag is one tool's implementation of a **cross-toolkit contract** shared by 6 tools: the flag name, semantics, and default behavior are fixed by that contract and are NOT open to local reinterpretation. Renaming, aliasing, or re-scoping the flag in this repo alone is a contract violation.
+The brew-metadata-refresh flag implements a **cross-toolkit contract** shared across the toolkit: the *semantics* and *default behavior* are fixed by that contract and are NOT open to local reinterpretation. The **flag surface** was originally `--skip-brew-update` (identical across all tools). As of `260717-59u8`, this repo makes `--no-brew-update` the **primary** name (aligning the negation convention to `--no-*` — see [flag-naming-conventions](/wt-cli/flag-naming-conventions.md)) and keeps `--skip-brew-update` as a **permanent deprecated alias** — so the historical surface still works for every existing caller and cross-tool script. This aliasing is an **explicit, user-confirmed amendment** to the earlier "renaming/aliasing the flag in this repo alone is a contract violation" clause: the additive-rename mechanism (new name primary + old name kept as a hidden deprecated alias, never removed) preserves the cross-toolkit contract's *behavioral* guarantee (same semantics, same default, old name still accepted) while modernizing the human-facing surface. What remains forbidden is *re-scoping* the flag's semantics or *removing* the `--skip-brew-update` alias.
 
 ## Requirements
 
-### `--skip-brew-update` flag definition
+### Flag definition — `--no-brew-update` primary, `--skip-brew-update` deprecated alias
 
-- `cmd/wt/update.go` registers a cobra `BoolVar` flag named EXACTLY `--skip-brew-update`, default `false`, long-form only (no single-letter short alias), per constitution Principle II.
+- `cmd/wt/update.go` registers `--no-brew-update` as the **primary** cobra `BoolVar` flag, default `false`, long-form only (no single-letter short alias), per constitution Principle II.
+- `--skip-brew-update` remains registered as a **hidden deprecated alias** bound to the **same** bool variable (`skipBrewUpdate`) — a shared pointer is correct because both are the same type. `cmd.Flags().MarkDeprecated("skip-brew-update", "use --no-brew-update instead")` auto-hides it from `--help` and prints a stderr deprecation warning when it is passed (never stdout — the stdout=machine / stderr=human convention). Passing `--no-brew-update` prints no warning. See [flag-naming-conventions](/wt-cli/flag-naming-conventions.md) for the shared rename mechanism.
 - `Args: cobra.NoArgs` is retained — `wt update` rejects positional arguments.
-- The flag value is threaded into `update.Run` as the LEADING parameter: `update.Run(skipBrewUpdate, version, cmd.OutOrStdout(), cmd.ErrOrStderr())`.
-- The constructor uses the standard cobra flag-registration shape: `var skipBrewUpdate bool` + `cmd := &cobra.Command{...}` + `cmd.Flags().BoolVar(&skipBrewUpdate, "skip-brew-update", false, "...")` + `return cmd` — not a bare `return &cobra.Command{...}`.
+- The resolved flag value is threaded into `update.Run` as the LEADING parameter: `update.Run(skipBrewUpdate, version, cmd.OutOrStdout(), cmd.ErrOrStderr())`. Because both flag names bind the same variable, the internal `update.Run` signature and its `skipBrewUpdate` parameter name are unchanged — the rename is a pure `cmd/` flag-surface change.
+- The constructor uses the standard cobra flag-registration shape: `var skipBrewUpdate bool` + `cmd := &cobra.Command{...}` + two `cmd.Flags().BoolVar(&skipBrewUpdate, ...)` calls (primary then alias) + `MarkDeprecated` + `return cmd` — not a bare `return &cobra.Command{...}`.
 
 ### Flag skips ONLY the `brew update` metadata refresh
 
-- When `skipBrewUpdate` is `true`, `update.Run` does NOT invoke `brew update`. The entire `brew update` block — its `context.WithTimeout(...)`, the `exec.CommandContext(ctx, "brew", "update", "--quiet")` call, and that call's error handling — is skipped via an `if !skipBrewUpdate { ... }` guard.
+- When `skipBrewUpdate` is `true` (set via `--no-brew-update` or the deprecated `--skip-brew-update`), `update.Run` does NOT invoke `brew update`. The entire `brew update` block — its `context.WithTimeout(...)`, the `exec.CommandContext(ctx, "brew", "update", "--quiet")` call, and that call's error handling — is skipped via an `if !skipBrewUpdate { ... }` guard.
 - Nothing else moves. When the flag is set, these still run exactly as in the default path:
   - the `brew info --json=v2 sahil87/tap/wt` version check (`brewLatestVersion`),
   - the up-to-date short-circuit (`normalizeVersion(latest) == normalizeVersion(currentVersion)` → prints `Already up to date (...)` and returns `nil`),
@@ -43,12 +45,12 @@ The `--skip-brew-update` flag is one tool's implementation of a **cross-toolkit 
 - `brew update` and `brew info` capture stdout (for parse/discard via `cmd.Output()`) and route stderr to `os.Stderr` (`cmd.Stderr = os.Stderr`).
 - `brew upgrade` inherits all three standard streams — `cmd.Stdin = os.Stdin`, `cmd.Stdout = os.Stdout`, `cmd.Stderr = os.Stderr` — so brew's tty-aware progress renders inline (interactive).
 - The `out` and `errOut` writers receive ONLY the wrapper messages this package emits (`Current version:`, `Checking for updates...`, `Already up to date`, `Updating ... → ...`, `Updated to ...`, and error hints). Subprocess stdout/stderr is intentionally NOT routed through them.
-- Setting `--skip-brew-update` changes none of this routing.
+- Setting `--no-brew-update` (or the deprecated `--skip-brew-update`) changes none of this routing.
 
 ### Brew-not-found detection is preserved (one call later)
 
 - In the default path, `brew update` is the first brew invocation, so it is the one that surfaces `exec.ErrNotFound` and maps it to the `ErrBrewNotFound` sentinel.
-- When `--skip-brew-update` elides that call, the NEXT brew invocation (`brew info` inside `brewLatestVersion`) surfaces `exec.ErrNotFound` and maps it via the IDENTICAL `errors.Is(err, exec.ErrNotFound)` → `ErrBrewNotFound` handling. No new handling is added — the detection just shifts one call later.
+- When the flag (`--no-brew-update`, or the deprecated `--skip-brew-update`) elides that call, the NEXT brew invocation (`brew info` inside `brewLatestVersion`) surfaces `exec.ErrNotFound` and maps it via the IDENTICAL `errors.Is(err, exec.ErrNotFound)` → `ErrBrewNotFound` handling. No new handling is added — the detection just shifts one call later.
 - `ErrBrewNotFound` is an exported sentinel (`var ErrBrewNotFound = errors.New("brew not found on PATH")`). `update.Run` prints exactly one `wt update: brew not found on PATH.` line to `errOut`, then returns the sentinel.
 - The cobra wrapper in `cmd/wt/update.go` detects the sentinel via `errors.Is(err, update.ErrBrewNotFound)` and calls `os.Exit(wt.ExitGeneralError)` directly — bypassing both cobra's automatic error print and `main.go`'s error formatter so stderr contains EXACTLY one "brew not found" line (the single-line stderr contract). Per constitution Principle III, this is a typed exit, not an ad-hoc integer.
 
@@ -82,8 +84,9 @@ Rather than adding a pre-flight `brew` existence check to preserve not-found det
 
 ## Cross-references
 
-- Source: `src/internal/update/update.go` — `Run`, `brewLatestVersion`, `isBrewInstalled` (with `WT_TEST_FORCE_BREW` seam), `normalizeVersion`, `ErrBrewNotFound`, `brewFormula`. `src/cmd/wt/update.go` — `updateCmd` (flag registration + `ErrBrewNotFound`→typed-exit wrapper).
+- Source: `src/internal/update/update.go` — `Run`, `brewLatestVersion`, `isBrewInstalled` (with `WT_TEST_FORCE_BREW` seam), `normalizeVersion`, `ErrBrewNotFound`, `brewFormula`. `src/cmd/wt/update.go` — `updateCmd` (`--no-brew-update` primary + `--skip-brew-update` deprecated-alias registration on the shared `skipBrewUpdate` var + `MarkDeprecated`, plus the `ErrBrewNotFound`→typed-exit wrapper).
 - Tests: `src/internal/update/update_test.go` — `TestRunSkipBrewUpdate` (fake `brew` on `PATH` + `WT_TEST_FORCE_BREW=1`, asserts skip omits `update` but keeps `info`/`upgrade`), `TestRunNonBrewInstall`, `TestNormalizeVersion`, `TestIsBrewInstalledReturnsBool`.
 - Constitution: Principle II (Cobra command surface — long-form flag name, `RunE`), Principle III (Typed exit codes — `ErrBrewNotFound` → `ExitGeneralError`).
 - Sibling memory: `wt-cli/init-failure-contract.md`, `wt-cli/list-status-contract.md` — same pattern of post-change invariant capture for other `wt` subcommands. The `WT_TEST_FORCE_BREW` seam is a sibling of the `WT_TEST_NO_LAUNCH` seam documented in `init-failure-contract.md`.
-- Cross-toolkit: `--skip-brew-update` flag name/semantics MUST stay identical to the other 5 tools implementing the same contract.
+- Cross-toolkit: the flag's **semantics and default** MUST stay identical to the other tools implementing the same contract. As of `260717-59u8` this repo's **primary** flag name is `--no-brew-update` while `--skip-brew-update` (the historical cross-tool name) is retained as a permanent deprecated alias — so the cross-tool name still works and the behavioral contract is preserved (see the amended cross-toolkit clause in the header).
+- Sibling memory: [flag-naming-conventions](/wt-cli/flag-naming-conventions.md) — the `--no-*` negation convention and the additive rename-via-`MarkDeprecated` back-compat mechanism this flag now follows.

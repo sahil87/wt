@@ -145,3 +145,16 @@ pwd > current-dir.txt
 	// The script should run in the repo root
 	assertContains(t, string(dirContent), filepath.Base(repo))
 }
+
+// ---------- Intuitive flag names (change 59u8) ----------
+
+// TestInit_ShortDescriptionSharpened verifies the init command's Short help text
+// was reworded to counter the "git init"-style misreading. It appears in the
+// root `wt --help` command listing.
+func TestInit_ShortDescriptionSharpened(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "--help")
+	assertContains(t, r.Stdout, "Run the init script in the current worktree")
+	assertNotContains(t, r.Stdout, "Run worktree init script")
+}

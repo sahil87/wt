@@ -500,3 +500,50 @@ func TestIntegration_WorktreeCommitIndependent(t *testing.T) {
 
 	runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--worktree-name", "independent")
 }
+
+// TestIntegration_OpenSelect_NameArg_ResolvesAndLaunches exercises the new
+// --select flag (renamed from --go): `wt open --select <name> --app open_here`
+// composes resolve-by-name selection with the launcher, writing the resolved
+// path to WT_CD_FILE via open_here. No deprecation warning on the new flag.
+func TestIntegration_OpenSelect_NameArg_ResolvesAndLaunches(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "alpha")
+	pathB := createWorktreeViaWt(t, repo, "bravo")
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	r := runWtSuccess(t, worktreePath(repo, "alpha"), env, "open", "--select", "bravo", "--app", "open_here")
+	assertNotContains(t, r.Stderr, "deprecated")
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != pathB {
+		t.Errorf("expected cd file to contain %q, got %q", pathB, string(data))
+	}
+}
+
+// TestIntegration_OpenGo_Deprecated verifies the deprecated --go alias still
+// composes select-then-launch AND emits a stderr deprecation warning naming
+// --select. stdout/WT_CD_FILE machine contract is unchanged.
+func TestIntegration_OpenGo_Deprecated(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "alpha")
+	pathB := createWorktreeViaWt(t, repo, "bravo")
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	r := runWtSuccess(t, worktreePath(repo, "alpha"), env, "open", "--go", "bravo", "--app", "open_here")
+	assertContains(t, r.Stderr, "deprecated")
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != pathB {
+		t.Errorf("expected cd file to contain %q, got %q", pathB, string(data))
+	}
+}
