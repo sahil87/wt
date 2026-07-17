@@ -1,0 +1,9 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-07-17T08:25:44Z"}
+{"args":"wt create's output prints 'Branch: \u003cname\u003e' but not the resulting branch's base/parent commit -- add a line showing what ref the new branch was created from (or 'checked out directly onto \u003cref\u003e' when it's the existing-branch path), so it's visible at creation time which branch-vs-checkout path was taken.","cmd":"fab-new","event":"command","ts":"2026-07-17T08:25:44Z"}
+{"delta":"+4.4","event":"confidence","score":4.4,"trigger":"calc-score","ts":"2026-07-17T08:27:29Z"}
+{"cmd":"fab-fff","event":"command","ts":"2026-07-17T08:34:22Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-07-17T08:34:52Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-07-17T08:39:45Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-07-17T09:14:48Z"}
+{"event":"review","result":"passed","ts":"2026-07-17T09:14:48Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-07-17T09:18:12Z"}

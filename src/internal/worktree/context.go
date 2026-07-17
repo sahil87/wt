@@ -172,6 +172,30 @@ func CurrentBranch() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// DescribeHead returns a display label for the current HEAD: the branch name,
+// or the short SHA when detached. Best-effort — returns "HEAD" on any git
+// error so a display label can never fail the create.
+func DescribeHead() string {
+	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return "HEAD"
+	}
+	label := strings.TrimSpace(string(out))
+	if label != "" && label != "HEAD" {
+		return label
+	}
+	// Detached HEAD (abbrev-ref returns the literal "HEAD") — fall back to the
+	// short SHA.
+	shortOut, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	if err != nil {
+		return "HEAD"
+	}
+	if short := strings.TrimSpace(string(shortOut)); short != "" {
+		return short
+	}
+	return "HEAD"
+}
+
 // InitScriptPath returns the init-script value plus its provenance, respecting
 // the WORKTREE_INIT_SCRIPT env var.
 //

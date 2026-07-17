@@ -251,6 +251,27 @@ branch argument or with --base.`,
 			// in internal/worktree; cmd/ maps the sentinel errors to exit codes.
 			var wtPath string
 			var createdSummaryBranch string // branch label shown in the summary
+
+			// Resolve the "From:" summary label BEFORE the create dispatch, so
+			// the one possible git query (DescribeHead) stays outside the tight
+			// reinstall window between git worktree add and the init-phase
+			// signal.Reset (see create-output-phases.md / the reinstall-window
+			// contract). wt create never moves the invoking worktree's HEAD, so
+			// HEAD here equals HEAD at summary time — resolving pre-dispatch is
+			// equivalent.
+			//   --checkout → fixed copy naming the existing-branch path (no query)
+			//   --base     → the ref verbatim as typed (no query)
+			//   else       → the resolved HEAD label (one query, best-effort)
+			var createdSummaryFrom string
+			switch {
+			case checkout != "":
+				createdSummaryFrom = fmt.Sprintf("existing branch '%s' (checked out directly)", checkout)
+			case base != "":
+				createdSummaryFrom = base
+			default:
+				createdSummaryFrom = wt.DescribeHead()
+			}
+
 			switch {
 			case checkout != "":
 				wtPath, err = wt.CheckoutBranchWorktree(checkout, finalName, ctx, rb)
@@ -314,8 +335,8 @@ branch argument or with --base.`,
 			// (the Git phase's output) and stays before the init-phase
 			// signal.Reset, so no new I/O enters the tight reinstall window.
 			fmt.Fprintln(os.Stderr, wt.PhaseSeparator("Git"))
-			fmt.Fprintf(os.Stderr, "Created worktree: %s\nPath: %s\nBranch: %s\n",
-				finalName, wtPath, createdSummaryBranch)
+			fmt.Fprintf(os.Stderr, "Created worktree: %s\nPath: %s\nBranch: %s\nFrom: %s\n",
+				finalName, wtPath, createdSummaryBranch, createdSummaryFrom)
 
 			// initFailed records that the init script exited non-zero. It is
 			// set in the failure branch below instead of an inline os.Exit so
