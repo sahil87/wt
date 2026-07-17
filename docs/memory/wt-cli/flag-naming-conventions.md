@@ -82,7 +82,11 @@ or rare flags stay long-form-only (Principle II).
   `--base` on `wt create` (a `-b` would collide with `git worktree add -b`, which
   there NAMES the new branch — actively misleading to git users);
   `--non-interactive` (script-facing everywhere; explicitness beats brevity, and
-  it is named in constitution Principle VI).
+  it is named in constitution Principle VI); `--dry-run` on `wt delete` (a
+  preview/automation flag, not common interactive use — same rationale as
+  `--non-interactive`; a `-d` would also risk a delete-adjacent misfire on the
+  most destructive command). See
+  [`delete-dry-run-contract`](/wt-cli/delete-dry-run-contract.md).
 
 ### `--open` requires an explicit value — no `NoOptDefVal`
 `wt create --open` SHALL NOT be given a `NoOptDefVal`. Because `wt create` takes a
@@ -205,6 +209,9 @@ mode — a silent, hard-to-debug footgun.
 - Sibling memory: [`idle-staleness-contract`](/wt-cli/idle-staleness-contract.md)
   — the `--all`/`-a` (and `--branch`, `--no-remote`) renames referenced in the
   `--stale` mutex/composition text, and the `wt rm` alias on `wt delete`.
+- Sibling memory: [`delete-dry-run-contract`](/wt-cli/delete-dry-run-contract.md)
+  — the `--dry-run` long-only / no-short flag on `wt delete` (recorded in the
+  short-flags rule above) and its preview contract.
 - Sibling memory: [`create-output-phases`](/wt-cli/create-output-phases.md) — the
   canonical stdout=machine / stderr=human stream-discipline contract that the
   deprecation-warning-on-stderr rule honors.
@@ -212,7 +219,8 @@ mode — a silent, hard-to-debug footgun.
   deprecated `--worktree-name`/`--worktree-open`/`--worktree-init`, `Aliases:
   ["new"]`), `src/cmd/wt/delete.go` (`--all`/`-a`, `--branch`, `--no-remote` +
   deprecated `--delete-all`/`--delete-branch`/`--delete-remote`, `Aliases:
-  ["rm"]`), `src/cmd/wt/open.go` (`--select` + deprecated `--go`, `--app`/`-a`),
+  ["rm"]`; `--dry-run` long-only, added by `260717-p5m9`),
+  `src/cmd/wt/open.go` (`--select` + deprecated `--go`, `--app`/`-a`),
   `src/cmd/wt/list.go` (`Aliases: ["ls"]`), `src/cmd/wt/update.go`
   (`--no-brew-update` + deprecated `--skip-brew-update`), `src/cmd/wt/init.go`
   (Short-text sharpening, no flag change).

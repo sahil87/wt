@@ -187,6 +187,7 @@ Delete one or more worktrees with optional branch cleanup.
 | `--no-remote` | (unset — remote deleted) | Do NOT delete the branch on the origin remote when the local branch is deleted (the remote branch is deleted by default). |
 | `--all`, `-a` | `false` | Delete every worktree (skips the current selection logic). |
 | `-s`, `--stash` | `false` | Stash uncommitted changes in the worktree before deleting. |
+| `--dry-run` | `false` | Preview what would be deleted without making any change and without confirmation prompts. All decision logic (target resolution, `--branch` auto rule, remote-existence check, hazard detection) runs live; only the mutations are suppressed and replaced by `Would …` lines on stdout under a `Dry run — no changes will be made.` header. Long-only (no short flag). Applies to every target-resolution path; the selection menu still shows (selection is not consent), and the non-interactive no-target refusal is unchanged. Exit codes are identical to the live run. |
 | `--non-interactive` | `false` | No prompts; use defaults. |
 
 **Deprecated aliases** (still accepted; hidden from `--help`; print a stderr deprecation warning): `--delete-branch` → `--branch`, `--delete-remote true|false` → `--no-remote` (`--delete-remote false` ≡ `--no-remote`), `--delete-all` → `--all`, and the pre-existing `--worktree-name` → use positional arguments instead.

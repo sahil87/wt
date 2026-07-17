@@ -483,6 +483,70 @@ func TestIntegration_OpenGo_NonGit_ExitsGitError(t *testing.T) {
 	}
 }
 
+// TestIntegration_DeleteDryRun_LeavesStateByteIdentical exercises the full
+// --dry-run contract end-to-end against a real repo: a dirty worktree whose
+// branch matches its name and exists on origin, previewed under --dry-run,
+// leaves the worktree directory, its dirty file, the local branch, the remote
+// branch, and the stash list all byte-identical, exits 0, and emits the
+// Would-lines to stdout (change p5m9).
+func TestIntegration_DeleteDryRun_LeavesStateByteIdentical(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "dryrun-e2e")
+	// Push so the remote branch exists.
+	gitRun(t, wtPath, "push", "-q", "-u", "origin", "dryrun-e2e")
+	// Make the worktree dirty.
+	dirtyFile := filepath.Join(wtPath, "wip.txt")
+	os.WriteFile(dirtyFile, []byte("work in progress"), 0644)
+
+	// Capture pre-state.
+	headBefore := gitRun(t, wtPath, "rev-parse", "HEAD")
+	stashBefore := gitRun(t, repo, "stash", "list")
+
+	// Run from inside the worktree with no name → current-worktree path, which
+	// exercises the hazard-report branch too.
+	r := runWtSuccess(t, wtPath, nil, "delete", "--non-interactive", "--dry-run", "--branch", "true")
+
+	// Preview lines on stdout.
+	assertContains(t, r.Stdout, "Dry run — no changes will be made.")
+	assertContains(t, r.Stdout, "Would discard uncommitted changes (use --stash to preserve them)")
+	assertContains(t, r.Stdout, "Would remove worktree: dryrun-e2e")
+	assertContains(t, r.Stdout, "Would delete branch: dryrun-e2e (local)")
+	assertContains(t, r.Stdout, "Would delete branch: dryrun-e2e (remote)")
+
+	// State byte-identical: worktree dir, dirty file, local + remote branch, stash.
+	assertWorktreeExists(t, repo, "dryrun-e2e")
+	if _, err := os.Stat(dirtyFile); err != nil {
+		t.Errorf("dirty file was removed by a dry run: %v", err)
+	}
+	assertBranchExists(t, repo, "dryrun-e2e")
+	assertRemoteBranchExists(t, repo, "dryrun-e2e")
+	if headAfter := gitRun(t, wtPath, "rev-parse", "HEAD"); headAfter != headBefore {
+		t.Errorf("worktree HEAD changed under dry run: %s -> %s", headBefore, headAfter)
+	}
+	if stashAfter := gitRun(t, repo, "stash", "list"); stashAfter != stashBefore {
+		t.Errorf("stash list changed under dry run: %q -> %q", stashBefore, stashAfter)
+	}
+	assertGitStateClean(t, repo)
+}
+
+// TestIntegration_DeleteDryRun_MultiTargetLeavesAllIntact verifies a
+// multi-target --all dry-run leaves every worktree and branch intact (p5m9).
+func TestIntegration_DeleteDryRun_MultiTargetLeavesAllIntact(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "multi-dry-1")
+	createWorktreeViaWt(t, repo, "multi-dry-2")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--all", "--dry-run", "--branch", "true")
+	assertContains(t, r.Stdout, "Would remove worktree: multi-dry-1")
+	assertContains(t, r.Stdout, "Would remove worktree: multi-dry-2")
+
+	// Every worktree and branch survives.
+	assertWorktreeExists(t, repo, "multi-dry-1")
+	assertWorktreeExists(t, repo, "multi-dry-2")
+	assertBranchExists(t, repo, "multi-dry-1")
+	assertBranchExists(t, repo, "multi-dry-2")
+}
+
 func TestIntegration_WorktreeCommitIndependent(t *testing.T) {
 	repo := createTestRepo(t)
 

@@ -723,3 +723,322 @@ func TestDelete_HelpHidesDeprecatedShowsNew(t *testing.T) {
 		assertNotContains(t, r.Stdout, hidden)
 	}
 }
+
+// ---------- --dry-run preview (change p5m9) ----------
+
+// TestDelete_DryRunHelpMentionsFlag verifies `--dry-run` is on the delete help
+// surface (R10).
+func TestDelete_DryRunHelpMentionsFlag(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWtSuccess(t, repo, nil, "delete", "--help")
+	assertContains(t, r.Stdout, "--dry-run")
+}
+
+// TestDelete_DryRunByNamePreviewsNoMutation is the core single-target preview:
+// a worktree whose branch matches its name and exists on origin, deleted by
+// positional name under --dry-run, prints the Would-lines to stdout and leaves
+// the worktree, local branch, and remote branch byte-identical (R3, R4, R8).
+func TestDelete_DryRunByNamePreviewsNoMutation(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "preview-wt")
+	// Push so the remote branch exists — the preview must report it without
+	// deleting it.
+	gitRun(t, worktreePath(repo, "preview-wt"), "push", "-q", "-u", "origin", "preview-wt")
+	assertRemoteBranchExists(t, repo, "preview-wt")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "preview-wt", "--dry-run", "--branch", "true")
+
+	assertContains(t, r.Stdout, "Dry run — no changes will be made.")
+	assertContains(t, r.Stdout, "Would remove worktree: preview-wt")
+	assertContains(t, r.Stdout, "Would delete branch: preview-wt (local)")
+	assertContains(t, r.Stdout, "Would delete branch: preview-wt (remote)")
+	// The live completion messages must NOT appear — nothing was mutated.
+	assertNotContains(t, r.Stdout, "Deleted worktree")
+	assertNotContains(t, r.Stdout, "Removing worktree...")
+
+	// State is byte-identical.
+	assertWorktreeExists(t, repo, "preview-wt")
+	assertBranchExists(t, repo, "preview-wt")
+	assertRemoteBranchExists(t, repo, "preview-wt")
+}
+
+// TestDelete_DryRunAutoModeSkipMessageStillShows verifies the --branch auto
+// tri-state decision runs live under dry-run: a name-mismatched branch is
+// reported as skipped, not previewed as deleted (R3).
+func TestDelete_DryRunAutoModeSkipMessageStillShows(t *testing.T) {
+	repo := createTestRepo(t)
+	gitRun(t, repo, "checkout", "-b", "feature/mismatch")
+	gitRun(t, repo, "checkout", "main")
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--worktree-name", "auto-dry", "--checkout", "feature/mismatch")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "auto-dry", "--dry-run")
+	assertContains(t, r.Stdout, "Would remove worktree: auto-dry")
+	assertContains(t, r.Stdout, "Skipped branch deletion")
+	// Auto mode skips the mismatched branch → no local-delete preview line.
+	assertNotContains(t, r.Stdout, "Would delete branch: feature/mismatch")
+
+	assertWorktreeExists(t, repo, "auto-dry")
+	assertBranchExists(t, repo, "feature/mismatch")
+}
+
+// TestDelete_DryRunNoRemoteSuppressesRemotePreview verifies --no-remote alters
+// the previewed branch actions exactly as it alters the live run (R3).
+func TestDelete_DryRunNoRemoteSuppressesRemotePreview(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "no-remote-dry")
+	gitRun(t, worktreePath(repo, "no-remote-dry"), "push", "-q", "-u", "origin", "no-remote-dry")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "no-remote-dry", "--dry-run", "--branch", "true", "--no-remote")
+	assertContains(t, r.Stdout, "Would delete branch: no-remote-dry (local)")
+	// --no-remote means no remote preview line.
+	assertNotContains(t, r.Stdout, "Would delete branch: no-remote-dry (remote)")
+
+	assertWorktreeExists(t, repo, "no-remote-dry")
+	assertRemoteBranchExists(t, repo, "no-remote-dry")
+}
+
+// TestDelete_DryRunCurrentDiscardsHazardReport verifies the current-worktree
+// path reports the uncommitted-changes hazard as a Would-line without
+// discarding (R6). Run from inside a dirty worktree with no name.
+func TestDelete_DryRunCurrentDiscardsHazardReport(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "dirty-dry")
+	os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("uncommitted"), 0644)
+
+	r := runWtSuccess(t, wtPath, nil, "delete", "--non-interactive", "--dry-run")
+	assertContains(t, r.Stdout, "Would discard uncommitted changes (use --stash to preserve them)")
+	assertContains(t, r.Stdout, "Would remove worktree: dirty-dry")
+	assertNotContains(t, r.Stdout, "Discarding uncommitted changes...")
+
+	assertWorktreeExists(t, repo, "dirty-dry")
+	// The dirty file survives — nothing was discarded.
+	assertFileExists(t, filepath.Join(wtPath, "dirty.txt"))
+}
+
+// TestDelete_DryRunCurrentStashHazardReport verifies --stash × --dry-run
+// previews the stash action without stashing (R6, assumption #7).
+func TestDelete_DryRunCurrentStashHazardReport(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "stash-dry")
+	os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("uncommitted"), 0644)
+
+	r := runWtSuccess(t, wtPath, nil, "delete", "--non-interactive", "--dry-run", "--stash")
+	assertContains(t, r.Stdout, "Would stash uncommitted changes")
+	assertNotContains(t, r.Stdout, "Stashing changes...")
+
+	assertWorktreeExists(t, repo, "stash-dry")
+	// No stash was actually created.
+	stashOut := gitRun(t, repo, "stash", "list")
+	assertNotContains(t, stashOut, "wt-delete")
+}
+
+// TestDelete_DryRunUnpushedReport verifies the unpushed-commits hazard is
+// reported as a Would-line (R6). Uses the current-worktree path (the only path
+// that runs unpushed detection).
+func TestDelete_DryRunUnpushedReport(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "unpushed-dry")
+	// Push to establish upstream, then make one unpushed commit.
+	gitRun(t, wtPath, "push", "-q", "-u", "origin", "unpushed-dry")
+	os.WriteFile(filepath.Join(wtPath, "v2.txt"), []byte("v2"), 0644)
+	gitRun(t, wtPath, "add", ".")
+	gitRun(t, wtPath, "commit", "-q", "-m", "unpushed")
+
+	r := runWtSuccess(t, wtPath, nil, "delete", "--non-interactive", "--dry-run")
+	assertContains(t, r.Stdout, "Would lose 1 unpushed commit(s) on branch unpushed-dry")
+
+	assertWorktreeExists(t, repo, "unpushed-dry")
+}
+
+// TestDelete_DryRunStashByNameNoStash verifies the byName/multiple stash path
+// (handleStashInDir) previews the stash without mutating (R4).
+func TestDelete_DryRunStashByNameNoStash(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "stash-name-dry")
+	os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("uncommitted"), 0644)
+	gitRun(t, wtPath, "add", "dirty.txt")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "stash-name-dry", "--dry-run", "--stash")
+	assertContains(t, r.Stdout, "Would stash uncommitted changes")
+	assertNotContains(t, r.Stdout, "Stashing changes...")
+
+	assertWorktreeExists(t, repo, "stash-name-dry")
+	stashOut := gitRun(t, repo, "stash", "list")
+	assertNotContains(t, stashOut, "wt-delete")
+}
+
+// TestDelete_DryRunAllPreviewsAllNoMutation verifies --all × --dry-run keeps
+// the per-worktree block structure and mutates nothing (R2, R8).
+func TestDelete_DryRunAllPreviewsAllNoMutation(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "all-dry-1")
+	createWorktreeViaWt(t, repo, "all-dry-2")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--all", "--dry-run")
+	assertContains(t, r.Stdout, "Dry run — no changes will be made.")
+	assertContains(t, r.Stdout, "Would remove worktree: all-dry-1")
+	assertContains(t, r.Stdout, "Would remove worktree: all-dry-2")
+	assertNotContains(t, r.Stdout, "Deleted worktree")
+
+	assertWorktreeExists(t, repo, "all-dry-1")
+	assertWorktreeExists(t, repo, "all-dry-2")
+}
+
+// TestDelete_DryRunStaleSelectsIdlePreviewsNoMutation verifies --stale ×
+// --dry-run computes the idle target set live and previews only (R2, R3).
+func TestDelete_DryRunStaleSelectsIdlePreviewsNoMutation(t *testing.T) {
+	repo := createTestRepo(t)
+	for _, n := range []string{"fresh-dry", "idle-dry"} {
+		createWorktreeViaWt(t, repo, n)
+	}
+	chtimesWorktree(t, repo, "fresh-dry", time.Now())
+	chtimesWorktree(t, repo, "idle-dry", daysAgo(30))
+
+	r := runWtSuccess(t, repo, nil, "delete", "--stale", "--non-interactive", "--dry-run")
+	assertContains(t, r.Stdout, "Would remove worktree: idle-dry")
+	assertNotContains(t, r.Stdout, "Would remove worktree: fresh-dry")
+
+	// Nothing deleted — both survive.
+	assertWorktreeExists(t, repo, "fresh-dry")
+	assertWorktreeExists(t, repo, "idle-dry")
+}
+
+// TestDelete_DryRunStaleNoMatchesKeepsEmptyState verifies the --stale zero-match
+// empty-state message is preserved under dry-run (R8).
+func TestDelete_DryRunStaleNoMatchesKeepsEmptyState(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "fresh-only")
+	chtimesWorktree(t, repo, "fresh-only", time.Now())
+
+	r := runWtSuccess(t, repo, nil, "delete", "--stale", "--non-interactive", "--dry-run")
+	assertContains(t, r.Stdout, "No idle worktrees (threshold: 7d).")
+	assertWorktreeExists(t, repo, "fresh-only")
+}
+
+// TestDelete_DryRunNoTargetNonInteractiveRefusal verifies the non-interactive
+// no-target refusal is unchanged under --dry-run (R7, R9).
+func TestDelete_DryRunNoTargetNonInteractiveRefusal(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWt(t, repo, nil, "delete", "--non-interactive", "--dry-run")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "No worktree specified")
+}
+
+// TestDelete_DryRunUnknownNameFails verifies dry-run fails on exactly the inputs
+// the live run fails on: an unknown name exits ExitGeneralError (R9).
+func TestDelete_DryRunUnknownNameFails(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWt(t, repo, nil, "delete", "--non-interactive", "nonexistent-dry", "--dry-run")
+	if r.ExitCode == 0 {
+		t.Error("expected failure for nonexistent worktree under --dry-run")
+	}
+	assertContains(t, r.Stderr, "not found")
+}
+
+// TestDelete_DryRunStaleMutexStillFails verifies argument validation precedes
+// dry-run branching: --stale + positional still exits ExitInvalidArgs (R9).
+func TestDelete_DryRunStaleMutexStillFails(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "feature-x")
+
+	r := runWt(t, repo, nil, "delete", "--stale", "feature-x", "--non-interactive", "--dry-run")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "mutually exclusive")
+	assertWorktreeExists(t, repo, "feature-x")
+}
+
+// TestDelete_DryRunInvalidThresholdFails verifies a malformed --stale value
+// still exits ExitInvalidArgs under --dry-run (R9).
+func TestDelete_DryRunInvalidThresholdFails(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "feature-x")
+
+	r := runWt(t, repo, nil, "delete", "--stale=banana", "--non-interactive", "--dry-run")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "30d")
+	assertWorktreeExists(t, repo, "feature-x")
+}
+
+// TestDelete_DryRunRemoteOnlyOrphanPreviewsRemote is the regression test for the
+// orphan `wt/<name>` preview↔live drift: the live path deletes a remote-only
+// `refs/heads/wt/<name>` orphan independently of local existence, so the dry-run
+// preview MUST print the remote `Would …` line for that orphan even when no
+// local `wt/<name>` branch exists (R3, R4). --branch=false suppresses the
+// primary branch preview so the only branch lines that can appear come from the
+// orphan cleanup, isolating the case under test.
+func TestDelete_DryRunRemoteOnlyOrphanPreviewsRemote(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "orphan-dry")
+
+	// Create a `wt/orphan-dry` orphan that exists ONLY on origin: push it, then
+	// delete the local ref so refs/heads/wt/orphan-dry is remote-only.
+	gitRun(t, repo, "branch", "wt/orphan-dry")
+	gitRun(t, repo, "push", "-q", "origin", "wt/orphan-dry")
+	gitRun(t, repo, "branch", "-D", "wt/orphan-dry")
+	assertRemoteBranchExists(t, repo, "wt/orphan-dry")
+	assertBranchNotExists(t, repo, "wt/orphan-dry")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "orphan-dry", "--dry-run", "--branch", "false")
+
+	// The remote orphan is previewed even though it is absent locally — mirroring
+	// the live path, which deletes it independently of local existence.
+	assertContains(t, r.Stdout, "Would delete branch: wt/orphan-dry (remote)")
+	// No local orphan exists, so its local preview line must NOT appear.
+	assertNotContains(t, r.Stdout, "Would delete branch: wt/orphan-dry (local)")
+	// --branch=false suppresses the primary branch preview entirely.
+	assertNotContains(t, r.Stdout, "Would delete branch: orphan-dry (local)")
+
+	// State is byte-identical — the remote orphan survives the preview.
+	assertWorktreeExists(t, repo, "orphan-dry")
+	assertRemoteBranchExists(t, repo, "wt/orphan-dry")
+	assertBranchNotExists(t, repo, "wt/orphan-dry")
+}
+
+// TestDelete_DryRunByWorktreeNameFlagPreviewsNoMutation exercises the
+// handleDeleteByName dry-run path directly via the deprecated `--worktree-name`
+// flag (positional names route through handleDeleteMultiple, so the byName
+// branches were previously uncovered). The deprecation warning on stderr is
+// expected and does not affect the preview on stdout (R2, R3, R4).
+func TestDelete_DryRunByWorktreeNameFlagPreviewsNoMutation(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "byname-dry")
+	gitRun(t, worktreePath(repo, "byname-dry"), "push", "-q", "-u", "origin", "byname-dry")
+	assertRemoteBranchExists(t, repo, "byname-dry")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--worktree-name", "byname-dry", "--dry-run", "--branch", "true")
+
+	assertContains(t, r.Stdout, "Dry run — no changes will be made.")
+	assertContains(t, r.Stdout, "Would remove worktree: byname-dry")
+	assertContains(t, r.Stdout, "Would delete branch: byname-dry (local)")
+	assertContains(t, r.Stdout, "Would delete branch: byname-dry (remote)")
+	// Nothing was mutated — the live completion messages are absent.
+	assertNotContains(t, r.Stdout, "Deleted worktree")
+
+	// State is byte-identical.
+	assertWorktreeExists(t, repo, "byname-dry")
+	assertBranchExists(t, repo, "byname-dry")
+	assertRemoteBranchExists(t, repo, "byname-dry")
+}
+
+// TestDelete_DryRunMenuRoutePreviewsNoMutation drives the interactive
+// target-selection menu (handleDeleteMenu → handleDeleteByName) under --dry-run
+// via the non-TTY fallback numbered menu: with a single (non-idle) worktree the
+// menu is `0) Cancel`, `1) All`, `2) <name>`, so feeding "2\n" selects the
+// worktree. Dry-run skips the confirmation prompt, so the selection is the only
+// menu interaction. Selection is not consent (R7) and nothing is mutated (R3).
+func TestDelete_DryRunMenuRoutePreviewsNoMutation(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "menu-dry")
+
+	r := runWtStdin(t, repo, nil, "2\n", "delete", "--dry-run", "--branch", "true")
+	if r.ExitCode != 0 {
+		t.Fatalf("menu-route dry-run failed (exit %d):\nstdout: %s\nstderr: %s", r.ExitCode, r.Stdout, r.Stderr)
+	}
+
+	assertContains(t, r.Stdout, "Would remove worktree: menu-dry")
+	assertNotContains(t, r.Stdout, "Deleted worktree")
+
+	// Nothing mutated — the worktree survives the preview.
+	assertWorktreeExists(t, repo, "menu-dry")
+	assertBranchExists(t, repo, "menu-dry")
+}
