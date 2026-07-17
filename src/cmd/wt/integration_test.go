@@ -586,3 +586,40 @@ func TestIntegration_NonTTYMenuActionableRefusal(t *testing.T) {
 		})
 	}
 }
+
+// TestIntegration_SkillBundle runs the built binary and asserts the `skill`
+// standard's invocation contract end-to-end: `wt skill` exits 0, writes the
+// bundle to stdout byte-identical to the canonical docs/site/skill.md, and
+// leaves stderr empty. No git state is needed, but the case uses runWt's env
+// isolation like every other end-to-end case.
+func TestIntegration_SkillBundle(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWtSuccess(t, repo, nil, "skill")
+
+	if r.Stderr != "" {
+		t.Errorf("expected empty stderr on success, got: %q", r.Stderr)
+	}
+
+	// The canonical bundle lives at the repo root; the test binary runs from
+	// src/cmd/wt/, so reach three levels up.
+	canonical, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "site", "skill.md"))
+	if err != nil {
+		t.Fatalf("read canonical docs/site/skill.md: %v", err)
+	}
+	if r.Stdout != string(canonical) {
+		t.Errorf("stdout is not byte-identical to docs/site/skill.md (got %d bytes, want %d)",
+			len(r.Stdout), len(canonical))
+	}
+}
+
+// TestIntegration_SkillRejectsArgs asserts cobra.NoArgs end-to-end against the
+// built binary: an unexpected positional arg surfaces a non-zero exit via
+// main.go's error path (mirroring TestHelpDump_RejectsArgs).
+func TestIntegration_SkillRejectsArgs(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWt(t, repo, nil, "skill", "extra")
+	if r.ExitCode == 0 {
+		t.Fatalf("expected non-zero exit from `wt skill extra` (cobra.NoArgs)\nstdout: %s\nstderr: %s",
+			r.Stdout, r.Stderr)
+	}
+}

@@ -2,6 +2,10 @@
 default:
     @just --list
 
+# Refresh the embedded skill bundle from the canonical docs/site/skill.md (drift-guarded by a test).
+sync-skill:
+    ./scripts/sync-skill.sh
+
 # Build the wt binary into ./bin/wt, stamped with `git describe` as the version.
 build:
     ./scripts/build.sh

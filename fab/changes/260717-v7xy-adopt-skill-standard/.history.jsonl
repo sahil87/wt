@@ -1,0 +1,10 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-07-17T21:35:24Z"}
+{"args":"Adopt the toolkit skill standard -- add a hidden-free wt skill subcommand that prints a static, \u003c=150-line agent usage bundle (byte-identical to a new canonical docs/site/skill.md) to stdout, embedded at build time via a sync + drift-guard test (reuse the mechanism shll standards established).","cmd":"fab-new","event":"command","ts":"2026-07-17T21:35:24Z"}
+{"delta":"+4.5","event":"confidence","score":4.5,"trigger":"calc-score","ts":"2026-07-17T21:37:53Z"}
+{"cmd":"fab-fff","event":"command","ts":"2026-07-17T21:42:40Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-07-17T21:43:08Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-07-17T21:50:25Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-07-17T21:54:20Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-07-17T22:00:51Z"}
+{"event":"review","result":"passed","ts":"2026-07-17T22:00:51Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-07-17T22:06:48Z"}
