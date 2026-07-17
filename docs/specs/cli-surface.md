@@ -25,17 +25,21 @@ signal-exit convention).
 
 ## `wt create [branch]`
 
+Aliases: `wt new`.
+
 Create a git worktree as a sibling of the main repo (`<repo>.worktrees/<name>/`).
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--worktree-name <name>` | random adjective-noun | Set the worktree directory name; skips the name prompt. |
-| `--worktree-init <true\|false>` | `true` | Run the worktree init script after creation. |
-| `--worktree-open <prompt\|default\|skip\|<app>>` | `prompt` (`skip` when `--non-interactive`) | Behavior after creation: show app menu, open in detected default, skip, or open in a specific app (e.g. `code`, `cursor`). |
-| `--reuse` | `false` | If a worktree with `--worktree-name` already exists, reuse it instead of erroring. Requires `--worktree-name`. |
+| `--name`, `-n <name>` | random adjective-noun | Set the worktree directory name; skips the name prompt. |
+| `--open`, `-o <prompt\|default\|skip\|<app>>` | `prompt` (`skip` when `--non-interactive`) | Behavior after creation: show app menu, open in detected default, skip, or open in a specific app (e.g. `code`, `cursor`). Requires an explicit value (no bare form — a bare `--open code` would be parsed as the positional `[branch]`). |
+| `--no-init` | (unset — init runs) | Skip the worktree init script (init runs by default). |
+| `--reuse` | `false` | If a worktree with `--name` already exists, reuse it instead of erroring. Requires `--name`. |
 | `--non-interactive` | `false` | No prompts; fail or use defaults rather than prompting. |
 | `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for the NEW branch. Validated via `git rev-parse --verify` whenever set and `--reuse` is not. Cannot be combined with `--checkout`. |
 | `--checkout <branch>` | (none) | Check out an EXISTING branch (local as-is, or remote-only fetched then checked out) into the worktree, instead of creating a new one. Cannot be combined with a positional branch argument or with `--base`. |
+
+**Deprecated aliases** (still accepted; hidden from `--help`; print a stderr deprecation warning): `--worktree-name` → `--name`, `--worktree-open` → `--open`, `--worktree-init true|false` → `--no-init` (`--worktree-init false` ≡ `--no-init`).
 
 Positional arg `branch` (optional) — **names a NEW branch only**:
 
@@ -73,6 +77,8 @@ is not fab-managed. See [`init-protocol.md`](init-protocol.md).
 
 ## `wt list`
 
+Aliases: `wt ls`.
+
 List all worktrees for the current repository.
 
 | Flag | Default | Description |
@@ -101,12 +107,14 @@ Open a directory in a detected application (editor, terminal, file manager).
 `hop`) MAY delegate to it via subprocess invocation. The full env-var contract
 is documented in [`launcher-contract.md`](launcher-contract.md). Worktree
 **selection** (picking which worktree) is the job of [`wt go`](#wt-go-name);
-`wt open --go` composes the two (select, then launch).
+`wt open --select` composes the two (select, then launch).
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--app <name\|default>` | (none) | Open directly in the named app, skipping the menu. `default` selects the auto-detected default. |
-| `--go` | `false` | Select a worktree first (via `wt go`'s menu when no name is given, or resolve-by-name when one is), then launch it. Requires a git repository; composes with `--app`. From a non-git cwd, exits `ExitGitError`. |
+| `--app`, `-a <name\|default>` | (none) | Open directly in the named app, skipping the menu. `default` selects the auto-detected default. |
+| `--select` | `false` | Select a worktree first (via `wt go`'s menu when no name is given, or resolve-by-name when one is), then launch it. Requires a git repository; composes with `--app`. From a non-git cwd, exits `ExitGitError`. |
+
+**Deprecated alias** (still accepted; hidden from `--help`; prints a stderr deprecation warning): `--go` → `--select`.
 
 Positional arg `[name|path]`:
 
@@ -124,7 +132,7 @@ Positional arg `[name|path]`:
 
 Exit codes: `ExitInvalidArgs` when `--app` is used with the main-repo selection
 menu; `ExitGitError` when a git operation fails during name resolution, or when
-`--go` is invoked from a non-git cwd (the `--go` git-repo precondition) — but
+`--select` is invoked from a non-git cwd (the `--select` git-repo precondition) — but
 not for path-only or no-args invocations from outside a repo;
 `ExitByobuTabError` / `ExitTmuxWindowError` for terminal-app failures;
 `ExitGeneralError` for unknown apps, unresolved targets, or name args supplied
@@ -169,19 +177,22 @@ or for a no-arg invocation under `--non-interactive`.
 
 ## `wt delete [worktree-names...]`
 
+Aliases: `wt rm`.
+
 Delete one or more worktrees with optional branch cleanup.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--worktree-name <name>` | (none) | **Deprecated**: use positional arguments instead. |
-| `--delete-branch <true\|false\|auto>` | `auto` | Delete the associated local branch. `auto` deletes only when the branch name matches the worktree name. |
-| `--delete-remote <true\|false>` | `true` | Delete the branch on the origin remote (via `git push origin --delete`) when the local branch is deleted. |
-| `--delete-all` | `false` | Delete every worktree (skips the current selection logic). |
+| `--branch <true\|false\|auto>` | `auto` | Delete the associated local branch. `auto` deletes only when the branch name matches the worktree name. Stays a string tri-state (`auto` is a genuine third value). |
+| `--no-remote` | (unset — remote deleted) | Do NOT delete the branch on the origin remote when the local branch is deleted (the remote branch is deleted by default). |
+| `--all`, `-a` | `false` | Delete every worktree (skips the current selection logic). |
 | `-s`, `--stash` | `false` | Stash uncommitted changes in the worktree before deleting. |
 | `--non-interactive` | `false` | No prompts; use defaults. |
 
+**Deprecated aliases** (still accepted; hidden from `--help`; print a stderr deprecation warning): `--delete-branch` → `--branch`, `--delete-remote true|false` → `--no-remote` (`--delete-remote false` ≡ `--no-remote`), `--delete-all` → `--all`, and the pre-existing `--worktree-name` → use positional arguments instead.
+
 Positional args (zero or more): worktree names to delete. Resolution priority:
-`--delete-all` → positional names → `--worktree-name` (deprecated) → current
+`--all` → positional names → `--worktree-name` (deprecated) → current
 worktree → interactive selection menu.
 
 Mixing positional args with `--worktree-name` exits with `ExitInvalidArgs`.
@@ -215,7 +226,13 @@ formula (`sahil87/tap/wt`) for its latest stable version, and invokes
 `brew upgrade` when a newer version is available. Implementation lives under
 `src/internal/update/`.
 
-No flags. No positional args.
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--no-brew-update` | `false` | Skip the internal `brew update` tap-metadata refresh. The version check (`brew info`) and the `brew upgrade` still run. |
+
+No positional args.
+
+**Deprecated alias** (still accepted; hidden from `--help`; prints a stderr deprecation warning): `--skip-brew-update` → `--no-brew-update`.
 
 User-facing outcomes:
 

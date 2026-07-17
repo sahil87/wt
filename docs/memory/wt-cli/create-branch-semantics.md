@@ -18,7 +18,7 @@ unless an explicit spec amendment supersedes them.
 **Why this contract exists.** Before this change, `wt create [branch]` silently dispatched on
 branch existence: an unused name created a new branch, an *existing* local/remote name checked
 that branch out directly into the new worktree — with no warning. The two outcomes differ
-wildly in consequence: a user typing `wt create --worktree-name foo sockets-v2` intending a
+wildly in consequence: a user typing `wt create --name foo sockets-v2` intending a
 scratch worktree landed *on* `sockets-v2` itself, one `git commit` away from polluting a shared
 / collector branch. The overload is now split into explicit modes so the dangerous direction
 (check out an existing branch) is an opt-in (`--checkout`) and the safe common path
@@ -40,7 +40,7 @@ scratch worktree landed *on* `sockets-v2` itself, one `git commit` away from pol
 - Remote-only is deliberately included in the existence check — a remote-only shared branch is
   the exact danger case the change targets.
 - The bare-create path (no positional, no `--checkout`) is unchanged: an exploratory worktree on
-  a new branch named after the (random or `--worktree-name`) worktree name, `--base` honored.
+  a new branch named after the (random or `--name`) worktree name, `--base` honored.
 
 - **GIVEN** a repo with no branch `foo` (local or remote)
 - **WHEN** the user runs `wt create foo`
@@ -91,7 +91,7 @@ scratch worktree landed *on* `sockets-v2` itself, one `git commit` away from pol
 - The old `baseWarnings` / `effectiveBase` machinery and the `existingBranch`-probe carve-out in
   the `--base` validation are removed. Validation simplified to a single guard: `if base != ""
   && !reuse { git rev-parse --verify <base> }`. `--reuse` still short-circuits before `--base` is
-  validated, so `wt create --reuse --worktree-name X --base <bad-ref>` on an existing worktree
+  validated, so `wt create --reuse --name X --base <bad-ref>` on an existing worktree
   reuses without failing on the ref.
 
 - **GIVEN** `--base <bad-ref>` with a new positional branch and no `--reuse`
@@ -135,7 +135,7 @@ the documented exit-2 class "mutually exclusive flags". Both are pure argument-p
 | `wt create --checkout X <pos>` | conflict | `ExitInvalidArgs` (2) |
 | `wt create --checkout X --base Y` | conflict | `ExitInvalidArgs` (2) |
 | `wt create <new> --base <bad>` | positional, new | `ExitInvalidArgs` (2), invalid `--base` |
-| `wt create --reuse --worktree-name X …` | reuse | reuse on collision; branch selectors NOT consulted |
+| `wt create --reuse --name X …` | reuse | reuse on collision; branch selectors NOT consulted |
 
 `ExitInvalidArgs` = 2, `ExitGitError` = 3 (`git worktree add` failure), both from
 `src/internal/worktree/errors.go`.
@@ -162,16 +162,18 @@ best-effort `DescribeHead()` helper) lives in [`create-output-phases`](/wt-cli/c
 
 ### `--reuse` is unchanged
 
-`--reuse` still requires `--worktree-name`, and on name collision it reuses the existing worktree
-**without consulting any branch selector** (positional / `--checkout` / `--base`). The reuse
-short-circuit sits *before* the branch-dispatch switch, so a reused worktree's branch is never
-re-derived. (Init-on-reuse remains warn-but-continue — see `/wt-cli/init-failure-contract.md`.)
+`--reuse` still requires `--name` (the worktree-name flag, renamed from `--worktree-name` by
+`260717-59u8` — the deprecated `--worktree-name` alias also satisfies the requirement), and on
+name collision it reuses the existing worktree **without consulting any branch selector**
+(positional / `--checkout` / `--base`). The reuse short-circuit sits *before* the branch-dispatch
+switch, so a reused worktree's branch is never re-derived. (Init-on-reuse remains
+warn-but-continue — see `/wt-cli/init-failure-contract.md`.)
 
-- **GIVEN** `--reuse` without `--worktree-name`
+- **GIVEN** `--reuse` without `--name` (or the deprecated `--worktree-name`)
 - **WHEN** the user runs it
-- **THEN** the command exits `ExitInvalidArgs` with `--reuse requires --worktree-name`.
+- **THEN** the command exits `ExitInvalidArgs` with `--reuse requires --name`.
 
-- **GIVEN** `--reuse --worktree-name X` where worktree `X` already exists
+- **GIVEN** `--reuse --name X` where worktree `X` already exists
 - **WHEN** the user runs it
 - **THEN** the existing worktree is reused; no branch selector is read.
 
@@ -231,7 +233,10 @@ duplicate pre-check in `cmd/` — a single source of truth, no double git query.
 
 fab-kit's `fab batch switch` (`src/go/fab/cmd/fab/batch_switch.go:98`) invokes
 `wt create --non-interactive --reuse --worktree-name <name> <branch>`, relying on the old
-create-or-checkout dual semantics. After this change that call exits `ExitInvalidArgs` (2)
+create-or-checkout dual semantics. (As of `260717-59u8` `--worktree-name` is the deprecated
+alias of `--name`; the call still parses and behaves identically — the alias is permanent — but
+now also prints a one-line deprecation warning to stderr, harmless to the machine-parsed stdout.)
+After the `2af2` change that call exits `ExitInvalidArgs` (2)
 whenever the branch already exists and the worktree does not (e.g. worktree deleted, branch
 kept) — because the positional now rejects an existing branch. This is a **deliberate hard
 break**, no deprecation window: the fab-kit migration (an existence probe + routing to
@@ -312,3 +317,6 @@ author — hence the hard break above).
   that runs identically on the `--checkout` path and the positional-new path; also the source of
   the `--reuse` init warn-but-continue exemption. [`help-dump-contract`](/wt-cli/help-dump-contract.md)
   — the JSON envelope that carries the rewritten `create` help text to shll.ai.
+  [`flag-naming-conventions`](/wt-cli/flag-naming-conventions.md) — the `260717-59u8` flag-surface
+  convention behind the `--worktree-name` → `--name`/`-n` (and `--worktree-open` → `--open`/`-o`,
+  `--worktree-init` → `--no-init`) renames and the `wt new` command alias on this command.

@@ -622,3 +622,104 @@ func TestDelete_StaleNeverTargetsMain(t *testing.T) {
 	assertContains(t, r.Stdout, "No idle worktrees")
 	assertDirExists(t, repo)
 }
+
+// ---------- Intuitive flag names (change 59u8) ----------
+
+// TestDelete_AllFlagAndShort verifies --all and -a delete every worktree
+// (parity with the deprecated --delete-all).
+func TestDelete_AllFlagAndShort(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "all-new-1")
+	createWorktreeViaWt(t, repo, "all-new-2")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--all")
+	assertNotContains(t, r.Stderr, "deprecated")
+	assertWorktreeNotExists(t, repo, "all-new-1")
+	assertWorktreeNotExists(t, repo, "all-new-2")
+
+	createWorktreeViaWt(t, repo, "all-short-1")
+	runWtSuccess(t, repo, nil, "delete", "--non-interactive", "-a")
+	assertWorktreeNotExists(t, repo, "all-short-1")
+}
+
+// TestDelete_RmAlias verifies `wt rm` invokes `wt delete` identically.
+func TestDelete_RmAlias(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "via-rm")
+
+	r := runWtSuccess(t, repo, nil, "rm", "--non-interactive", "via-rm")
+	combined := r.Stdout + r.Stderr
+	assertContains(t, combined, "Deleted worktree")
+	assertWorktreeNotExists(t, repo, "via-rm")
+}
+
+// TestDelete_BranchFlagForceDeletes verifies the new --branch string flag
+// force-deletes the branch (parity with the deprecated --delete-branch true).
+func TestDelete_BranchFlagForceDeletes(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "branch-new")
+	assertBranchExists(t, repo, "branch-new")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--branch", "true", "branch-new")
+	assertNotContains(t, r.Stderr, "deprecated")
+	assertBranchNotExists(t, repo, "branch-new")
+}
+
+// TestDelete_NoRemoteSuppressesRemoteDeletion verifies the new real-bool
+// --no-remote keeps the origin branch even when the local branch is deleted.
+// Without --no-remote (the default), the remote branch would be deleted too.
+func TestDelete_NoRemoteSuppressesRemoteDeletion(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "keep-remote")
+	// Push the branch to origin so remote deletion would otherwise apply.
+	gitRun(t, worktreePath(repo, "keep-remote"), "push", "-q", "-u", "origin", "keep-remote")
+	assertRemoteBranchExists(t, repo, "keep-remote")
+
+	runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--branch", "true", "--no-remote", "keep-remote")
+
+	assertBranchNotExists(t, repo, "keep-remote")
+	// --no-remote means the remote branch survives.
+	assertRemoteBranchExists(t, repo, "keep-remote")
+}
+
+// TestDelete_DefaultDeletesRemote verifies that WITHOUT --no-remote (and without
+// the old --delete-remote string) the remote branch IS deleted — the string→bool
+// conversion preserves default behavior.
+func TestDelete_DefaultDeletesRemote(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "drop-remote")
+	gitRun(t, worktreePath(repo, "drop-remote"), "push", "-q", "-u", "origin", "drop-remote")
+	assertRemoteBranchExists(t, repo, "drop-remote")
+
+	runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--branch", "true", "drop-remote")
+
+	assertBranchNotExists(t, repo, "drop-remote")
+	assertRemoteBranchNotExists(t, repo, "drop-remote")
+}
+
+// TestDelete_DeprecatedFlagsStillWork verifies the deprecated delete flags still
+// behave and emit a stderr deprecation warning.
+func TestDelete_DeprecatedFlagsStillWork(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "legacy-del-1")
+	createWorktreeViaWt(t, repo, "legacy-del-2")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--delete-all", "--delete-branch", "true", "--delete-remote", "false")
+	assertContains(t, r.Stderr, "deprecated")
+	assertWorktreeNotExists(t, repo, "legacy-del-1")
+	assertWorktreeNotExists(t, repo, "legacy-del-2")
+}
+
+// TestDelete_HelpHidesDeprecatedShowsNew verifies `wt delete --help` shows the
+// new flags and hides the deprecated aliases.
+func TestDelete_HelpHidesDeprecatedShowsNew(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "delete", "--help")
+	for _, want := range []string{"--all", "--branch", "--no-remote"} {
+		assertContains(t, r.Stdout, want)
+	}
+	for _, hidden := range []string{"--delete-all", "--delete-branch", "--delete-remote"} {
+		assertNotContains(t, r.Stdout, hidden)
+	}
+}

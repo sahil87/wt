@@ -30,7 +30,12 @@ func updateCmd() *cobra.Command {
 			return err
 		},
 	}
+	// --no-brew-update is primary; --skip-brew-update is the deprecated alias
+	// bound to the same bool variable (same type — a shared pointer is correct).
+	cmd.Flags().BoolVar(&skipBrewUpdate, "no-brew-update", false,
+		"skip the internal `brew update` tap-metadata refresh (version check and upgrade still run)")
 	cmd.Flags().BoolVar(&skipBrewUpdate, "skip-brew-update", false,
 		"skip the internal `brew update` tap-metadata refresh (version check and upgrade still run)")
+	cmd.Flags().MarkDeprecated("skip-brew-update", "use --no-brew-update instead")
 	return cmd
 }

@@ -1,0 +1,14 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-07-17T18:57:39Z"}
+{"args":"CLI flag simplification pass: drop worktree-/delete- prefixes with deprecated aliases, string-bools to real --no-* bools, short flags -n/-o/-a, command aliases new/rm/ls, open --go to --select, update --skip-brew-update to --no-brew-update, sharpen wt init Short text","cmd":"fab-new","event":"command","ts":"2026-07-17T18:57:39Z"}
+{"delta":"+4.8","event":"confidence","score":4.8,"trigger":"calc-score","ts":"2026-07-17T19:00:57Z"}
+{"delta":"+0.0","event":"confidence","score":4.8,"trigger":"calc-score","ts":"2026-07-17T19:01:43Z"}
+{"cmd":"fab-switch","event":"command","ts":"2026-07-17T19:03:03Z"}
+{"cmd":"fab-fff","event":"command","ts":"2026-07-17T19:04:43Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-07-17T19:05:01Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-07-17T19:05:43Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-07-17T19:22:05Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-07-17T19:23:17Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-07-17T19:37:42Z"}
+{"event":"review","result":"passed","ts":"2026-07-17T19:37:42Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-07-17T19:38:22Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-07-17T19:47:10Z"}

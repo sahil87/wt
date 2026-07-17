@@ -1007,3 +1007,15 @@ func TestList_NoColorSupport(t *testing.T) {
 		t.Error("output contains ANSI color codes despite NO_COLOR=1")
 	}
 }
+
+// ---------- Intuitive flag names (change 59u8) ----------
+
+// TestList_LsAlias verifies `wt ls` invokes `wt list` identically.
+func TestList_LsAlias(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "ls")
+	assertContains(t, r.Stdout, "Worktrees for:")
+	assertContains(t, r.Stdout, filepath.Base(repo))
+	assertContains(t, r.Stdout, "Location:")
+}

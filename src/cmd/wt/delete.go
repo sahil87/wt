@@ -19,6 +19,7 @@ func deleteCmd() *cobra.Command {
 		worktreeName   string
 		deleteBranch   string
 		deleteRemote   string
+		noRemote       bool
 		deleteAll      bool
 		stashFlag      bool
 		nonInteractive bool
@@ -26,15 +27,28 @@ func deleteCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "delete [worktree-names...]",
-		Short: "Delete a git worktree",
+		Use:     "delete [worktree-names...]",
+		Aliases: []string{"rm"},
+		Short:   "Delete a git worktree",
 		Long: `Delete one or more git worktrees with optional branch cleanup.
 
 Positional arguments are interpreted as worktree names to delete.
-Resolution order: --stale, --delete-all, positional args, --worktree-name (deprecated), current worktree, interactive selection.`,
+Resolution order: --stale, --all, positional args, --worktree-name (deprecated), current worktree, interactive selection.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Apply defaults (deleteBranch "" = auto mode, handled by handleBranchCleanup)
+			// Apply defaults (deleteBranch "" = auto mode, handled by handleBranchCleanup).
+			// --no-remote (real bool) supersedes the deprecated string
+			// --delete-remote when explicitly set: types differ, so the two flags
+			// cannot share a variable — the new bool wins via Changed(), else the
+			// old string path is honored. Both funnel into the existing
+			// deleteRemote "true"/"false" string consumed by handleBranchCleanup.
+			if cmd.Flags().Changed("no-remote") {
+				if noRemote {
+					deleteRemote = "false"
+				} else {
+					deleteRemote = "true"
+				}
+			}
 			if deleteRemote == "" {
 				deleteRemote = "true"
 			}
@@ -136,9 +150,23 @@ Resolution order: --stale, --delete-all, positional args, --worktree-name (depre
 	}
 
 	cmd.Flags().StringVar(&worktreeName, "worktree-name", "", "Worktree to delete")
+	// --branch is primary; --delete-branch is the deprecated alias bound to the
+	// same string variable (same type — the auto/true/false tri-state stays a
+	// string, so a shared pointer is correct).
+	cmd.Flags().StringVar(&deleteBranch, "branch", "", "Delete the associated branch: true (always), false (never), auto (default — only if branch name matches worktree name)")
 	cmd.Flags().StringVar(&deleteBranch, "delete-branch", "", "Delete the associated branch: true (always), false (never), auto (default — only if branch name matches worktree name)")
+	cmd.Flags().MarkDeprecated("delete-branch", "use --branch instead")
+	// --no-remote is a real bool superseding the deprecated string
+	// --delete-remote (reconciled via Changed() in RunE — the types differ so
+	// they cannot share a variable).
+	cmd.Flags().BoolVar(&noRemote, "no-remote", false, "Do not delete the branch on the origin remote when the local branch is deleted (the remote branch is deleted by default)")
 	cmd.Flags().StringVar(&deleteRemote, "delete-remote", "", "Delete the branch on the origin remote (via git push origin --delete) when the local branch is deleted (true by default)")
+	cmd.Flags().MarkDeprecated("delete-remote", "use --no-remote instead")
+	// --all / -a is primary; --delete-all is the deprecated alias bound to the
+	// same bool variable. (-s is taken by --stash; -a is free.)
+	cmd.Flags().BoolVarP(&deleteAll, "all", "a", false, "Delete all worktrees")
 	cmd.Flags().BoolVar(&deleteAll, "delete-all", false, "Delete all worktrees")
+	cmd.Flags().MarkDeprecated("delete-all", "use --all instead")
 	cmd.Flags().BoolVarP(&stashFlag, "stash", "s", false, "Stash uncommitted changes before deleting")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts, use defaults")
 	cmd.Flags().StringVar(&staleFlag, "stale", "", "Select idle worktrees (filesystem mtime older than the threshold) for deletion. Bare --stale uses the 7d default; --stale=Nd overrides (e.g. --stale=30d). The '=' is required.")
@@ -752,7 +780,7 @@ func handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote string) {
 		if branch == wtName {
 			shouldDelete = true
 		} else {
-			fmt.Printf("Skipped branch deletion: branch '%s' does not match worktree name '%s'; use --delete-branch=true to force\n", branch, wtName)
+			fmt.Printf("Skipped branch deletion: branch '%s' does not match worktree name '%s'; use --branch=true to force\n", branch, wtName)
 		}
 	}
 

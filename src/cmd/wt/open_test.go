@@ -274,3 +274,43 @@ func TestOpen_MenuOrdersNewestFirst(t *testing.T) {
 // on PATH that log their invocations. We test the error paths here; the
 // open-by-name success path is tested via the worktree resolution logic
 // (which is shared with other commands).
+
+// ---------- Intuitive flag names (change 59u8) ----------
+
+// TestOpen_AppShortFlag verifies the new -a short for --app opens a path in the
+// named app (open_here → WT_CD_FILE), parity with --app.
+func TestOpen_AppShortFlag(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+
+	cdFile := filepath.Join(dir, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	r := runWt(t, dir, env, "open", "-a", "open_here")
+	if r.ExitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\nstderr: %s", r.ExitCode, r.Stderr)
+	}
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != dir {
+		t.Errorf("expected cd file to contain %q, got %q", dir, string(data))
+	}
+}
+
+// TestOpen_HelpHidesGoShowsSelect verifies `wt open --help` shows --select and
+// hides the deprecated --go alias, and shows the -a short for --app.
+func TestOpen_HelpHidesGoShowsSelect(t *testing.T) {
+	dir := t.TempDir()
+
+	r := runWt(t, dir, nil, "open", "--help")
+	if r.ExitCode != 0 {
+		t.Fatalf("wt open --help failed (exit %d)\nstderr: %s", r.ExitCode, r.Stderr)
+	}
+	assertContains(t, r.Stdout, "--select")
+	assertContains(t, r.Stdout, "-a, --app")
+	assertNotContains(t, r.Stdout, "--go")
+}

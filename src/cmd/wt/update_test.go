@@ -47,20 +47,21 @@ func TestUpdate_AppearsInHelp(t *testing.T) {
 	}
 }
 
-// TestUpdate_SkipBrewUpdateFlagInHelp asserts the --skip-brew-update flag is
-// registered on the subcommand and visible in `wt update --help`. This guards
-// the cobra plumbing end-to-end — a misspelled flag name or a flag that was
-// never registered would be caught here, whereas the internal/update.Run tests
-// exercise Run directly and cannot see the cobra wiring.
-func TestUpdate_SkipBrewUpdateFlagInHelp(t *testing.T) {
+// TestUpdate_SkipBrewUpdateFlagHiddenFromHelp asserts the deprecated
+// --skip-brew-update alias is HIDDEN from `wt update --help` (pflag auto-hides
+// MarkDeprecated flags) after the rename to --no-brew-update (change 59u8). The
+// primary flag's help visibility is guarded by
+// TestUpdate_NoBrewUpdateFlagInHelp; the deprecated alias' continued acceptance
+// is guarded by TestUpdate_SkipBrewUpdateFlagAccepted / _Deprecated.
+func TestUpdate_SkipBrewUpdateFlagHiddenFromHelp(t *testing.T) {
 	repo := createTestRepo(t)
 	r := runWt(t, repo, nil, "update", "--help")
 	if r.ExitCode != 0 {
 		t.Fatalf("wt update --help failed (exit %d)\nstdout: %s\nstderr: %s",
 			r.ExitCode, r.Stdout, r.Stderr)
 	}
-	if !strings.Contains(r.Stdout, "--skip-brew-update") {
-		t.Fatalf("expected `--skip-brew-update` in `wt update --help` output, got:\n%s", r.Stdout)
+	if strings.Contains(r.Stdout, "--skip-brew-update") {
+		t.Fatalf("expected deprecated `--skip-brew-update` to be hidden from `wt update --help`, got:\n%s", r.Stdout)
 	}
 }
 
@@ -79,5 +80,55 @@ func TestUpdate_SkipBrewUpdateFlagAccepted(t *testing.T) {
 	}
 	if !strings.Contains(r.Stdout, "was not installed via Homebrew") {
 		t.Fatalf("expected non-brew hint in stdout (flag accepted, Run reached), got:\n%s", r.Stdout)
+	}
+}
+
+// ---------- Intuitive flag names (change 59u8) ----------
+
+// TestUpdate_NoBrewUpdateFlagInHelp asserts the new --no-brew-update flag is
+// registered and visible in `wt update --help`, while the deprecated
+// --skip-brew-update alias is hidden.
+func TestUpdate_NoBrewUpdateFlagInHelp(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWt(t, repo, nil, "update", "--help")
+	if r.ExitCode != 0 {
+		t.Fatalf("wt update --help failed (exit %d)\nstderr: %s", r.ExitCode, r.Stderr)
+	}
+	if !strings.Contains(r.Stdout, "--no-brew-update") {
+		t.Fatalf("expected `--no-brew-update` in `wt update --help`, got:\n%s", r.Stdout)
+	}
+	if strings.Contains(r.Stdout, "--skip-brew-update") {
+		t.Fatalf("expected deprecated `--skip-brew-update` to be hidden from `wt update --help`, got:\n%s", r.Stdout)
+	}
+}
+
+// TestUpdate_NoBrewUpdateFlagAccepted asserts `wt update --no-brew-update` is
+// parsed and threaded into internal/update.Run (reaching the non-brew
+// short-circuit on the go-test binary, which never lives under /Cellar/).
+func TestUpdate_NoBrewUpdateFlagAccepted(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWt(t, repo, nil, "update", "--no-brew-update")
+	if r.ExitCode != 0 {
+		t.Fatalf("wt update --no-brew-update failed (exit %d)\nstderr: %s", r.ExitCode, r.Stderr)
+	}
+	if !strings.Contains(r.Stdout, "was not installed via Homebrew") {
+		t.Fatalf("expected non-brew hint in stdout (flag accepted, Run reached), got:\n%s", r.Stdout)
+	}
+	if strings.Contains(r.Stderr, "deprecated") {
+		t.Fatalf("new --no-brew-update should not emit a deprecation warning, stderr:\n%s", r.Stderr)
+	}
+}
+
+// TestUpdate_SkipBrewUpdateDeprecated asserts the deprecated --skip-brew-update
+// alias is still accepted and emits a stderr deprecation warning naming the new
+// flag.
+func TestUpdate_SkipBrewUpdateDeprecated(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWt(t, repo, nil, "update", "--skip-brew-update")
+	if r.ExitCode != 0 {
+		t.Fatalf("wt update --skip-brew-update failed (exit %d)\nstderr: %s", r.ExitCode, r.Stderr)
+	}
+	if !strings.Contains(r.Stderr, "deprecated") {
+		t.Fatalf("expected deprecation warning on stderr for --skip-brew-update, got:\n%s", r.Stderr)
 	}
 }

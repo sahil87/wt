@@ -52,8 +52,9 @@ func listCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List all git worktrees",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List all git worktrees",
 		Long: `List all git worktrees for the current repository.
 
 The current worktree is marked with a green asterisk (*).

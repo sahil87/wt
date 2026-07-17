@@ -112,18 +112,22 @@ zero recency, 7d          → idle (vanished worktree is a candidate)
   "mutually exclusive" (R16). This converts the silent `--stale 30d` parse trap
   (where `30d` becomes a positional) into a loud, recoverable error, matching the
   `--path`↔`--status` idiom in `wt list`.
-- **`--stale` ↔ `--delete-all`** → `ExitInvalidArgs` with "mutually exclusive"
-  (R19). `--delete-all` already targets every worktree; `--stale` is a narrowing
-  selector, so combining them is contradictory.
+- **`--stale` ↔ `--all`** → `ExitInvalidArgs` with "mutually exclusive"
+  (R19). `--all` (renamed from `--delete-all`/`-a` by `260717-59u8`, which retains
+  `--delete-all` as a deprecated alias) already targets every worktree; `--stale`
+  is a narrowing selector, so combining them is contradictory. The mutex is keyed
+  on the shared `deleteAll` bool variable, so passing either the primary `--all`
+  or the deprecated `--delete-all` trips it identically.
 - Both mutex checks run in `RunE` **before** any git work or menu-session setup,
   so a mis-typed invocation fails fast. They are gated on `staleRequested :=
   cmd.Flags().Changed("stale")`.
 
 #### Composition with existing flags
 
-- `--stale` composes with `--non-interactive`, `--delete-branch`,
-  `--delete-remote`, and `--stash` exactly as positional/`--delete-all` deletion
-  does today, because it reuses `handleDeleteMultiple` (R18). In
+- `--stale` composes with `--non-interactive`, `--branch`, `--no-remote`
+  (renamed from `--delete-branch`/`--delete-remote` by `260717-59u8`; the old
+  names remain deprecated aliases), and `--stash` exactly as positional/`--all`
+  deletion does today, because it reuses `handleDeleteMultiple` (R18). In
   `--non-interactive` mode the existing per-worktree safety semantics
   (stash-or-discard default, unpushed handling) are unchanged.
 
@@ -173,7 +177,7 @@ This is the load-bearing invariant of the whole change. **Idleness only ever
   whose existing per-worktree handling of uncommitted changes (stash/discard) and
   unpushed commits is unchanged. There is NO new deletion code path — both
   surfaces converge on the same rollback-safe flow used by positional and
-  `--delete-all` deletion today.
+  `--all` deletion today.
 - **Safe-by-direction.** The mtime signal *under-reports* staleness: a `fab
   sync`/build that touches an idle worktree makes it look fresh, so it escapes
   detection. This direction is safe — it hides genuinely-idle worktrees rather
@@ -253,11 +257,17 @@ than wanted; a bare-int value was rejected as less self-documenting than `Nd`.
 - Tests: `src/internal/worktree/idle_test.go` (predicate boundary cases,
   zero-recency, `ParseIdleThreshold` valid/reject), `src/cmd/wt/delete_test.go`
   (menu annotation, "All idle (N)", `defaultIdx` shift, `--stale` selection +
-  override, zero-match exit-0, positional/`--delete-all` mutexes, main-never-
-  targeted), `src/cmd/wt/list_test.go` (idle marker in 4-col/5-col, no marker in
-  name/branch modes, JSON `idle` absent/present).
+  override, zero-match exit-0, positional/`--all` mutexes (the `--all` mutex tests
+  may still invoke the deprecated `--delete-all` alias — same shared `deleteAll`
+  var, same behavior), main-never-targeted), `src/cmd/wt/list_test.go` (idle
+  marker in 4-col/5-col, no marker in name/branch modes, JSON `idle`
+  absent/present).
 - Constitution: Principle I (no hidden state — threshold is a named constant, not
   an env/config knob), III (typed exit codes — `ExitInvalidArgs` for the mutexes
   and invalid threshold), V (predicate/constant/parser live in
   `internal/worktree`), VI (machine-output stability — `idle` is additive and
   absent on the default `--json` path).
+- Sibling memory: [`flag-naming-conventions`](/wt-cli/flag-naming-conventions.md)
+  — the `260717-59u8` `--delete-all` → `--all`/`-a` (and `--delete-branch` →
+  `--branch`, `--delete-remote` → `--no-remote`) renames referenced in the mutex
+  and composition text above, plus the `wt rm` alias on `wt delete`.

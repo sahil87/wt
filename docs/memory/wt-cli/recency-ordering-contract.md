@@ -103,13 +103,13 @@ explicit spec amendment supersedes them.
   local `wtOption` slice (filtering out the main repo, `defaultIdx = 1`). That
   single helper now backs **three** menu callers — `wt open` (main-repo no-arg,
   prompt "Select worktree to open:"), `wt go` (no-arg, prompt "Select worktree to
-  go to:"), and `wt open --go` (no-arg). So `wt go`'s selection menu is a new
+  go to:"), and `wt open --select` (no-arg). So `wt go`'s selection menu is a new
   consumer of the same newest-first ordering, joining `wt list` / `wt open` /
   `wt delete` — there is still exactly one `SortByRecency` call site for the
   open/go selection menu, not a per-verb copy.
 - The ordering, branch display, and newest-default are byte-identical across all
   three callers because they share the one helper. See
-  `/wt-cli/go-command-contract.md` for the `wt go` / `wt open --go` behavior
+  `/wt-cli/go-command-contract.md` for the `wt go` / `wt open --select` behavior
   contract and the `selectWorktree` extraction details.
 
 ### `wt delete` menu: stale-aware annotation + "All idle" (`260530-5fyu`)
@@ -206,8 +206,9 @@ produced.
   the `wt delete --stale` selector; the authoritative cross-command idle contract
   behind the `defaultIdx` 2/3 shift and `, idle` annotation noted above.
 - Sibling memory: `wt-cli/go-command-contract.md` — the `wt go` selector and
-  `wt open --go` composition; the new `selectWorktree` menu consumers of the
-  `SortByRecency` ordering documented here.
+  `wt open --select` composition (flag formerly `--go`, now a deprecated alias);
+  the new `selectWorktree` menu consumers of the `SortByRecency` ordering
+  documented here.
 - Spec doc: `docs/specs/cli-surface.md` — `wt list` (`--sort` flag), `wt open`
   (selection menu, "most recently modified worktree" default), `wt delete`
   (selection menu).
@@ -217,7 +218,7 @@ produced.
 - Source: `src/internal/worktree/recency.go` — `RecencyOf`, `RecencyLess`,
   `SortByRecency`.
 - Source: `src/cmd/wt/open.go` (`selectWorktree` shared helper + `selectAndOpen`;
-  `selectWorktree` is also called by `wt go` and `wt open --go`), `src/cmd/wt/delete.go`
+  `selectWorktree` is also called by `wt go` and `wt open --select`), `src/cmd/wt/delete.go`
   (`handleDeleteMenu` — now stale-aware: `firstWorktreeIdx`/`defaultIdx` 2/3,
   `, idle` annotation, "All idle (N)"; plus `handleDeleteStale`), `src/cmd/wt/list.go`
   (`sortEntries`, `resolveSort`).

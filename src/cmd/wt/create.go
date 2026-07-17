@@ -19,6 +19,7 @@ func createCmd() *cobra.Command {
 	var (
 		worktreeName   string
 		worktreeInit   string
+		noInit         bool
 		worktreeOpen   string
 		reuse          bool
 		nonInteractive bool
@@ -27,12 +28,13 @@ func createCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "create [branch]",
-		Short: "Create a git worktree",
+		Use:     "create [branch]",
+		Aliases: []string{"new"},
+		Short:   "Create a git worktree",
 		Long: `Create a git worktree for parallel development.
 
 When BRANCH is omitted, creates an exploratory worktree with a random name (or
-the value of --worktree-name, if given) on a new branch of the same name.
+the value of --name, if given) on a new branch of the same name.
 
 When BRANCH is provided, it names a NEW branch to create (off --base, else
 HEAD). If that branch already exists locally or remotely, the command fails —
@@ -48,7 +50,19 @@ branch argument or with --base.`,
 				branchArg = args[0]
 			}
 
-			// Apply defaults
+			// Apply defaults. --no-init (real bool) supersedes the deprecated
+			// string --worktree-init when explicitly set: types differ, so the
+			// two flags cannot share a variable — the new bool wins via
+			// Changed(), else the old string path is honored. Both funnel into
+			// the existing worktreeInit "true"/"false" string, so the rest of
+			// the flow (reuse-init, runInit) is unchanged.
+			if cmd.Flags().Changed("no-init") {
+				if noInit {
+					worktreeInit = "false"
+				} else {
+					worktreeInit = "true"
+				}
+			}
 			if worktreeInit == "" {
 				worktreeInit = "true"
 			}
@@ -60,12 +74,12 @@ branch argument or with --base.`,
 				}
 			}
 
-			// Validate --reuse requires --worktree-name
+			// Validate --reuse requires --name
 			if reuse && worktreeName == "" {
 				wt.PrintError(
-					"--reuse requires --worktree-name",
+					"--reuse requires --name",
 					"--reuse only works with an explicit worktree name",
-					"Example: wt create --reuse --worktree-name my-feature branch-name")
+					"Example: wt create --reuse --name my-feature branch-name")
 				os.Exit(wt.ExitInvalidArgs)
 			}
 
@@ -555,10 +569,25 @@ branch argument or with --base.`,
 		},
 	}
 
+	// --name / -n is primary; --worktree-name is the deprecated alias bound to
+	// the same variable (same type, so a shared pointer is correct).
+	cmd.Flags().StringVarP(&worktreeName, "name", "n", "", "Set worktree name (skips name prompt)")
 	cmd.Flags().StringVar(&worktreeName, "worktree-name", "", "Set worktree name (skips name prompt)")
-	cmd.Flags().StringVar(&worktreeInit, "worktree-init", "", "Run worktree init script: true (default) or false")
+	cmd.Flags().MarkDeprecated("worktree-name", "use --name instead")
+	// --open / -o is primary; --worktree-open is the deprecated alias.
+	// --open deliberately has NO NoOptDefVal: bare `--open code` would parse
+	// `code` as the positional [branch] argument (a silent footgun), so a value
+	// is always required.
+	cmd.Flags().StringVarP(&worktreeOpen, "open", "o", "", "After creation: prompt (menu), default (auto-detect app), skip, or an app name (e.g. code, cursor)")
 	cmd.Flags().StringVar(&worktreeOpen, "worktree-open", "", "After creation: prompt (menu), default (auto-detect app), skip, or an app name (e.g. code, cursor)")
-	cmd.Flags().BoolVar(&reuse, "reuse", false, "Reuse existing worktree if name collides (requires --worktree-name)")
+	cmd.Flags().MarkDeprecated("worktree-open", "use --open instead")
+	// --no-init is a real bool superseding the deprecated string --worktree-init
+	// (reconciled via Changed() in RunE — the types differ so they cannot share
+	// a variable).
+	cmd.Flags().BoolVar(&noInit, "no-init", false, "Skip the worktree init script (init runs by default)")
+	cmd.Flags().StringVar(&worktreeInit, "worktree-init", "", "Run worktree init script: true (default) or false")
+	cmd.Flags().MarkDeprecated("worktree-init", "use --no-init instead")
+	cmd.Flags().BoolVar(&reuse, "reuse", false, "Reuse existing worktree if name collides (requires --name)")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts; use defaults and skip menus")
 	cmd.Flags().StringVar(&base, "base", "", "Git ref (branch, tag, SHA) to use as start-point for new branch")
 	cmd.Flags().StringVar(&checkout, "checkout", "", "Check out an EXISTING branch (local or remote) into the worktree instead of creating a new one")

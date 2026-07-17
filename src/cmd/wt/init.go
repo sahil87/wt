@@ -15,7 +15,7 @@ import (
 func initCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Run worktree init script",
+		Short: "Run the init script in the current worktree",
 		Long: `Run the worktree init script for the current repository.
 If the init script doesn't exist, exits with guidance.`,
 		Args: cobra.NoArgs,
