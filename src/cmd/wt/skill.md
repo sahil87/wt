@@ -51,12 +51,12 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   directory path there (mode 0600, truncate-on-write) instead of printing a
   `cd` line; the caller applies the `cd` itself. Set `WT_WRAPPER=1` to signal you
   handle the `cd` and suppress the "wrapper not loaded" hint. A non-zero exit means
-  do **not** trust `WT_CD_FILE`'s contents. See `docs/site` / `launcher-contract`.
+  do **not** trust `WT_CD_FILE`'s contents. See `docs/specs/launcher-contract.md`.
 - **Init protocol (`WORKTREE_INIT_SCRIPT`).** Each new worktree runs an init script
   — default `fab sync`, override via `WORKTREE_INIT_SCRIPT`. A value with a space is
   a command invocation (first word looked up on PATH); a value without spaces is a
   file path resolved from the repo root and run via `bash`. It runs with the new
-  worktree as its working directory; its output goes to stderr. See `init-protocol`.
+  worktree as its working directory; its output goes to stderr. See `docs/specs/init-protocol.md`.
 - **Machine surface.** `wt list --json` is the structured composition surface (e.g.
   what `hop` reads); `wt create` prints the worktree path as its last stdout line.
 
