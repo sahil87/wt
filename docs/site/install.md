@@ -45,7 +45,7 @@ each `wt` invocation and runs `cd` in the parent shell when that file is
 non-empty. Without it, "Open here" falls back to printing a `cd -- '<path>'`
 line you can copy. See the [gotchas](./workflows.md#gotchas) for the full story.
 
-## Already use other sahil87 tools?
+## Already use other shll tools?
 
 If you have other tools from the toolkit installed,
 [`shll shell-install`](https://github.com/sahil87/shll#shll-shell-install--wire-the-rc-file-recommended)

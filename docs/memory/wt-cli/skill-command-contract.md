@@ -11,7 +11,7 @@ description: "The `wt skill` behavior contract — a visible subcommand printing
 
 ## Overview
 
-`wt skill` prints the agent usage bundle — a static, one-page markdown briefing for an agent operating an installed `wt` binary offline (embedded in the binary, versioned with it, no repo checkout or network trip needed). It is the `wt` half of the sahil87 toolkit's `skill` standard (agent-discoverable documentation, principle №10). The command emits raw markdown to stdout with nothing on stderr; the bundle is byte-identical to the canonical `docs/site/skill.md`, which also renders at `/wt/skill` on shll.ai as part of the pulled `docs/site/**` tree.
+`wt skill` prints the agent usage bundle — a static, one-page markdown briefing for an agent operating an installed `wt` binary offline (embedded in the binary, versioned with it, no repo checkout or network trip needed). It is the `wt` half of the shll toolkit's `skill` standard (agent-discoverable documentation, principle №10). The command emits raw markdown to stdout with nothing on stderr; the bundle is byte-identical to the canonical `docs/site/skill.md`, which also renders at `/wt/skill` on shll.ai as part of the pulled `docs/site/**` tree.
 
 ## Requirements
 

@@ -1,0 +1,11 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-07-18T12:11:48Z"}
+{"args":"Conform repo to the toolkit's standardized name 'shll toolkit' (sahil87/shll#56): README blockquote byte-identical replacement, prose sweep sahil87-\u003eshll toolkit/tools, constitution Toolkit Standards article cosmetic edit, identifiers untouched","cmd":"fab-new","event":"command","ts":"2026-07-18T12:11:48Z"}
+{"delta":"+4.9","event":"confidence","score":4.9,"trigger":"calc-score","ts":"2026-07-18T12:13:23Z"}
+{"cmd":"fab-fff","event":"command","ts":"2026-07-18T12:18:29Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-07-18T12:18:35Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-07-18T12:21:53Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-07-18T12:24:30Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-07-18T12:28:43Z"}
+{"event":"review","result":"passed","ts":"2026-07-18T12:28:43Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-07-18T12:29:23Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-07-18T12:30:04Z"}

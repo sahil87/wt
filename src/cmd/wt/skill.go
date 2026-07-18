@@ -20,7 +20,7 @@ import (
 var skillBundle []byte
 
 // skillCmd builds the visible `wt skill` subcommand — the agent-facing usage
-// bundle mandated by the sahil87 toolkit's `skill` standard. It prints the
+// bundle mandated by the shll toolkit's `skill` standard. It prints the
 // embedded bundle as raw markdown to stdout, byte-identical to the canonical
 // docs/site/skill.md, with nothing on stderr and exit 0 — no rendering, no
 // pager, no added framing (principle №2: stdout is data). It is visible (not
