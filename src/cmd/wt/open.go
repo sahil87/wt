@@ -368,8 +368,10 @@ func handleAppMenuWithSession(session *wt.MenuSession, wtPath, repoName, wtName 
 // convention. Its returned name is the stable key "main" (the same name
 // `wt list` displays), so `wt open` launch flows tab-name it {repo}/main. In a
 // validated git repo `git worktree list --porcelain` always yields ≥1 entry
-// (the main worktree), so the menu always has at least the pinned main row —
-// there is no "no worktrees" case for this helper to signal.
+// (the main worktree), so the menu always has at least the pinned main row. The
+// empty-list case is therefore unreachable in normal use, but the helper still
+// fails fast on it (returning an error) rather than building a zero-option menu
+// whose empty-input default would panic at options[choice-1].
 //
 // The caller supplies the MenuSession so that select-then-launch flows
 // (`wt open` / `wt open --go`) can chain the subsequent "Open in:" menu on the
@@ -386,6 +388,19 @@ func selectWorktree(session *wt.MenuSession, prompt string) (path, name string, 
 		return "", "", false, err
 	}
 
+	// Fail fast on an empty worktree list. In a validated git repo
+	// `git worktree list --porcelain` always yields ≥1 entry (the main
+	// worktree), so this is unreachable in normal use — but building a menu with
+	// zero options and defaultIdx=1 would let the empty-input default return
+	// choice 1, panicking at `options[choice-1]` below. Refusing here keeps the
+	// helper from ever reaching that invalid menu state.
+	if len(entries) == 0 {
+		return "", "", false, fmt.Errorf("%s", wt.WtError(
+			"No worktrees found",
+			"git worktree list returned no entries, so there is nothing to select",
+			"Run this from inside a git repository with at least one worktree"))
+	}
+
 	type wtOption struct {
 		path string
 		name string
@@ -393,15 +408,12 @@ func selectWorktree(session *wt.MenuSession, prompt string) (path, name string, 
 
 	// Partition out the porcelain-first entry (entries[0]), which is always the
 	// main worktree — the same convention list.go's sortEntries/buildBaseEntry
-	// uses (mainPath = raw[0].path). In a validated git repo porcelain always
-	// yields ≥1 entry, but guard the slice defensively so an empty list can't
-	// panic. The non-main entries are ordered newest-first via the shared
-	// recency comparator.
+	// uses (mainPath = raw[0].path). entries is guaranteed non-empty by the
+	// fail-fast guard above. The non-main entries are ordered newest-first via
+	// the shared recency comparator.
 	var nonMain []wtOption
-	if len(entries) > 0 {
-		for _, e := range entries[1:] {
-			nonMain = append(nonMain, wtOption{path: e.path, name: filepath.Base(e.path)})
-		}
+	for _, e := range entries[1:] {
+		nonMain = append(nonMain, wtOption{path: e.path, name: filepath.Base(e.path)})
 	}
 	wt.SortByRecency(nonMain,
 		func(o wtOption) string { return o.path },
@@ -412,9 +424,7 @@ func selectWorktree(session *wt.MenuSession, prompt string) (path, name string, 
 	// `wt list`'s sortEntries pin-first convention). The main entry is
 	// entries[0] (porcelain-first); rendered with the stable name "main".
 	options := make([]wtOption, 0, len(nonMain)+1)
-	if len(entries) > 0 {
-		options = append(options, wtOption{path: entries[0].path, name: "main"})
-	}
+	options = append(options, wtOption{path: entries[0].path, name: "main"})
 	options = append(options, nonMain...)
 
 	// The pre-selected default is the newest non-main worktree (row 2), keeping
