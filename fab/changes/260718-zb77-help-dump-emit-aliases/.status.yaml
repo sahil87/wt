@@ -10,7 +10,7 @@ progress:
     review: done
     hydrate: done
     ship: done
-    review-pr: active
+    review-pr: done
 plan:
     generated: true
     task_count: 5
@@ -34,7 +34,7 @@ stage_metrics:
     review: {started_at: "2026-07-18T11:56:23Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-18T12:02:47Z"}
     hydrate: {started_at: "2026-07-18T12:02:47Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-18T12:06:22Z"}
     ship: {started_at: "2026-07-18T12:06:22Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-18T12:09:18Z"}
-    review-pr: {started_at: "2026-07-18T12:09:18Z", driver: git-pr, iterations: 1}
+    review-pr: {started_at: "2026-07-18T12:09:18Z", driver: git-pr, iterations: 1, completed_at: "2026-07-18T12:16:03Z"}
 prs:
     - https://github.com/sahil87/wt/pull/44
 true_impact:
@@ -53,4 +53,4 @@ true_impact:
     computed_at_stage: ship
 summary: help-dump nodes gain an optional aliases field (omitempty), surfacing cobra aliases ls/new/rm in the structured tree
 # true_impact: lazily created on first stage-finish that computes it (no placeholder here).
-last_updated: 2026-07-18T12:09:18Z
+last_updated: 2026-07-18T12:16:03Z
