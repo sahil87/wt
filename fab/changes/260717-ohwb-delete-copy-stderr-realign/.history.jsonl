@@ -1,0 +1,13 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-07-17T21:34:34Z"}
+{"args":"Realign wt delete's non-warning human copy from stdout to stderr (toolkit principle No.2) — backlog [ohwb]","cmd":"fab-new","event":"command","ts":"2026-07-17T21:34:34Z"}
+{"delta":"+4.8","event":"confidence","score":4.8,"trigger":"calc-score","ts":"2026-07-17T21:36:20Z"}
+{"cmd":"fab-fff","event":"command","ts":"2026-07-17T21:37:58Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-07-17T21:38:11Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-07-17T21:40:24Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-07-17T21:46:44Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-07-17T21:47:40Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-07-17T21:52:25Z"}
+{"event":"review","result":"passed","ts":"2026-07-17T21:52:25Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-07-17T21:55:52Z"}
+{"action":"enter","driver":"git-pr","event":"stage-transition","stage":"review-pr","ts":"2026-07-17T21:57:14Z"}
+{"event":"review","result":"passed","ts":"2026-07-17T22:02:48Z"}
