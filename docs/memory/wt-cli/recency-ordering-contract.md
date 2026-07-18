@@ -7,6 +7,12 @@ description: "The single recency definition (`RecencyOf`/`RecencyLess`/`SortByRe
 > Post-implementation behavior capture for the shared recency signal and
 > newest-first ordering across `wt list`, `wt open`, and `wt delete`.
 > Source change: `260530-rtmf-recency-aware-listing`.
+> Amended by `260718-daqj-go-include-main-worktree` (the open/go selection menus
+> now pin the main worktree to row 1 *outside* the recency ordering — mirroring
+> `wt list`'s pin-first convention — shifting the pre-selected default to the
+> newest non-main worktree at `defaultIdx = 2` (or `1` when main is the only
+> row); non-main newest-first ordering and the single `SortByRecency` call site
+> unchanged).
 
 This file documents the single definition of "recent" that `wt list`, `wt open`,
 and `wt delete` honor after the recency-aware-listing change. Future changes
@@ -79,38 +85,60 @@ explicit spec amendment supersedes them.
 
 - `selectAndOpen` (`src/cmd/wt/open.go`, via the shared `selectWorktree` helper as
   of `260620-3pp5` — see below) and `handleDeleteMenu` (`src/cmd/wt/delete.go`)
-  build a `wtOption` slice of non-main worktrees (the main worktree /
-  `ctx.RepoRoot` is skipped) and sort it with `wt.SortByRecency` so the **newest
-  worktree appears at the top** of the menu. This replaces the previous behavior
-  where items appeared in porcelain order and only the newest was highlighted.
-- The pre-selected menu default remains the **most-recent** worktree — this is
-  behavior-preserving for the default selection. Only the item *ordering* changed.
-- `wt open`: `defaultIdx = 1` (newest is the first menu item; index 0 is the
-  cancel/menu-zero slot in `ShowMenu`).
+  sort the **non-main** worktrees with `wt.SortByRecency` so the **newest
+  non-main worktree appears at the top** of that group. This replaces the
+  previous behavior where items appeared in porcelain order and only the newest
+  was highlighted.
+- The pre-selected menu default remains the **most-recent non-main** worktree —
+  this is behavior-preserving for the default selection. Only the item
+  *ordering* changed (and, for open/go, the addition of the pinned main row —
+  see below).
+- **`wt open` / `wt go` menus pin main to row 1, OUTSIDE the recency ordering**
+  (`260718-daqj`, via the shared `selectWorktree` helper): the porcelain-first
+  entry (`entries[0]`, always the main worktree) is partitioned out and
+  **prepended** as a pinned `main (<branch>)` row after the non-main slice
+  (`entries[1:]`) is sorted newest-first — the same pattern `wt list`'s
+  `sortEntries` uses (partition out row 0, reorder the rest; see
+  `wt-cli/list-status-contract.md`). Main is pinned, never sorted into the
+  recency order. The pre-selected default stays the newest *non-main* worktree:
+  `defaultIdx = 2` when ≥1 non-main worktree exists (main row 1, newest worktree
+  row 2), `defaultIdx = 1` when main is the only row. (Before `260718-daqj` the
+  main worktree was *skipped* in these menus and `defaultIdx = 1`; `wt delete`'s
+  main exclusion at all its list sites is a separate contract and is **not**
+  changed by this — see below.)
+- **`wt delete`** still builds a `wtOption` slice of **non-main** worktrees only
+  (the main worktree / `ctx.RepoRoot` is skipped — deleting main must stay
+  impossible, an explicit Non-Goal of `260718-daqj`).
 - `wt delete`: `defaultIdx` is **2 by default**, shifting to **3 ONLY when the
   "All idle (N)" entry is present** (amended by `260530-5fyu` — see below). The
   newest worktree is always the first *worktree* row and stays the pre-selected
   default; the index just shifts by the number of prepended summary entries
   ("All (N worktrees)" always, plus "All idle (N)" when ≥1 worktree is idle).
-- The two menus produce identical non-main ordering (both driven by the same
-  `SortByRecency` call), so `wt open` and `wt delete` never disagree on order.
+- All these menus produce identical **non-main** ordering (all driven by the
+  shared `SortByRecency` definition), so they never disagree on order. They
+  differ only in the fixed rows each prepends: open/go pin the `main` row
+  (`260718-daqj`); delete prepends its "All (N worktrees)" / "All idle (N)"
+  summary rows and omits main entirely.
 
 ### `wt go`'s no-arg menu is a new `SortByRecency` consumer (`260620-3pp5`)
 
 - The `260620-3pp5-open-worktree-from-worktree` change extracted the
-  `selectAndOpen` menu logic into the shared `selectWorktree(ctx, session,
-  prompt)` helper (`src/cmd/wt/open.go`), which calls `wt.SortByRecency` over its
-  local `wtOption` slice (filtering out the main repo, `defaultIdx = 1`). That
-  single helper now backs **three** menu callers — `wt open` (main-repo no-arg,
-  prompt "Select worktree to open:"), `wt go` (no-arg, prompt "Select worktree to
-  go to:"), and `wt open --select` (no-arg). So `wt go`'s selection menu is a new
-  consumer of the same newest-first ordering, joining `wt list` / `wt open` /
-  `wt delete` — there is still exactly one `SortByRecency` call site for the
-  open/go selection menu, not a per-verb copy.
-- The ordering, branch display, and newest-default are byte-identical across all
-  three callers because they share the one helper. See
+  `selectAndOpen` menu logic into the shared `selectWorktree` helper
+  (`src/cmd/wt/open.go`), which calls `wt.SortByRecency` over its local non-main
+  `wtOption` slice. That single helper now backs **three** menu callers —
+  `wt open` (main-repo no-arg, prompt "Select worktree to open:"), `wt go`
+  (no-arg, prompt "Select worktree to go to:"), and `wt open --select` (no-arg).
+  So `wt go`'s selection menu is a consumer of the same newest-first ordering,
+  joining `wt list` / `wt open` / `wt delete` — there is still exactly one
+  `SortByRecency` call site for the open/go selection menu, not a per-verb copy.
+  *(The helper's shape has since changed — `260718-daqj` dropped the `ctx`
+  parameter and the main-repo filter, pinning main as row 1 instead, and shifted
+  the default to `defaultIdx = 2/1`; its signature is now `(session, prompt)`.
+  The single-call-site invariant this section documents is unchanged.)*
+- The non-main ordering, branch display, and newest-non-main default are
+  byte-identical across all three callers because they share the one helper. See
   `/wt-cli/go-command-contract.md` for the `wt go` / `wt open --select` behavior
-  contract and the `selectWorktree` extraction details.
+  contract, the pinned main row, and the `selectWorktree` extraction details.
 
 ### `wt delete` menu: stale-aware annotation + "All idle" (`260530-5fyu`)
 
@@ -207,8 +235,8 @@ produced.
   behind the `defaultIdx` 2/3 shift and `, idle` annotation noted above.
 - Sibling memory: `wt-cli/go-command-contract.md` — the `wt go` selector and
   `wt open --select` composition (flag formerly `--go`, now a deprecated alias);
-  the new `selectWorktree` menu consumers of the `SortByRecency` ordering
-  documented here.
+  the `selectWorktree` menu consumers of the `SortByRecency` ordering documented
+  here, and the pinned main row (`260718-daqj`) that sits above that ordering.
 - Spec doc: `docs/specs/cli-surface.md` — `wt list` (`--sort` flag), `wt open`
   (selection menu, "most recently modified worktree" default), `wt delete`
   (selection menu).
@@ -218,7 +246,9 @@ produced.
 - Source: `src/internal/worktree/recency.go` — `RecencyOf`, `RecencyLess`,
   `SortByRecency`.
 - Source: `src/cmd/wt/open.go` (`selectWorktree` shared helper + `selectAndOpen`;
-  `selectWorktree` is also called by `wt go` and `wt open --select`), `src/cmd/wt/delete.go`
+  `selectWorktree` is also called by `wt go` and `wt open --select`; `260718-daqj`:
+  it now sorts only the non-main `entries[1:]` slice and prepends the pinned
+  `main` row, `defaultIdx = 2/1`), `src/cmd/wt/delete.go`
   (`handleDeleteMenu` — now stale-aware: `firstWorktreeIdx`/`defaultIdx` 2/3,
   `, idle` annotation, "All idle (N)"; plus `handleDeleteStale`), `src/cmd/wt/list.go`
   (`sortEntries`, `resolveSort`).

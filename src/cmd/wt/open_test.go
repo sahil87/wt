@@ -238,10 +238,11 @@ func chtimesWorktree(t *testing.T, repo, name string, mtime time.Time) {
 	}
 }
 
-// TestOpen_MenuOrdersNewestFirst verifies the open selection menu lists
-// non-main worktrees newest-first (newest at top, still the default). Empty
-// stdin makes ShowMenu print the menu then return on EOF; we assert only on
-// the printed ordering and do not exercise any app launch.
+// TestOpen_MenuOrdersNewestFirst verifies the open selection menu pins the main
+// worktree to row 1 and lists non-main worktrees newest-first below it, with
+// the newest non-main worktree (not main) as the marked default. Empty stdin
+// makes ShowMenu print the menu then return on EOF; we assert only on the
+// printed ordering and do not exercise any app launch.
 func TestOpen_MenuOrdersNewestFirst(t *testing.T) {
 	repo := createTestRepo(t)
 	createWorktreeViaWt(t, repo, "alpha")
@@ -255,8 +256,10 @@ func TestOpen_MenuOrdersNewestFirst(t *testing.T) {
 	chtimesWorktree(t, repo, "charlie", base.Add(2*time.Hour))
 
 	r := runWt(t, repo, nil, "open")
-	got := menuOrder(r.Stdout, []string{"alpha", "bravo", "charlie"})
-	want := []string{"charlie", "bravo", "alpha"}
+	// main is pinned to row 1 (outside the recency ordering); non-main entries
+	// follow newest-first.
+	got := menuOrder(r.Stdout, []string{"main", "alpha", "bravo", "charlie"})
+	want := []string{"main", "charlie", "bravo", "alpha"}
 	if len(got) != len(want) {
 		t.Fatalf("expected %v in menu, got %v\nstdout:\n%s", want, got, r.Stdout)
 	}
@@ -266,8 +269,33 @@ func TestOpen_MenuOrdersNewestFirst(t *testing.T) {
 			break
 		}
 	}
-	// The newest worktree must also be the marked default.
+	// The newest non-main worktree (row 2) is the marked default — NOT main.
 	assertContains(t, r.Stdout, "charlie (charlie) (default)")
+	assertNotContains(t, r.Stdout, "main (main) (default)")
+}
+
+// TestOpen_MainKey_ResolvesToRepoRoot verifies `wt open main` resolves the
+// stable "main" key to the repo root via the shared resolveWorktreeByName. The
+// resolved path is launched via open_here (WT_CD_FILE), proving the key routes
+// through the same resolver `wt go` uses.
+func TestOpen_MainKey_ResolvesToRepoRoot(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "alpha")
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	r := runWt(t, repo, env, "open", "main", "-a", "open_here")
+	if r.ExitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\nstderr: %s", r.ExitCode, r.Stderr)
+	}
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != repo {
+		t.Errorf("expected cd file to contain repo root %q, got %q", repo, string(data))
+	}
 }
 
 // NOTE: Testing actual app opening (code, cursor, etc.) requires mock binaries

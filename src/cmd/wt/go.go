@@ -87,16 +87,12 @@ Requires a git repository — worktree resolution walks the repo's worktree list
 			session := wt.NewMenuSession()
 			defer session.Close()
 
-			path, _, cancelled, noWorktrees, err := selectWorktree(ctx, session, "Select worktree to go to:")
+			path, _, cancelled, err := selectWorktree(session, "Select worktree to go to:")
 			if err != nil {
 				return err
 			}
 			if cancelled {
-				// "No worktrees found." is printed by selectWorktree; only the
-				// explicit Cancel path needs the "Cancelled." line.
-				if !noWorktrees {
-					fmt.Println("Cancelled.")
-				}
+				fmt.Println("Cancelled.")
 				return nil
 			}
 

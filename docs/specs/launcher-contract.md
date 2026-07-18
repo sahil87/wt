@@ -32,7 +32,7 @@ wt open [<path>|<name>] [--app <app>]
 |----------|----------|
 | (none) | Opens current worktree (when in a worktree), the main-repo selection menu (when in a non-worktree git repo with no `--app`), or the current working directory (when not in a git repo). |
 | `<path>` | Treated as a literal path when `os.Stat(<path>)` succeeds and the entry is a directory. Works regardless of git context — the path may be unrelated to any repo. |
-| `<name>` | Resolved as a worktree name (case-insensitive). **Requires** a git repository in the current working directory. From a non-git cwd, exits `ExitGeneralError` with a "name resolution requires a git repository" message; the message suggests passing a path and does NOT suggest cd'ing into a repo. |
+| `<name>` | Resolved as a worktree name (case-insensitive). The name `main` resolves to the main worktree (the repo root); an exact-basename match takes precedence, so a worktree directory literally named `main` still resolves to that worktree. **Requires** a git repository in the current working directory. From a non-git cwd, exits `ExitGeneralError` with a "name resolution requires a git repository" message; the message suggests passing a path and does NOT suggest cd'ing into a repo. |
 | `--app <app>` | Opens directly in the named app, bypassing the menu. Works in all of the above contexts. The literal name `default` resolves to the auto-detected default app. Incompatible with the main-repo selection menu (`<no args>` from a non-worktree git repo) — combining the two exits `ExitInvalidArgs`. |
 
 Path-arg precedence: when an arg is supplied, `os.Stat` + `IsDir()` is

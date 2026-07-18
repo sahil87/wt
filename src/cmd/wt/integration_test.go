@@ -433,8 +433,10 @@ func TestIntegration_Go_MenuOrdersNewestFirst(t *testing.T) {
 	chtimesWorktree(t, repo, "charlie", base.Add(2*time.Hour))
 
 	r := runWt(t, repo, nil, "go")
-	got := menuOrder(r.Stdout, []string{"alpha", "bravo", "charlie"})
-	want := []string{"charlie", "bravo", "alpha"}
+	// main is pinned to row 1 (outside the recency ordering); non-main entries
+	// follow newest-first.
+	got := menuOrder(r.Stdout, []string{"main", "alpha", "bravo", "charlie"})
+	want := []string{"main", "charlie", "bravo", "alpha"}
 	if len(got) != len(want) {
 		t.Fatalf("expected %v in menu, got %v\nstdout:\n%s", want, got, r.Stdout)
 	}
@@ -444,8 +446,39 @@ func TestIntegration_Go_MenuOrdersNewestFirst(t *testing.T) {
 			break
 		}
 	}
+	// The newest non-main worktree (row 2) is the default — NOT main (row 1).
 	assertContains(t, r.Stdout, "charlie (charlie) (default)")
+	assertNotContains(t, r.Stdout, "main (main) (default)")
 	assertContains(t, r.Stdout, "Select worktree to go to:")
+}
+
+// TestIntegration_Go_MainKey_FromSiblingWorktree verifies the stable "main" key
+// end-to-end: `wt go main` run from INSIDE a sibling worktree resolves to the
+// repo root and writes it to WT_CD_FILE (and stdout) — navigating back to main
+// is the most common navigation the menu/resolver now supports.
+func TestIntegration_Go_MainKey_FromSiblingWorktree(t *testing.T) {
+	repo := createTestRepo(t)
+	pathA := createWorktreeViaWt(t, repo, "alpha")
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	// cwd is INSIDE worktree alpha — `wt go main` must resolve the repo root.
+	r := runWtSuccess(t, pathA, env, "go", "main")
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != repo {
+		t.Errorf("expected cd file to contain repo root %q, got %q", repo, string(data))
+	}
+	if last := strings.TrimSpace(r.Stdout); last != repo {
+		t.Errorf("expected stdout to be repo root %q, got %q", repo, r.Stdout)
+	}
+	if strings.Contains(r.Stderr, "[wt-test-no-launch]") {
+		t.Errorf("wt go must not launch an app, got stderr: %q", r.Stderr)
+	}
 }
 
 // TestIntegration_OpenGo_NameArg_ResolvesAndLaunches exercises `wt open --go
