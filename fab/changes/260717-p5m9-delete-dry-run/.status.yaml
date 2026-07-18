@@ -1,0 +1,57 @@
+id: p5m9
+name: 260717-p5m9-delete-dry-run
+created: 2026-07-17T21:36:37Z
+created_by: sahil-noon
+change_type: feat
+issues: []
+progress:
+    intake: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: done
+    review-pr: done
+plan:
+    generated: true
+    task_count: 11
+    acceptance_count: 21
+    acceptance_completed: 21
+confidence:
+    certain: 3
+    confident: 8
+    tentative: 0
+    unresolved: 0
+    score: 4.0
+    fuzzy: true
+    dimensions:
+        signal: 69.5
+        reversibility: 77.7
+        competence: 79.5
+        disambiguation: 72.7
+stage_metrics:
+    intake: {started_at: "2026-07-17T21:36:37Z", driver: fab-new, iterations: 1, completed_at: "2026-07-17T21:42:46Z"}
+    apply: {started_at: "2026-07-17T22:16:12Z", driver: fab-fff, iterations: 2, completed_at: "2026-07-17T22:26:11Z"}
+    review: {started_at: "2026-07-17T22:26:11Z", driver: fab-fff, iterations: 2, completed_at: "2026-07-17T22:32:53Z"}
+    hydrate: {started_at: "2026-07-17T22:32:53Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-17T22:38:07Z"}
+    ship: {started_at: "2026-07-17T22:38:07Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-17T22:41:14Z"}
+    review-pr: {started_at: "2026-07-17T22:41:14Z", driver: git-pr, iterations: 1, completed_at: "2026-07-17T22:55:54Z"}
+prs:
+    - https://github.com/sahil87/wt/pull/40
+change_type_source: explicit
+true_impact:
+    added: 1343
+    deleted: 64
+    net: 1279
+    excluding:
+        added: 554
+        deleted: 57
+        net: 497
+    tests:
+        added: 383
+        deleted: 0
+        net: 383
+    computed_at: "2026-07-17T22:41:14Z"
+    computed_at_stage: ship
+summary: 'wt delete gains --dry-run (live-path-sharing preview: decisions live, leaf mutations gated as Would … stdout lines); destructive-path audit confirms delete is wt''s only wt-owned destructive write'
+# true_impact: lazily created on first stage-finish that computes it (no placeholder here).
+last_updated: 2026-07-17T22:55:54Z

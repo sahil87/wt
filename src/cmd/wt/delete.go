@@ -24,6 +24,7 @@ func deleteCmd() *cobra.Command {
 		stashFlag      bool
 		nonInteractive bool
 		staleFlag      string
+		dryRun         bool
 	)
 
 	cmd := &cobra.Command{
@@ -33,7 +34,12 @@ func deleteCmd() *cobra.Command {
 		Long: `Delete one or more git worktrees with optional branch cleanup.
 
 Positional arguments are interpreted as worktree names to delete.
-Resolution order: --stale, --all, positional args, --worktree-name (deprecated), current worktree, interactive selection.`,
+Resolution order: --stale, --all, positional args, --worktree-name (deprecated), current worktree, interactive selection.
+
+Pass --dry-run to preview what a real invocation would do — the exact
+worktrees, branches, and stash/discard actions — without making any change
+and without confirmation prompts. The preview shares the live decision path;
+only the mutations are suppressed.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Apply defaults (deleteBranch "" = auto mode, handled by handleBranchCleanup).
@@ -112,11 +118,11 @@ Resolution order: --stale, --all, positional args, --worktree-name (deprecated),
 			defer session.Close()
 
 			if staleRequested {
-				return handleDeleteStale(session, staleFlag, nonInteractive, deleteBranch, deleteRemote, stashMode)
+				return handleDeleteStale(session, staleFlag, nonInteractive, deleteBranch, deleteRemote, stashMode, dryRun)
 			}
 
 			if deleteAll {
-				return handleDeleteAll(session, nonInteractive, deleteBranch, deleteRemote, stashMode)
+				return handleDeleteAll(session, nonInteractive, deleteBranch, deleteRemote, stashMode, dryRun)
 			}
 
 			if len(args) > 0 && worktreeName != "" {
@@ -127,15 +133,15 @@ Resolution order: --stale, --all, positional args, --worktree-name (deprecated),
 			}
 
 			if len(args) > 0 {
-				return handleDeleteMultiple(session, args, nonInteractive, deleteBranch, deleteRemote, stashMode)
+				return handleDeleteMultiple(session, args, nonInteractive, deleteBranch, deleteRemote, stashMode, dryRun)
 			}
 
 			if worktreeName != "" {
-				return handleDeleteByName(session, worktreeName, nonInteractive, deleteBranch, deleteRemote, stashMode, rb)
+				return handleDeleteByName(session, worktreeName, nonInteractive, deleteBranch, deleteRemote, stashMode, dryRun, rb)
 			}
 
 			if wt.IsWorktree() {
-				return handleDeleteCurrent(session, nonInteractive, deleteBranch, deleteRemote, stashMode, rb)
+				return handleDeleteCurrent(session, nonInteractive, deleteBranch, deleteRemote, stashMode, dryRun, rb)
 			}
 
 			if nonInteractive {
@@ -145,7 +151,7 @@ Resolution order: --stale, --all, positional args, --worktree-name (deprecated),
 					"Example: wt delete my-feature --non-interactive")
 			}
 
-			return handleDeleteMenu(session, nonInteractive, deleteBranch, deleteRemote, stashMode)
+			return handleDeleteMenu(session, nonInteractive, deleteBranch, deleteRemote, stashMode, dryRun)
 		},
 	}
 
@@ -169,6 +175,11 @@ Resolution order: --stale, --all, positional args, --worktree-name (deprecated),
 	cmd.Flags().MarkDeprecated("delete-all", "use --all instead")
 	cmd.Flags().BoolVarP(&stashFlag, "stash", "s", false, "Stash uncommitted changes before deleting")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts, use defaults")
+	// --dry-run is long-only (constitution II — short flags only for common
+	// interactive use; this is a preview/automation flag, precedent
+	// --non-interactive). It applies to every target-resolution path and
+	// suppresses only the leaf mutations, sharing the live decision path.
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview what would be deleted without making any change (no confirmation prompts)")
 	cmd.Flags().StringVar(&staleFlag, "stale", "", "Select idle worktrees (filesystem mtime older than the threshold) for deletion. Bare --stale uses the 7d default; --stale=Nd overrides (e.g. --stale=30d). The '=' is required.")
 	// NoOptDefVal lets bare `--stale` carry the 7d default without an argument;
 	// `--stale=Nd` overrides. The value MUST use `=` — `--stale 30d` would parse
@@ -182,7 +193,7 @@ Resolution order: --stale, --all, positional args, --worktree-name (deprecated),
 	return cmd
 }
 
-func handleDeleteCurrent(session *wt.MenuSession, nonInteractive bool, deleteBranch, deleteRemote, stashMode string, rb *wt.Rollback) error {
+func handleDeleteCurrent(session *wt.MenuSession, nonInteractive bool, deleteBranch, deleteRemote, stashMode string, dryRun bool, rb *wt.Rollback) error {
 	if !wt.IsWorktree() {
 		wt.ExitWithError(wt.ExitGeneralError,
 			"Not in a worktree",
@@ -210,22 +221,24 @@ func handleDeleteCurrent(session *wt.MenuSession, nonInteractive bool, deleteBra
 	fmt.Printf("Branch: %s\n", branch)
 	fmt.Printf("Path: %s\n\n", wtPath)
 
+	printDryRunHeader(dryRun)
+
 	// Handle uncommitted changes
 	if wt.HasUncommittedChanges() || wt.HasUntrackedFiles() {
-		if err := handleUncommittedChanges(session, wtName, stashMode, nonInteractive, rb); err != nil {
+		if err := handleUncommittedChanges(session, wtName, stashMode, nonInteractive, dryRun, rb); err != nil {
 			return err
 		}
 	}
 
 	// Check for unpushed commits
 	if wt.HasUnpushedCommits(branch) {
-		if err := handleUnpushedCommits(session, branch, nonInteractive); err != nil {
+		if err := handleUnpushedCommits(session, branch, nonInteractive, dryRun); err != nil {
 			return err
 		}
 	}
 
-	// Confirmation
-	if !nonInteractive {
+	// Confirmation (skipped entirely under --dry-run — a preview needs no consent).
+	if !nonInteractive && !dryRun {
 		choice, err := session.Show("Delete this worktree?", []string{"Yes, delete"}, 0)
 		if err != nil {
 			return err
@@ -234,6 +247,15 @@ func handleDeleteCurrent(session *wt.MenuSession, nonInteractive bool, deleteBra
 			fmt.Println("Cancelled.")
 			return nil
 		}
+	}
+
+	if dryRun {
+		// Suppress the os.Chdir + removal + branch mutations; preview only.
+		// The chdir is a prerequisite of live removal, so it is skipped too —
+		// a dry-run must be side-effect-free.
+		fmt.Printf("Would remove worktree: %s\n", wtName)
+		handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote, dryRun)
+		return nil
 	}
 
 	// Change to main repo before deletion
@@ -249,7 +271,7 @@ func handleDeleteCurrent(session *wt.MenuSession, nonInteractive bool, deleteBra
 	}
 	fmt.Printf("Deleted worktree: %s%s%s\n", wt.ColorGreen, wtName, wt.ColorReset)
 
-	handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote)
+	handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote, dryRun)
 
 	fmt.Println()
 	fmt.Println("You are no longer in a valid directory.")
@@ -258,7 +280,34 @@ func handleDeleteCurrent(session *wt.MenuSession, nonInteractive bool, deleteBra
 	return nil
 }
 
-func handleDeleteByName(session *wt.MenuSession, name string, nonInteractive bool, deleteBranch, deleteRemote, stashMode string, rb *wt.Rollback) error {
+// printDryRunHeader prints the one-line "Dry run" banner once per invocation
+// (before any per-mutation preview line) when dryRun is set. All preview copy
+// goes to stdout — the preview is the machine result the caller asked for
+// (principle №2 / repo stdout=machine convention).
+func printDryRunHeader(dryRun bool) {
+	if dryRun {
+		fmt.Println("Dry run — no changes will be made.")
+	}
+}
+
+// previewDiscardWhenDirty emits the dry-run discard-hazard line for the
+// ByName/Multiple/All paths, which target worktrees at arbitrary paths and force-
+// remove them live (RemoveWorktree(..., true) discards uncommitted/untracked
+// changes). Only the no-stash case is handled here — the stash case is surfaced
+// by handleStashInDir's own "Would stash …" line. This keeps preview↔live aligned
+// (R6): without --stash, a real invocation silently discards a dirty worktree's
+// changes, so the preview must say so. Mirrors handleUncommittedChanges's wording
+// (the current-worktree path's equivalent). No-op when not dirty or when stashing.
+func previewDiscardWhenDirty(wtPath, stashMode string) {
+	if stashMode == "stash" {
+		return
+	}
+	if worktreeIsDirty(wtPath) {
+		fmt.Println("Would discard uncommitted changes (use --stash to preserve them)")
+	}
+}
+
+func handleDeleteByName(session *wt.MenuSession, name string, nonInteractive bool, deleteBranch, deleteRemote, stashMode string, dryRun bool, rb *wt.Rollback) error {
 	if err := wt.ValidateGitRepo(); err != nil {
 		wt.ExitWithError(wt.ExitGitError, "Not a git repository", err.Error(), "")
 	}
@@ -289,13 +338,15 @@ func handleDeleteByName(session *wt.MenuSession, name string, nonInteractive boo
 	fmt.Printf("Branch: %s\n", branch)
 	fmt.Printf("Path: %s\n\n", wtPath)
 
+	printDryRunHeader(dryRun)
+
 	// Handle stash
 	if stashMode == "stash" {
-		handleStashInDir(wtPath, name)
+		handleStashInDir(wtPath, name, dryRun)
 	}
 
-	// Confirmation
-	if !nonInteractive {
+	// Confirmation (skipped entirely under --dry-run).
+	if !nonInteractive && !dryRun {
 		choice, err := session.Show("Delete this worktree?", []string{"Yes, delete"}, 0)
 		if err != nil {
 			return err
@@ -306,25 +357,34 @@ func handleDeleteByName(session *wt.MenuSession, name string, nonInteractive boo
 		}
 	}
 
+	if dryRun {
+		previewDiscardWhenDirty(wtPath, stashMode)
+		fmt.Printf("Would remove worktree: %s\n", name)
+		handleBranchCleanup(branch, name, deleteBranch, deleteRemote, dryRun)
+		return nil
+	}
+
 	fmt.Println("Removing worktree...")
 	if err := wt.RemoveWorktree(wtPath, true); err != nil {
 		wt.ExitWithError(wt.ExitGitError, "Failed to remove worktree", err.Error(), "")
 	}
 	fmt.Printf("Deleted worktree: %s%s%s\n", wt.ColorGreen, name, wt.ColorReset)
 
-	handleBranchCleanup(branch, name, deleteBranch, deleteRemote)
+	handleBranchCleanup(branch, name, deleteBranch, deleteRemote, dryRun)
 
 	return nil
 }
 
-func handleDeleteMultiple(session *wt.MenuSession, names []string, nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
+func handleDeleteMultiple(session *wt.MenuSession, names []string, nonInteractive bool, deleteBranch, deleteRemote, stashMode string, dryRun bool) error {
 	ctx, err := wt.GetRepoContext()
 	if err != nil {
 		wt.ExitWithError(wt.ExitGeneralError, "Cannot get repo context", err.Error(), "")
 	}
 
-	// If running from inside a worktree that may be deleted, chdir to main repo first
-	if wt.IsWorktree() {
+	// If running from inside a worktree that may be deleted, chdir to main repo
+	// first. Skipped under --dry-run — nothing is removed, so a dry-run must not
+	// change the process working directory either.
+	if wt.IsWorktree() && !dryRun {
 		if err := os.Chdir(ctx.RepoRoot); err != nil {
 			wt.ExitWithError(wt.ExitGeneralError, "Cannot change to main repo",
 				fmt.Sprintf("Failed to cd to %s", ctx.RepoRoot),
@@ -393,8 +453,10 @@ func handleDeleteMultiple(session *wt.MenuSession, names []string, nonInteractiv
 	}
 	fmt.Println()
 
-	// Single confirmation prompt
-	if !nonInteractive {
+	printDryRunHeader(dryRun)
+
+	// Single confirmation prompt (skipped entirely under --dry-run).
+	if !nonInteractive && !dryRun {
 		choice, err := session.Show(
 			fmt.Sprintf("Delete these %d worktrees?", len(resolved)),
 			[]string{"Yes, delete all"},
@@ -417,7 +479,14 @@ func handleDeleteMultiple(session *wt.MenuSession, names []string, nonInteractiv
 
 		// Handle stash per worktree
 		if stashMode == "stash" {
-			handleStashInDir(w.path, w.name)
+			handleStashInDir(w.path, w.name, dryRun)
+		}
+
+		if dryRun {
+			previewDiscardWhenDirty(w.path, stashMode)
+			fmt.Printf("Would remove worktree: %s\n", w.name)
+			handleBranchCleanup(w.branch, w.name, deleteBranch, deleteRemote, dryRun)
+			continue
 		}
 
 		fmt.Println("Removing worktree...")
@@ -426,20 +495,21 @@ func handleDeleteMultiple(session *wt.MenuSession, names []string, nonInteractiv
 			continue
 		}
 		fmt.Printf("Deleted worktree: %s%s%s\n", wt.ColorGreen, w.name, wt.ColorReset)
-		handleBranchCleanup(w.branch, w.name, deleteBranch, deleteRemote)
+		handleBranchCleanup(w.branch, w.name, deleteBranch, deleteRemote, dryRun)
 	}
 
 	return nil
 }
 
-func handleDeleteAll(session *wt.MenuSession, nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
+func handleDeleteAll(session *wt.MenuSession, nonInteractive bool, deleteBranch, deleteRemote, stashMode string, dryRun bool) error {
 	ctx, err := wt.GetRepoContext()
 	if err != nil {
 		wt.ExitWithError(wt.ExitGeneralError, "Cannot get repo context", err.Error(), "")
 	}
 
-	// If in a worktree, cd to main repo
-	if wt.IsWorktree() {
+	// If in a worktree, cd to main repo. Skipped under --dry-run (no removal
+	// happens, so the process working directory must not change either).
+	if wt.IsWorktree() && !dryRun {
 		if err := os.Chdir(ctx.RepoRoot); err != nil {
 			wt.ExitWithError(wt.ExitGeneralError, "Cannot change to main repo",
 				fmt.Sprintf("Failed to cd to %s", ctx.RepoRoot), "")
@@ -479,8 +549,10 @@ func handleDeleteAll(session *wt.MenuSession, nonInteractive bool, deleteBranch,
 	}
 	fmt.Println()
 
-	// Confirmation
-	if !nonInteractive {
+	printDryRunHeader(dryRun)
+
+	// Confirmation (skipped entirely under --dry-run).
+	if !nonInteractive && !dryRun {
 		choice, err := session.Show(
 			fmt.Sprintf("Delete ALL %d worktree(s)?", len(worktrees)),
 			[]string{"Yes, delete all"},
@@ -500,13 +572,20 @@ func handleDeleteAll(session *wt.MenuSession, nonInteractive bool, deleteBranch,
 		fmt.Printf("Branch: %s\n", w.branch)
 		fmt.Printf("Path: %s\n\n", w.path)
 
+		if dryRun {
+			previewDiscardWhenDirty(w.path, stashMode)
+			fmt.Printf("Would remove worktree: %s\n", w.name)
+			handleBranchCleanup(w.branch, w.name, deleteBranch, deleteRemote, dryRun)
+			continue
+		}
+
 		fmt.Println("Removing worktree...")
 		if err := wt.RemoveWorktree(w.path, true); err != nil {
 			wt.Warn("failed to remove %s: %s", w.name, err)
 			continue
 		}
 		fmt.Printf("Deleted worktree: %s%s%s\n", wt.ColorGreen, w.name, wt.ColorReset)
-		handleBranchCleanup(w.branch, w.name, deleteBranch, deleteRemote)
+		handleBranchCleanup(w.branch, w.name, deleteBranch, deleteRemote, dryRun)
 	}
 
 	return nil
@@ -521,7 +600,7 @@ func handleDeleteAll(session *wt.MenuSession, nonInteractive bool, deleteBranch,
 // staleValue is the raw flag value: "" / "7d" (bare --stale via NoOptDefVal) or
 // an "Nd" override. An invalid value exits ExitInvalidArgs. Zero matches is not
 // an error — it prints an informational message and exits ExitSuccess.
-func handleDeleteStale(session *wt.MenuSession, staleValue string, nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
+func handleDeleteStale(session *wt.MenuSession, staleValue string, nonInteractive bool, deleteBranch, deleteRemote, stashMode string, dryRun bool) error {
 	threshold, err := wt.ParseIdleThreshold(staleValue)
 	if err != nil {
 		wt.ExitWithError(wt.ExitInvalidArgs,
@@ -556,7 +635,7 @@ func handleDeleteStale(session *wt.MenuSession, staleValue string, nonInteractiv
 		return nil
 	}
 
-	return handleDeleteMultiple(session, idleNames, nonInteractive, deleteBranch, deleteRemote, stashMode)
+	return handleDeleteMultiple(session, idleNames, nonInteractive, deleteBranch, deleteRemote, stashMode, dryRun)
 }
 
 // formatThreshold renders a whole-day duration back as an Nd string for the
@@ -567,7 +646,7 @@ func formatThreshold(d time.Duration) string {
 	return fmt.Sprintf("%dd", d/(24*time.Hour))
 }
 
-func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch, deleteRemote, stashMode string) error {
+func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch, deleteRemote, stashMode string, dryRun bool) error {
 	ctx, err := wt.GetRepoContext()
 	if err != nil {
 		wt.ExitWithError(wt.ExitGeneralError, "Cannot get repo context", err.Error(), "")
@@ -659,22 +738,34 @@ func handleDeleteMenu(session *wt.MenuSession, nonInteractive bool, deleteBranch
 	}
 
 	if choice == 1 {
-		return handleDeleteAll(session, nonInteractive, deleteBranch, deleteRemote, stashMode)
+		return handleDeleteAll(session, nonInteractive, deleteBranch, deleteRemote, stashMode, dryRun)
 	}
 
 	if hasAllIdle && choice == 2 {
 		// Route the idle subset through the existing multi-delete flow — no new
 		// deletion code path; per-worktree safety prompts/rollback still run.
-		return handleDeleteMultiple(session, idleNames, nonInteractive, deleteBranch, deleteRemote, stashMode)
+		return handleDeleteMultiple(session, idleNames, nonInteractive, deleteBranch, deleteRemote, stashMode, dryRun)
 	}
 
 	selected := options[choice-firstWorktreeIdx]
 	rb := wt.NewRollback()
-	return handleDeleteByName(session, selected.name, nonInteractive, deleteBranch, deleteRemote, stashMode, rb)
+	return handleDeleteByName(session, selected.name, nonInteractive, deleteBranch, deleteRemote, stashMode, dryRun, rb)
 }
 
-func handleUncommittedChanges(session *wt.MenuSession, wtName, stashMode string, nonInteractive bool, rb *wt.Rollback) error {
+func handleUncommittedChanges(session *wt.MenuSession, wtName, stashMode string, nonInteractive bool, dryRun bool, rb *wt.Rollback) error {
 	dateStr := time.Now().Format("2006-01-02")
+
+	// Under --dry-run, report what the equivalent consented run would do — the
+	// hazard is detected with the same live functions, but no stash/discard is
+	// performed and no prompt is shown.
+	if dryRun {
+		if stashMode == "stash" {
+			fmt.Println("Would stash uncommitted changes")
+		} else {
+			fmt.Println("Would discard uncommitted changes (use --stash to preserve them)")
+		}
+		return nil
+	}
 
 	if stashMode == "stash" {
 		fmt.Println("Stashing changes...")
@@ -726,7 +817,17 @@ func handleUncommittedChanges(session *wt.MenuSession, wtName, stashMode string,
 	return nil
 }
 
-func handleUnpushedCommits(session *wt.MenuSession, branch string, nonInteractive bool) error {
+func handleUnpushedCommits(session *wt.MenuSession, branch string, nonInteractive bool, dryRun bool) error {
+	// Under --dry-run, report what a consented run would lose (same live
+	// GetUnpushedCount detection), then return — no prompt, no branch mutation.
+	// The report fires regardless of --non-interactive: a preview's value is
+	// the information it surfaces.
+	if dryRun {
+		count := wt.GetUnpushedCount(branch)
+		fmt.Printf("Would lose %d unpushed commit(s) on branch %s\n", count, branch)
+		return nil
+	}
+
 	if nonInteractive {
 		return nil
 	}
@@ -761,7 +862,7 @@ func handleUnpushedCommits(session *wt.MenuSession, branch string, nonInteractiv
 	return nil
 }
 
-func handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote string) {
+func handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote string, dryRun bool) {
 	if branch == "" {
 		return
 	}
@@ -785,55 +886,98 @@ func handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote string) {
 	}
 
 	if shouldDelete {
-		if err := wt.DeleteLocalBranch(branch, true); err == nil {
-			fmt.Printf("Deleted branch: %s (local)\n", branch)
-		}
+		// The tri-state decision and remote-existence check above run live in
+		// both modes; only the DeleteLocalBranch/DeleteRemoteBranch mutations are
+		// gated, replaced by a "Would delete branch" preview line under --dry-run.
+		if dryRun {
+			fmt.Printf("Would delete branch: %s (local)\n", branch)
+			if deleteRemote == "true" && wt.BranchExistsRemotely(branch) {
+				fmt.Printf("Would delete branch: %s (remote)\n", branch)
+			}
+		} else {
+			if err := wt.DeleteLocalBranch(branch, true); err == nil {
+				fmt.Printf("Deleted branch: %s (local)\n", branch)
+			}
 
-		if deleteRemote == "true" && wt.BranchExistsRemotely(branch) {
-			if err := wt.DeleteRemoteBranch(branch); err == nil {
-				fmt.Printf("Deleted branch: %s (remote)\n", branch)
-			} else {
-				fmt.Printf("%sNote:%s Could not delete remote branch\n", wt.ColorYellow, wt.ColorReset)
+			if deleteRemote == "true" && wt.BranchExistsRemotely(branch) {
+				if err := wt.DeleteRemoteBranch(branch); err == nil {
+					fmt.Printf("Deleted branch: %s (remote)\n", branch)
+				} else {
+					fmt.Printf("%sNote:%s Could not delete remote branch\n", wt.ColorYellow, wt.ColorReset)
+				}
 			}
 		}
 	}
 
-	// Clean up orphaned wt/ branch (always runs regardless of deleteBranch)
+	// Clean up orphaned wt/ branch (always runs regardless of deleteBranch). The
+	// live path deletes the local orphan (DeleteLocalBranch no-ops when absent)
+	// and, independently of local existence, the remote orphan when it exists on
+	// origin. Under --dry-run the local and remote previews are gated separately
+	// to mirror that structure exactly (both BranchExistsLocally and
+	// BranchExistsRemotely are read-only): the local "Would …" line prints only
+	// when the orphan exists locally, and the remote line prints whenever the
+	// remote orphan exists — including the remote-only case where no local orphan
+	// is present.
 	wtOriginBranch := "wt/" + wtName
 	if wtOriginBranch != branch {
-		if err := wt.DeleteLocalBranch(wtOriginBranch, true); err == nil {
-			fmt.Printf("Deleted branch: %s (local)\n", wtOriginBranch)
-		}
-		if deleteRemote == "true" && wt.BranchExistsRemotely(wtOriginBranch) {
-			if err := wt.DeleteRemoteBranch(wtOriginBranch); err == nil {
-				fmt.Printf("Deleted branch: %s (remote)\n", wtOriginBranch)
+		if dryRun {
+			if wt.BranchExistsLocally(wtOriginBranch) {
+				fmt.Printf("Would delete branch: %s (local)\n", wtOriginBranch)
+			}
+			if deleteRemote == "true" && wt.BranchExistsRemotely(wtOriginBranch) {
+				fmt.Printf("Would delete branch: %s (remote)\n", wtOriginBranch)
+			}
+		} else {
+			if err := wt.DeleteLocalBranch(wtOriginBranch, true); err == nil {
+				fmt.Printf("Deleted branch: %s (local)\n", wtOriginBranch)
+			}
+			if deleteRemote == "true" && wt.BranchExistsRemotely(wtOriginBranch) {
+				if err := wt.DeleteRemoteBranch(wtOriginBranch); err == nil {
+					fmt.Printf("Deleted branch: %s (remote)\n", wtOriginBranch)
+				}
 			}
 		}
 	}
 }
 
-func handleStashInDir(wtPath, name string) {
-	// Check if there are changes to stash
+// worktreeIsDirty reports whether the worktree at wtPath has uncommitted
+// tracked changes (working-tree or staged) or untracked files. It probes the
+// target path directly (cmd.Dir = wtPath) rather than the process CWD, so it
+// works for the ByName/Multiple/All paths that target arbitrary worktrees —
+// unlike the CWD-scoped wt.HasUncommittedChanges/HasUntrackedFiles used by the
+// current-worktree path. All three probes are read-only and safe under dry-run.
+func worktreeIsDirty(wtPath string) bool {
 	cmd := exec.Command("git", "diff", "--quiet", "HEAD")
 	cmd.Dir = wtPath
-	hasChanges := cmd.Run() != nil
-
-	if !hasChanges {
-		cmd = exec.Command("git", "diff", "--cached", "--quiet", "HEAD")
-		cmd.Dir = wtPath
-		hasChanges = cmd.Run() != nil
+	if cmd.Run() != nil {
+		return true
 	}
 
-	if !hasChanges {
-		cmd = exec.Command("git", "ls-files", "--others", "--exclude-standard")
-		cmd.Dir = wtPath
-		out, err := cmd.Output()
-		if err == nil && strings.TrimSpace(string(out)) != "" {
-			hasChanges = true
-		}
+	cmd = exec.Command("git", "diff", "--cached", "--quiet", "HEAD")
+	cmd.Dir = wtPath
+	if cmd.Run() != nil {
+		return true
 	}
 
-	if !hasChanges {
+	cmd = exec.Command("git", "ls-files", "--others", "--exclude-standard")
+	cmd.Dir = wtPath
+	out, err := cmd.Output()
+	if err == nil && strings.TrimSpace(string(out)) != "" {
+		return true
+	}
+
+	return false
+}
+
+func handleStashInDir(wtPath, name string, dryRun bool) {
+	// Check if there are changes to stash. worktreeIsDirty's probes are
+	// read-only and run live in both modes; only the stash mutation below is gated.
+	if !worktreeIsDirty(wtPath) {
+		return
+	}
+
+	if dryRun {
+		fmt.Println("Would stash uncommitted changes")
 		return
 	}
 
