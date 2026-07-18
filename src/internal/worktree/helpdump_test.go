@@ -21,9 +21,10 @@ func newTestRoot() *cobra.Command {
 		Version: "9.9.9",
 	}
 	root.AddCommand(&cobra.Command{
-		Use:   "create [branch]",
-		Short: "Create a git worktree",
-		RunE:  func(cmd *cobra.Command, args []string) error { return nil },
+		Use:     "create [branch]",
+		Short:   "Create a git worktree",
+		Aliases: []string{"new"},
+		RunE:    func(cmd *cobra.Command, args []string) error { return nil },
 	})
 
 	parent := &cobra.Command{
@@ -196,6 +197,52 @@ func TestBuildHelpDump_NodeShape(t *testing.T) {
 	}
 }
 
+// TestBuildHelpDump_NodeAliases asserts an aliased command carries its exact
+// alias list, while a non-aliased command and the root marshal with NO `aliases`
+// key at all — pinning the `omitempty` contract against the marshaled JSON, not
+// just the struct.
+func TestBuildHelpDump_NodeAliases(t *testing.T) {
+	doc, err := BuildHelpDump(newTestRoot(), "1.2.3")
+	if err != nil {
+		t.Fatalf("BuildHelpDump: %v", err)
+	}
+
+	var create, remote *HelpNode
+	for i := range doc.Root.Commands {
+		switch doc.Root.Commands[i].Name {
+		case "create":
+			create = &doc.Root.Commands[i]
+		case "remote":
+			remote = &doc.Root.Commands[i]
+		}
+	}
+	if create == nil || remote == nil {
+		t.Fatalf("expected create and remote commands, got: %+v", doc.Root.Commands)
+	}
+
+	// Aliased node: exactly ["new"] on the struct.
+	if len(create.Aliases) != 1 || create.Aliases[0] != "new" {
+		t.Errorf("create.aliases = %v, want [new]", create.Aliases)
+	}
+
+	// Aliased node marshals WITH the aliases key.
+	if !hasJSONKey(t, create, "aliases") {
+		t.Errorf("aliased node must marshal with an `aliases` key, got: %s", mustMarshal(t, create))
+	}
+	if got := mustMarshal(t, create); !strings.Contains(got, `"aliases":["new"]`) {
+		t.Errorf("create must serialize aliases as [\"new\"], got: %s", got)
+	}
+
+	// Non-aliased node (remote) and the root marshal with NO `aliases` key —
+	// pins omitempty (a nil/empty slice must be absent, not [] and not null).
+	if hasJSONKey(t, remote, "aliases") {
+		t.Errorf("non-aliased node must NOT marshal an `aliases` key, got: %s", mustMarshal(t, remote))
+	}
+	if hasJSONKey(t, doc.Root, "aliases") {
+		t.Errorf("root must NOT marshal an `aliases` key, got: %s", mustMarshal(t, doc.Root))
+	}
+}
+
 // TestBuildHelpDump_RestoresLiveTree asserts the render's temporary detachment
 // of completion/help (and the SetOut/SetErr overrides) is restored, so a normal
 // `wt -h` for real users is unaffected after a dump.
@@ -232,4 +279,26 @@ func keysOf(m map[string]json.RawMessage) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// mustMarshal marshals v to JSON or fails the test.
+func mustMarshal(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(b)
+}
+
+// hasJSONKey reports whether v's marshaled JSON object contains the given
+// top-level key. Used to assert presence/absence of the omitempty `aliases` key.
+func hasJSONKey(t *testing.T, v any, key string) bool {
+	t.Helper()
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(mustMarshal(t, v)), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	_, ok := obj[key]
+	return ok
 }
