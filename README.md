@@ -81,6 +81,7 @@ $ wt delete lively-otter      # removes worktree (and optionally the branch)
 | `wt delete [names...]` (alias `wt rm`) | Delete one or more worktrees with optional branch cleanup. |
 | `wt init` | Run the worktree init script (default `fab sync`, override via `WORKTREE_INIT_SCRIPT`). |
 | `wt shell-init` | Print a shell wrapper function for `eval` in your shell profile. |
+| `wt skill` | Print the agent usage bundle — a static, one-page markdown briefing for an agent operating `wt` (offline, embedded, versioned with the binary). |
 
 Run `wt <command> --help` for inline flag details. For every flag and exit code, see the auto-generated [command reference](https://shll.ai/wt/commands/); for the `--base` start-point rules and the `wt open` launcher matrix, see the [workflows guide](docs/site/workflows.md).
 

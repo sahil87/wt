@@ -36,6 +36,7 @@ Shell wrapper (recommended):
 		initCmd(),
 		shellInitCmd(),
 		updateCmd(),
+		skillCmd(),
 		helpDumpCmd(),
 	)
 
