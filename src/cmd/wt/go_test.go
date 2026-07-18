@@ -81,19 +81,110 @@ func TestGo_NameArg_StderrConfirmation_StdoutStaysBarePath(t *testing.T) {
 	assertContains(t, r.Stderr, wtPath)              // indented absolute path line
 }
 
-// TestGo_NoWorktrees_NoConfirmation verifies the confirmation block is NOT
-// emitted when there is nothing to navigate to (no non-main worktrees) — the
-// arrow must only appear on the success path.
-func TestGo_NoWorktrees_NoConfirmation(t *testing.T) {
+// TestGo_OnlyMain_ShowsOneRowMenu verifies that with no non-main worktrees the
+// menu still shows the one-row "main (branch)" entry (main is always present
+// in-repo) — the old "No worktrees found." path is retired. Empty stdin drives
+// the non-TTY fallback to its EOF refusal (exit 1, per the 260717-6end
+// contract), so no navigation happens and the confirmation arrow must NOT
+// appear — the menu having rendered the main row is what this asserts.
+func TestGo_OnlyMain_ShowsOneRowMenu(t *testing.T) {
 	repo := createTestRepo(t)
 
-	// No extra worktrees created: selectWorktree finds zero options, prints
-	// "No worktrees found." and returns without navigating.
-	r := runWtSuccess(t, repo, nil, "go")
+	// No extra worktrees created: selectWorktree pins only the main row.
+	r := runWt(t, repo, nil, "go")
 
-	assertContains(t, r.Stdout, "No worktrees found.")
+	// Empty stdin (non-TTY) drives the fallback menu to its EOF refusal: it
+	// renders the menu, then refuses with ExitGeneralError (1) because no choice
+	// could be read. This pins the exit code the doc comment above claims.
+	assertExitCode(t, r, 1)
+
+	// The one-row menu shows main; the retired "No worktrees found." is gone.
+	// With main the sole row, defaultIdx = 1, so the "(default)" marker renders
+	// on the main row (NO_COLOR blanks the color codes, leaving the bare text).
+	assertContains(t, r.Stdout, "main (main) (default)")
+	assertNotContains(t, r.Stdout, "No worktrees found.")
+	// No selection was made (empty-stdin EOF), so no navigation confirmation.
 	assertNotContains(t, r.Stdout, "→")
 	assertNotContains(t, r.Stderr, "→")
+}
+
+// TestGo_MainKey_NavigatesToRepoRoot verifies the stable "main" key resolves to
+// the main worktree (the repo root): `wt go main` writes the repo root to
+// WT_CD_FILE and prints it to stdout, even though no worktree directory is
+// literally named "main".
+func TestGo_MainKey_NavigatesToRepoRoot(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "swift-fox")
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	r := runWtSuccess(t, repo, env, "go", "main")
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != repo {
+		t.Errorf("expected cd file to contain repo root %q, got %q", repo, string(data))
+	}
+	if last := strings.TrimSpace(r.Stdout); last != repo {
+		t.Errorf("expected stdout to be repo root %q, got %q", repo, r.Stdout)
+	}
+}
+
+// TestGo_MainKey_CaseInsensitive verifies the "main" key match is
+// case-insensitive, matching the exact-basename resolver's contract.
+func TestGo_MainKey_CaseInsensitive(t *testing.T) {
+	repo := createTestRepo(t)
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	runWtSuccess(t, repo, env, "go", "MAIN")
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != repo {
+		t.Errorf("expected cd file to contain repo root %q, got %q", repo, string(data))
+	}
+}
+
+// TestGo_MainKey_ExactBasenamePrecedence pins R4's precedence rule: when a
+// worktree directory is literally named "main", `wt go main` resolves to THAT
+// worktree via the exact-basename loop, NOT to the repo root via the stable
+// "main" key. The exact-basename match runs first, so the additive "main" key
+// never fires for it — the accidental-basename behavior is preserved.
+func TestGo_MainKey_ExactBasenamePrecedence(t *testing.T) {
+	repo := createTestRepo(t)
+
+	// Create a linked worktree whose directory basename is literally "main", on
+	// a distinct branch (the repo root already holds the "main" branch). Raw git
+	// is used because `wt create` would name the branch after the worktree and
+	// collide with the existing main branch — this test targets the resolver's
+	// precedence, not the create flow.
+	mainWtPath := worktreePath(repo, "main")
+	gitRun(t, repo, "worktree", "add", "-b", "main-wt-branch", mainWtPath)
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	r := runWtSuccess(t, repo, env, "go", "main")
+
+	// Resolution lands on the "main"-named worktree, not the repo root.
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != mainWtPath {
+		t.Errorf("expected exact-basename precedence: cd file should be the 'main' worktree %q, got %q (repo root is %q)",
+			mainWtPath, string(data), repo)
+	}
+	if last := strings.TrimSpace(r.Stdout); last != mainWtPath {
+		t.Errorf("expected stdout to be the 'main' worktree %q, got %q", mainWtPath, last)
+	}
 }
 
 // TestGo_NameArg_CaseInsensitive verifies name resolution is case-insensitive,

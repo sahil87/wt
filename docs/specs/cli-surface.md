@@ -119,8 +119,11 @@ is documented in [`launcher-contract.md`](launcher-contract.md). Worktree
 Positional arg `[name|path]`:
 
 - Omitted, called from inside a worktree: opens the current worktree.
-- Omitted, called from the main repo: shows a worktree-selection menu (default
-  highlight: most recently modified worktree).
+- Omitted, called from the main repo: shows a worktree-selection menu. The
+  **main worktree is pinned to row 1** (rendered `main (<branch>)`); non-main
+  worktrees follow newest-first below it. The default highlight is the most
+  recently modified *non-main* worktree (or the main row when it is the only
+  entry).
 - Omitted, called from a non-git directory: opens the current working
   directory (equivalent to `wt open .`).
 - Existing directory path: treated as a literal path. Works regardless of git
@@ -128,7 +131,9 @@ Positional arg `[name|path]`:
   a real directory.
 - Otherwise: resolved as a worktree name (case-insensitive). **Requires a git
   repository** — name resolution walks the worktree list, which is only
-  reachable when the cwd is inside a git repo.
+  reachable when the cwd is inside a git repo. The name `main` resolves to the
+  main worktree (the repo root); an exact-basename match takes precedence, so a
+  worktree directory literally named `main` still resolves to that worktree.
 
 Exit codes: `ExitInvalidArgs` when `--app` is used with the main-repo selection
 menu; `ExitGitError` when a git operation fails during name resolution, or when
@@ -152,12 +157,16 @@ launcher's "Open here" option — see [`launcher-contract.md`](launcher-contract
 
 Positional arg `[name]`:
 
-- Omitted: shows a worktree-selection menu for the current repo (newest-first,
-  branch shown per entry, newest pre-selected as default). Reachable from
-  anywhere in the repository — the main repo **or** inside another worktree.
-  On selection, navigates to the chosen worktree.
+- Omitted: shows a worktree-selection menu for the current repo. The **main
+  worktree is pinned to row 1** (rendered `main (<branch>)`); non-main worktrees
+  follow newest-first below it, branch shown per entry. The pre-selected default
+  is the newest *non-main* worktree (or the main row when it is the only entry).
+  Reachable from anywhere in the repository — the main repo **or** inside another
+  worktree. On selection, navigates to the chosen worktree.
 - Provided: resolved as a worktree name (case-insensitive); navigates there
-  directly with no menu.
+  directly with no menu. The name `main` resolves to the main worktree (the repo
+  root); an exact-basename match takes precedence, so a worktree directory
+  literally named `main` still resolves to that worktree.
 
 `wt go` always **requires a git repository** — worktree resolution walks the
 repo's worktree list. It is scoped to the current repo's worktrees only;

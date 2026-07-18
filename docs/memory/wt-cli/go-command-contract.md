@@ -1,6 +1,6 @@
 ---
 type: memory
-description: "`wt go` worktree-selection contract — selection-only navigation via `WT_CD_FILE`/stdout (no launch), exit codes, the current-worktree-included menu, and the `wt open --select` composition (`--go` deprecated alias)."
+description: "`wt go` worktree-selection contract — selection-only navigation via `WT_CD_FILE`/stdout (no launch), exit codes, the all-worktrees-including-main menu (main pinned row 1), the `main`-key resolver, and the `wt open --select` composition (`--go` deprecated alias)."
 ---
 # wt-cli: Go Command Contract
 
@@ -9,7 +9,11 @@ description: "`wt go` worktree-selection contract — selection-only navigation 
 > Source change: `260620-3pp5-open-worktree-from-worktree`
 > (stderr navigation confirmation added by `260622-log5-dx-copy-polish`;
 > the `wt open` composition flag renamed `--go` → `--select` with a deprecated
-> alias by `260717-59u8-intuitive-flag-names`).
+> alias by `260717-59u8-intuitive-flag-names`;
+> the main worktree included in the menu — pinned row 1 — and the stable `main`
+> resolver key added by `260718-daqj-go-include-main-worktree`, which also
+> dropped `selectWorktree`'s `ctx.RepoRoot` filter and its `ctx` parameter and
+> retired the `noWorktrees` / `No worktrees found.` split).
 
 This file documents the contract `wt go` honors and how `wt open --select`
 composes it. `wt go` is the **selector** half of the selector/launcher split: it
@@ -45,6 +49,11 @@ supersedes them.
   case-insensitively via the **shared** `resolveWorktreeByName` (the same
   resolver `wt open <name>` uses, in `src/cmd/wt/open.go`) and navigates there.
   It launches **no** application — navigation is the only effect.
+- The resolver recognizes a **stable `main` key** (`260718-daqj`): `wt go main`
+  (case-insensitively) resolves to the main worktree — the repo root — matching
+  the name `wt list` displays and fixing the list/resolve naming inconsistency.
+  See § `resolveWorktreeByName`'s `main` key below for the exact-basename
+  precedence rule.
 - On success it routes through `navigateTo(ctx, path)` (below): writes the resolved
   absolute path to `WT_CD_FILE` when set AND prints it to stdout as the last line,
   and emits a stderr navigation confirmation (see the navigation section below).
@@ -58,22 +67,32 @@ supersedes them.
   inside another worktree. This is the capability the pre-change menu lacked:
   `wt open`'s no-arg menu was gated to the main repo (in-worktree no-arg `open`
   opens the current folder). `wt go` has no such gate.
-- The menu lists non-main worktrees newest-first (see
+- The menu lists **all worktrees including main** (`260718-daqj`): the main
+  worktree is **pinned to row 1**, rendered `main (<branch>)`, and the non-main
+  worktrees follow newest-first below it (see
   `/wt-cli/recency-ordering-contract.md` for the shared `SortByRecency`
-  ordering), branch shown per entry, newest pre-selected as the default
-  (`defaultIdx = 1`).
-- **The current worktree IS included in the menu.** `selectWorktree` filters out
-  only the main repo (`e.path == ctx.RepoRoot`); it does NOT filter out the cwd's
-  own worktree. So when `wt go` is run from inside worktree `alpha`, `alpha` still
-  appears as a selectable row. This is **behavior-preserving** with `wt open`'s
-  shared menu (which has always listed every non-main worktree), not a `wt go`
-  special case — the single shared helper guarantees both verbs show the identical
-  set. Navigating to the worktree you are already in is a harmless no-op `cd`.
+  ordering), branch shown per entry. The pre-selected default is the newest
+  *non-main* worktree (row 2), NOT main — `defaultIdx = 2` when ≥1 non-main
+  worktree exists, `defaultIdx = 1` when main is the only row (see
+  `/wt-cli/recency-ordering-contract.md` for the pin-first arithmetic). This
+  makes `wt go`'s single most common navigation — back to the main repo —
+  reachable from the menu, mirroring `wt list`'s pin-first `main` convention.
+- **The current worktree IS included in the menu.** `selectWorktree` no longer
+  filters anything out (`260718-daqj` dropped the `e.path == ctx.RepoRoot` skip;
+  main is now pinned rather than hidden). So when `wt go` is run from inside
+  worktree `alpha`, both `alpha` and `main` appear as selectable rows. This is
+  **behavior-preserving** for the non-main rows with `wt open`'s shared menu
+  (which has always listed every non-main worktree), not a `wt go` special
+  case — the single shared helper guarantees all three callers show the
+  identical set. Navigating to the worktree you are already in is a harmless
+  no-op `cd`.
 - On selection, `wt go` navigates to the chosen worktree via `navigateTo`.
+  Selecting the main row navigates to the repo root.
 - On Cancel (menu choice `0`), `wt go` prints `Cancelled.` and exits `0` without
-  navigating. (When there are no non-main worktrees, `selectWorktree` prints
-  `No worktrees found.` itself and the `Cancelled.` line is suppressed — see the
-  cancel/no-worktrees split below.)
+  navigating. In a validated git repo the menu always has at least the pinned
+  main row, so there is no "no worktrees" outcome — the `noWorktrees` /
+  `No worktrees found.` path was retired (`260718-daqj`; see the Cancel section
+  below).
 
 ### `wt go` requires a git repository
 
@@ -98,6 +117,43 @@ supersedes them.
     from this repo".
 - This mirrors `wt open`'s exit-code mapping for the same two failure modes
   (`launcher-contract.md` §5) so `wt go` and `wt open <name>` never disagree.
+
+### `resolveWorktreeByName` learns a stable `main` key with exact-basename precedence (`260718-daqj`)
+
+- `resolveWorktreeByName(name string)` (`src/cmd/wt/open.go`) resolves in two
+  steps: first the existing exact-basename loop matches `filepath.Base(e.path)`
+  case-insensitively across **all** porcelain entries (including main); then, if
+  that finds no match, `if strings.EqualFold(name, "main") && len(entries) > 0`
+  returns `entries[0].path` — the porcelain-first entry, which is **always the
+  main worktree** (the same `mainPath = raw[0]` convention `list.go`'s
+  `buildBaseEntry` uses; no extra git call). This one resolver fixes `wt go main`,
+  `wt open main`, and `wt open --select main` at once, since all three route
+  through it.
+- **Exact-basename match takes precedence.** A worktree directory literally named
+  `main` keeps today's behavior — it matches in the first loop and resolves to
+  that worktree, not the repo root. The `main` key is a fallback consulted only
+  when no directory basename matches.
+- **The `main` key is purely additive.** The pre-existing accidental resolution
+  (`wt go <repo-dir-basename>` → main, e.g. `wt go wt` for a repo at `.../wt`)
+  is left unchanged — it is still handled by the exact-basename loop.
+- Error mapping is untouched: `errWorktreeNotFound` → `ExitGeneralError` (1);
+  a git-list failure → `ExitGitError` (3). The `main` key adds a resolution path,
+  not a new error class.
+- This matches the stable-key convention `internal/worktree/worktree.go` already
+  implements (`List` sets `Name = "main"` for the main entry; `FindByName`
+  matches the stable key) — but that internal API still has **zero callers in
+  `cmd/`**. This change reimplemented the `main`-key semantics in `cmd/`'s
+  resolver rather than wiring in the internal API (Constitution V keeps selection
+  orchestration in `cmd/`; the internal API lacks the `errWorktreeNotFound`
+  sentinel the exit-code mapping needs). The unused internal `List`/`FindByName`
+  seam is a deferred reuse-or-delete reconciliation candidate — see § Design
+  Decisions and the worktree package's own notes.
+- **The `resolveWorktreeByName` `ctx *wt.RepoContext` parameter is unused**
+  (it was already unused before this change; `260718-daqj`'s removal of
+  `selectWorktree`'s `ctx` leaves it the selection/resolution seam's last
+  vestigial `ctx`). It is a recorded deletion candidate (removable along with the
+  argument at its three call sites in `go.go`/`open.go`), surfaced but not
+  actioned in this change.
 
 ### `wt go` navigates via `WT_CD_FILE` + stdout — `navigateTo`, never `OpenInApp`
 
@@ -147,9 +203,11 @@ supersedes them.
   open/go menus already run per entry; `wt go` reuses it rather than issuing a
   fresh git call (Constitution V).
 - **The confirmation is success-path-only.** It is emitted from inside
-  `navigateTo`, so it never fires on the cancel path (`Cancelled.`) or the
-  no-worktrees path (`No worktrees found.`) — those return before `navigateTo` is
-  reached.
+  `navigateTo`, so it never fires on the cancel path (`Cancelled.`) — which
+  returns before `navigateTo` is reached. (The former no-worktrees path
+  (`No worktrees found.`) was retired by `260718-daqj`; a repo with only main
+  now shows the one-row menu instead, so there is no separate no-worktrees
+  early-return to consider.)
 - **stdout is unchanged — NON-NEGOTIABLE.** The confirmation is diagnostic copy on
   stderr; stdout stays **exactly** the single bare resolved absolute path as the
   final (and only) stdout line. This preserves `cd "$(command wt go <name>)"` and
@@ -179,23 +237,35 @@ supersedes them.
 ### Shared `selectWorktree` helper — single source of truth (open / go / open --select)
 
 - The worktree-selection logic was extracted out of `selectAndOpen` into
-  `selectWorktree(ctx *wt.RepoContext, session *wt.MenuSession, prompt string)
-  (path, name string, cancelled, noWorktrees bool, err error)` in
-  `src/cmd/wt/open.go`. It is the single source of truth for worktree selection,
-  consumed by all three menu callers:
+  `selectWorktree(session *wt.MenuSession, prompt string)
+  (path, name string, cancelled bool, err error)` in `src/cmd/wt/open.go`. It is
+  the single source of truth for worktree selection, consumed by all three menu
+  callers:
   - `selectAndOpen` — `wt open` no-arg in the main repo (prompt
     `"Select worktree to open:"`), re-expressed on top of the helper
-    (behavior-preserving — `TestOpen_MenuOrdersNewestFirst` and the other `open`
-    tests still pass).
+    (behavior-preserving for the non-main rows — `TestOpen_MenuOrdersNewestFirst`
+    and the other `open` tests still pass).
   - `wt go` no-arg (prompt `"Select worktree to go to:"`).
   - `openGo` — `wt open --select` no-arg (prompt `"Select worktree to open:"`).
-- The helper owns the menu UX: filter out the main repo (`ctx.RepoRoot`),
-  newest-first `wt.SortByRecency` ordering, per-entry `"name (branch)"` rows via
-  `getBranchForPath`, `defaultIdx = 1`, and rendering via the **caller-supplied**
-  `MenuSession`. No new business rule moves into `internal/worktree` — the helper
-  composes existing exported helpers (Constitution V).
+- **Signature (`260718-daqj`)**: the helper no longer takes `ctx` — the
+  `ctx.RepoRoot` filter was dropped, and the `ctx` parameter went with it (it had
+  no other use). It also no longer returns `noWorktrees` — the flag and the
+  `No worktrees found.` message were retired (see the Cancel section). The
+  signature is `(session, prompt) → (path, name, cancelled, err)`.
+- The helper owns the menu UX (`260718-daqj`): **partition** the porcelain-first
+  entry (`entries[0]`, always the main worktree) out from the rest; order the
+  non-main entries (`entries[1:]`) newest-first via `wt.SortByRecency`; then
+  **prepend the pinned main row** `wtOption{path: entries[0].path, name: "main"}`
+  so main is always row 1, OUTSIDE the recency ordering (mirroring `wt list`'s
+  `sortEntries` pin-first convention). Rows render `"name (branch)"` via
+  `getBranchForPath`; `defaultIdx = 2` when ≥1 non-main worktree exists (main row
+  1, newest worktree row 2), else `1` (main is the only row). Rendering is via
+  the **caller-supplied** `MenuSession`. No new business rule moves into
+  `internal/worktree` — the helper composes existing exported helpers
+  (Constitution V).
 - The `prompt` is a parameter (so the wording can differ per verb); everything
-  else (filter, ordering, branch display, default) is identical across callers.
+  else (partition/pin, non-main ordering, branch display, default) is identical
+  across callers.
 - **Caller-supplied session** is load-bearing for the launch-chaining flows:
   `selectAndOpen` and `openGo` pass the SAME `MenuSession` to `selectWorktree`
   and then to `handleAppMenuWithSession`, so the "Open in:" menu runs on the same
@@ -203,20 +273,23 @@ supersedes them.
   first keystroke — see `/wt-cli/menu-navigation-contract.md` and `wt.MenuSession`.
   `wt go` owns its own one-shot session (no second menu to chain).
 
-### Cancel vs. no-worktrees split — the `noWorktrees` return flag
+### Cancel is the only helper-signalled early exit — `noWorktrees` retired (`260718-daqj`)
 
-- `selectWorktree` returns `cancelled=true` both when the user picks Cancel
-  (choice `0`) and when there are no non-main worktrees to select. The two cases
-  are disambiguated by the `noWorktrees` return:
-  - `cancelled=true, noWorktrees=true` — `selectWorktree` has already printed
-    `No worktrees found.` itself (shared by all callers). The caller prints
-    **nothing more**.
-  - `cancelled=true, noWorktrees=false` — explicit user Cancel. The caller prints
-    its own `Cancelled.` line and exits `0`.
-- This split lives in every caller identically (`wt go`, `selectAndOpen`,
-  `openGo`): the "No worktrees found." message is the helper's to print once; the
-  "Cancelled." line is the caller's. A nil error with `cancelled=false`
-  guarantees `path` and `name` are populated.
+- `selectWorktree` returns `cancelled=true` **only** when the user picks Cancel
+  (choice `0`). Each caller (`wt go`, `selectAndOpen`, `openGo`) prints its own
+  `Cancelled.` line and exits `0`. A nil error with `cancelled=false` guarantees
+  `path` and `name` are populated.
+- **The `noWorktrees` return flag and the `No worktrees found.` message were
+  retired** (`260718-daqj`). Previously the helper returned
+  `cancelled=true, noWorktrees=true` and printed `No worktrees found.` when the
+  repo had no non-main worktrees, and each caller guarded its `Cancelled.` line
+  behind `if !noWorktrees`. With the main worktree now always pinned as row 1,
+  a repo with only main shows the **one-row menu** (just `main (<branch>)`) —
+  navigating to main is still meaningful — so the empty-options branch became
+  unreachable in a validated git repo (`git worktree list --porcelain` always
+  yields ≥1 entry) and was removed as dead code. The three callers' `if
+  !noWorktrees` guards were simplified accordingly, so Cancel always prints
+  `Cancelled.`
 
 ### `wt open --select` composes selection then launch (`--go` deprecated alias)
 
@@ -238,7 +311,8 @@ supersedes them.
     (not-found → `ExitGeneralError`, list-fail → `ExitGitError`, same mapping as
     `wt go`).
   - `wt open --select` (no name) — `selectWorktree` on a shared session (cancel →
-    `Cancelled.` + exit `0`; no-worktrees → `No worktrees found.`).
+    `Cancelled.` + exit `0`; the menu always has at least the pinned main row, so
+    there is no no-worktrees case — `260718-daqj`).
 - It then **launches** the selected worktree via the existing launcher path:
   `--app <app>` (short `-a` as of `260717-59u8`) opens directly through
   `openInNamedApp`; otherwise `handleAppMenuWithSession` renders the "Open in:"
@@ -285,22 +359,27 @@ compact-arrow form was the user's explicit choice over both); a fresh
 `git rev-parse` for the branch (reuse `getBranchForPath` per Constitution V).
 *Introduced by*: `260622-log5-dx-copy-polish`.
 
-### Shared `selectWorktree(ctx, session, prompt)` returning `(path, name, cancelled, noWorktrees, err)`
+### Shared `selectWorktree(session, prompt)` returning `(path, name, cancelled, err)`
 
 **Decision**: extract the menu logic from `selectAndOpen` into one helper that
-takes a `*MenuSession` and a `prompt`, and returns the chosen `path`+`name`, a
-`cancelled` flag, and a `noWorktrees` flag.
+takes a `*MenuSession` and a `prompt`, and returns the chosen `path`+`name` plus
+a `cancelled` flag.
 **Why**: the `MenuSession` parameter lets `wt open --select` chain the "Open in:"
 menu on one stdin reader (the documented byte-theft fix in `MenuSession`); the
-`name` return covers tab-naming for the launch flows; the `cancelled` +
-`noWorktrees` pair lets the helper own the single `No worktrees found.` message
-while each caller owns its own `Cancelled.` line. One helper means
+`name` return covers tab-naming for the launch flows; the `cancelled` flag lets
+each caller own its own `Cancelled.` line. One helper means
 `recency-ordering-contract` and `menu-navigation-contract` hold across all three
 callers.
-**Rejected**: returning only a path (loses the cancel signal, the name, and the
-no-worktrees-vs-cancel distinction); baking the prompt into the helper (the two
-verbs want different prompt wording).
+**Rejected**: returning only a path (loses the cancel signal and the name);
+baking the prompt into the helper (the two verbs want different prompt wording).
 *Introduced by*: `260620-3pp5-open-worktree-from-worktree`.
+**Amended by `260718-daqj-go-include-main-worktree`**: the signature lost its
+`ctx *wt.RepoContext` parameter (the `ctx.RepoRoot` filter it fed was dropped
+when main became a pinned row instead of a hidden entry, and `ctx` had no other
+use) and its `noWorktrees bool` return (the flag and the `No worktrees found.`
+message were retired — with main always pinned, the empty-options branch is
+unreachable in a validated git repo). The helper's shape is now
+`(session, prompt) → (path, name, cancelled, err)`.
 
 ### `wt go` no-arg under non-interactive errors rather than auto-picking newest
 
@@ -315,11 +394,11 @@ VI). Reversible if a "newest default" is later wanted.
 
 ### The current worktree is included in the `wt go` menu (behavior-preserving, not a special case)
 
-**Decision**: `wt go`'s menu lists every non-main worktree, including the one the
-user is currently inside; only the main repo is filtered.
+**Decision**: `wt go`'s menu lists every worktree, including the one the user is
+currently inside; no row is suppressed.
 **Why**: the menu is rendered by the SHARED `selectWorktree` helper, which has
 always (as `selectAndOpen`) listed all non-main worktrees. Keeping `wt go` on the
-identical filter means `wt open`'s menu and `wt go`'s menu never diverge — a
+identical row set means `wt open`'s menu and `wt go`'s menu never diverge — a
 single source of truth. Navigating to the worktree you are already in is a
 harmless no-op `cd`, so suppressing the current row would be a `wt go`-only
 special case with no real benefit and a divergence cost.
@@ -327,13 +406,67 @@ special case with no real benefit and a divergence cost.
 shared menu into two behaviors; the helper would need a "current path" param it
 otherwise does not want).
 *Introduced by*: `260620-3pp5-open-worktree-from-worktree`.
+**Amended by `260718-daqj-go-include-main-worktree`**: the main repo, formerly
+the one filtered row, is now **included** too — pinned to row 1 (see the next
+decision). So the menu now lists literally all worktrees, main included.
+
+### Main is included in the menu, pinned to row 1 via a partition (not a sort key) (`260718-daqj`)
+
+**Decision**: drop the `ctx.RepoRoot` skip in the shared `selectWorktree` helper
+and instead include the main worktree, pinned to row 1 rendered `main (<branch>)`.
+Build it by partitioning the porcelain-first entry (`entries[0]`, always main)
+out, sorting the non-main slice (`entries[1:]`) newest-first, then **prepending**
+the pinned main row — mirroring `list.go`'s `sortEntries` (partition out row 0,
+reorder the rest). The pre-selected default stays the newest *non-main* worktree
+(`defaultIdx = 2` with ≥1 non-main, `1` when main-only), preserving the
+create → go → newest enter-key muscle memory.
+**Why**: `wt go` is a navigation verb reachable from anywhere in the repo, and
+the single most common navigation from a worktree is *back to main* — yet the
+menu could not offer it. Pinning main outside the recency ordering copies the
+convention `wt list` already established (main displayed as `main`, pinned
+first), fixing the list/menu inconsistency at the single shared seam. Because the
+helper is shared, `wt open`'s no-arg menu and `wt open --select`'s menu gain the
+main row too — intentional consistency (the documented single-source-of-truth
+invariant forbids per-caller forking); selecting main in a launch flow launches
+an app on the main repo, a meaningful action.
+**Rejected**: giving main an artificial max-recency so the sort floats it first
+(couples the pin to the comparator, fragile — the pin must be *outside* the
+ordering, as in `wt list`); defaulting the highlight to main (breaks the
+newest-worktree enter-key habit); forking the filter per-caller so only `wt go`
+shows main (violates the single-source-of-truth invariant).
+*Introduced by*: `260718-daqj-go-include-main-worktree`.
+
+### `main` resolver key resolves to `entries[0].path`, exact-basename precedence (`260718-daqj`)
+
+**Decision**: `resolveWorktreeByName` gains a stable `main` key — after the
+exact-basename loop finds no match, `main` (case-insensitive) resolves to
+`entries[0].path` (the porcelain-first entry, always the main worktree). Exact
+basename matches keep precedence, so a worktree directory literally named `main`
+still resolves to itself; the accidental repo-dir-basename resolution is
+unchanged. One resolver fixes `wt go main` / `wt open main` / `wt open --select
+main` at once.
+**Why**: `entries[0]` is always main (confirmed: `list.go` sets
+`mainPath = raw[0].path`), so the key costs no extra git call and matches
+`buildBaseEntry`'s existing convention and the name `wt list` displays. Fixing it
+at the one shared resolver keeps all three verbs consistent. The parallel stable-
+key API in `internal/worktree/worktree.go` (`List`/`FindByName`) was NOT wired in:
+Constitution V keeps selection orchestration in `cmd/`, and that API lacks the
+`errWorktreeNotFound` sentinel the exit-code mapping needs — it remains a
+deferred reuse-or-delete reconciliation candidate (its zero-`cmd/`-caller status
+is now more pressing, since this change reimplemented its `main`-key semantics).
+**Rejected**: a dedicated "find main" git call (redundant — porcelain order
+already encodes it); wiring in the internal `List`/`FindByName` API (fails the
+sentinel/Constitution-V constraints above).
+*Introduced by*: `260718-daqj-go-include-main-worktree`.
 
 ## Cross-references
 
 - Sibling memory: `/wt-cli/recency-ordering-contract.md` — the shared
   `RecencyOf`/`RecencyLess`/`SortByRecency` newest-first ordering that
-  `selectWorktree` (and thus `wt go`'s no-arg menu) consumes, alongside
-  `wt list`/`wt open`/`wt delete`.
+  `selectWorktree` (and thus `wt go`'s no-arg menu) consumes for the non-main
+  rows, alongside `wt list`/`wt open`/`wt delete`; also the pin-first
+  convention (`260718-daqj`) that keeps main pinned to row 1 *outside* that
+  ordering and the `defaultIdx = 2/1` arithmetic it produces.
 - Sibling memory: `/wt-cli/menu-navigation-contract.md` — the shared
   `ShowMenu`/`MenuSession` arrow-key navigation, TTY gating, and the non-TTY
   numbered-prompt fallback that `wt go`'s no-arg menu degrades through; also the
@@ -348,17 +481,31 @@ otherwise does not want).
 - Source: `src/cmd/wt/go.go` — `goCmd`, `navigateTo`.
 - Source: `src/cmd/wt/open.go` — `openCmd` (`--select` primary + `--go` deprecated
   alias on the shared `goFlag` var + `MarkDeprecated`; `--app` gains short `-a`),
-  `openGo`, `selectWorktree` (shared helper), `selectAndOpen` (re-expressed on the
-  helper), `resolveWorktreeByName` / `errWorktreeNotFound` (shared resolver/sentinel),
+  `openGo`, `selectWorktree` (shared helper — `260718-daqj`: signature now
+  `(session, prompt) → (path, name, cancelled, err)`; main pinned row 1 via the
+  `entries[0]` partition + `entries[1:]` newest-first sort; `noWorktrees` retired),
+  `selectAndOpen` (re-expressed on the helper), `resolveWorktreeByName` /
+  `errWorktreeNotFound` (shared resolver/sentinel — `260718-daqj`: gains the
+  stable `main` key returning `entries[0].path` with exact-basename precedence;
+  its unused `ctx` parameter is a recorded deletion candidate),
   `handleAppMenuWithSession`, `openInNamedApp`, `getBranchForPath`.
 - Source: `src/cmd/wt/main.go` — `goCmd()` registered in `root.AddCommand(...)`.
 - Tests: `src/cmd/wt/go_test.go` (unit: name happy path → `WT_CD_FILE`+stdout,
   unknown name → exit 1, non-git → exit 3, no-arg `--non-interactive` → exit 1
   without prompting; `260622-log5`: success emits the `→`/repo/worktree/branch +
   indented-path confirmation on stderr while stdout stays exactly the bare path,
-  and the confirmation is absent on the no-worktrees menu path),
+  and the confirmation is absent on the cancel menu path; `260718-daqj`:
+  `TestGo_OnlyMain_ShowsOneRowMenu` (the rewritten former
+  `TestGo_NoWorktrees_NoConfirmation` — one-row `main (` menu, no
+  `No worktrees found.`, confirmation absent until selection),
+  `TestGo_MainKey_NavigatesToRepoRoot`, `TestGo_MainKey_CaseInsensitive`,
+  `TestGo_MainKey_ExactBasenamePrecedence`),
+  `src/cmd/wt/open_test.go` (`260718-daqj`: `TestOpen_MenuOrdersNewestFirst`
+  updated for the pinned main row, `TestOpen_MainKey_ResolvesToRepoRoot`),
   `src/cmd/wt/integration_test.go` (end-to-end `wt go <name>` from a sibling
-  worktree, no-arg menu newest-first ordering, `wt open --select <name> --app open_here`).
+  worktree; `TestIntegration_Go_MenuOrdersNewestFirst` updated for the pinned
+  main row; `260718-daqj`: `TestIntegration_Go_MainKey_FromSiblingWorktree`
+  resolves `wt go main` to the repo root; `wt open --select <name> --app open_here`).
 - Sibling memory: `/wt-cli/create-output-phases.md` — the canonical stdout =
   machine-result / stderr = human-diagnostic stream-discipline contract this
   confirmation honors; it also documents the `wt.Warn` shared one-line warning

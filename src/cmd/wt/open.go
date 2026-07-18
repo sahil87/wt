@@ -209,14 +209,12 @@ func openGo(target, appFlag string) error {
 	defer session.Close()
 
 	if target == "" {
-		path, name, cancelled, noWorktrees, selErr := selectWorktree(ctx, session, "Select worktree to open:")
+		path, name, cancelled, selErr := selectWorktree(session, "Select worktree to open:")
 		if selErr != nil {
 			return selErr
 		}
 		if cancelled {
-			if !noWorktrees {
-				fmt.Println("Cancelled.")
-			}
+			fmt.Println("Cancelled.")
 			return nil
 		}
 		wtPath = path
@@ -291,6 +289,17 @@ func resolveWorktreeByName(name string, ctx *wt.RepoContext) (string, error) {
 		}
 	}
 
+	// Stable "main" key: after the exact-basename loop finds no match, resolve
+	// "main" (case-insensitive) to the porcelain-first entry, which is always
+	// the main worktree (the same convention list.go uses: mainPath = raw[0]).
+	// Exact-basename match above takes precedence, so a worktree directory
+	// literally named "main" keeps resolving to that worktree. This matches the
+	// name `wt list` displays for the main entry and fixes `wt go main` /
+	// `wt open main` / `wt open --select main` in one place.
+	if strings.EqualFold(name, "main") && len(entries) > 0 {
+		return entries[0].path, nil
+	}
+
 	return "", errWorktreeNotFound
 }
 
@@ -348,9 +357,19 @@ func handleAppMenuWithSession(session *wt.MenuSession, wtPath, repoName, wtName 
 // selectWorktree renders the current repo's worktree-selection menu against the
 // provided session and returns the chosen worktree's (path, name). It is the
 // single source of truth for worktree selection shared by `wt open` (main-repo
-// no-arg menu), `wt go`, and `wt open --go`: it filters out the main repo,
-// orders entries newest-first via the shared recency comparator, displays the
-// branch per entry, and pre-selects the newest worktree as the default.
+// no-arg menu), `wt go`, and `wt open --go`: it pins the main worktree to row 1
+// (rendered "main (branch)"), orders the non-main entries newest-first via the
+// shared recency comparator below it, displays the branch per entry, and
+// pre-selects the newest non-main worktree as the default (main only when it is
+// the sole row).
+//
+// The main worktree is the porcelain-first entry (entries[0]); it is pinned
+// OUTSIDE the recency ordering, mirroring `wt list`'s sortEntries pin-first
+// convention. Its returned name is the stable key "main" (the same name
+// `wt list` displays), so `wt open` launch flows tab-name it {repo}/main. In a
+// validated git repo `git worktree list --porcelain` always yields ≥1 entry
+// (the main worktree), so the menu always has at least the pinned main row —
+// there is no "no worktrees" case for this helper to signal.
 //
 // The caller supplies the MenuSession so that select-then-launch flows
 // (`wt open` / `wt open --go`) can chain the subsequent "Open in:" menu on the
@@ -358,15 +377,13 @@ func handleAppMenuWithSession(session *wt.MenuSession, wtPath, repoName, wtName 
 // is required (otherwise the first menu's orphaned read-ahead pump steals the
 // next menu's first keystroke).
 //
-// Returns cancelled=true when the user picks Cancel (choice 0) or there are no
-// other worktrees to select. The "No worktrees found." message is emitted here
-// (shared by all callers); the per-caller "Cancelled." message is the caller's
-// to print, distinguished via the noWorktrees flag. A nil error with
+// Returns cancelled=true only when the user picks Cancel (choice 0). The
+// per-caller "Cancelled." message is the caller's to print. A nil error with
 // cancelled=false guarantees path and name are populated.
-func selectWorktree(ctx *wt.RepoContext, session *wt.MenuSession, prompt string) (path, name string, cancelled, noWorktrees bool, err error) {
+func selectWorktree(session *wt.MenuSession, prompt string) (path, name string, cancelled bool, err error) {
 	entries, err := listWorktreeEntries()
 	if err != nil {
-		return "", "", false, false, err
+		return "", "", false, err
 	}
 
 	type wtOption struct {
@@ -374,28 +391,39 @@ func selectWorktree(ctx *wt.RepoContext, session *wt.MenuSession, prompt string)
 		name string
 	}
 
-	var options []wtOption
-
-	for _, e := range entries {
-		if e.path == ctx.RepoRoot {
-			continue
+	// Partition out the porcelain-first entry (entries[0]), which is always the
+	// main worktree — the same convention list.go's sortEntries/buildBaseEntry
+	// uses (mainPath = raw[0].path). In a validated git repo porcelain always
+	// yields ≥1 entry, but guard the slice defensively so an empty list can't
+	// panic. The non-main entries are ordered newest-first via the shared
+	// recency comparator.
+	var nonMain []wtOption
+	if len(entries) > 0 {
+		for _, e := range entries[1:] {
+			nonMain = append(nonMain, wtOption{path: e.path, name: filepath.Base(e.path)})
 		}
-		options = append(options, wtOption{path: e.path, name: filepath.Base(e.path)})
 	}
-
-	if len(options) == 0 {
-		fmt.Println("No worktrees found.")
-		return "", "", true, true, nil
-	}
-
-	// Order newest-first via the shared recency comparator. The newest worktree
-	// lands at the top and stays the pre-selected default (behavior-preserving
-	// for the default selection; the item ordering is the intentional change).
-	wt.SortByRecency(options,
+	wt.SortByRecency(nonMain,
 		func(o wtOption) string { return o.path },
 		func(o wtOption) string { return o.name },
 	)
+
+	// Pin the main worktree to row 1, OUTSIDE the recency ordering (mirroring
+	// `wt list`'s sortEntries pin-first convention). The main entry is
+	// entries[0] (porcelain-first); rendered with the stable name "main".
+	options := make([]wtOption, 0, len(nonMain)+1)
+	if len(entries) > 0 {
+		options = append(options, wtOption{path: entries[0].path, name: "main"})
+	}
+	options = append(options, nonMain...)
+
+	// The pre-selected default is the newest non-main worktree (row 2), keeping
+	// the create → go → newest enter-key muscle memory — not main. When main is
+	// the only row, the default falls back to it (row 1).
 	defaultIdx := 1
+	if len(nonMain) > 0 {
+		defaultIdx = 2
+	}
 
 	// Build menu rows: "name (branch)".
 	menuNames := make([]string, len(options))
@@ -405,14 +433,14 @@ func selectWorktree(ctx *wt.RepoContext, session *wt.MenuSession, prompt string)
 
 	choice, err := session.Show(prompt, menuNames, defaultIdx)
 	if err != nil {
-		return "", "", false, false, err
+		return "", "", false, err
 	}
 	if choice == 0 {
-		return "", "", true, false, nil
+		return "", "", true, nil
 	}
 
 	selected := options[choice-1]
-	return selected.path, selected.name, false, false, nil
+	return selected.path, selected.name, false, nil
 }
 
 func selectAndOpen(ctx *wt.RepoContext) error {
@@ -423,16 +451,12 @@ func selectAndOpen(ctx *wt.RepoContext) error {
 	session := wt.NewMenuSession()
 	defer session.Close()
 
-	path, name, cancelled, noWorktrees, err := selectWorktree(ctx, session, "Select worktree to open:")
+	path, name, cancelled, err := selectWorktree(session, "Select worktree to open:")
 	if err != nil {
 		return err
 	}
 	if cancelled {
-		// "No worktrees found." is printed by selectWorktree; only the
-		// explicit Cancel path needs the "Cancelled." line.
-		if !noWorktrees {
-			fmt.Println("Cancelled.")
-		}
+		fmt.Println("Cancelled.")
 		return nil
 	}
 
