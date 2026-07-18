@@ -36,8 +36,16 @@ type HelpDoc struct {
 // HelpNode is one command in the recursive help tree. commands holds child
 // nodes (an empty, non-nil slice for a leaf so it marshals to [] not null,
 // satisfying shll.ai's NodeSchema which requires z.array).
+//
+// aliases carries the command's registered Cobra aliases (e.g. `list` → `ls`).
+// It is optional (`omitempty`): a command with no aliases marshals with no
+// `aliases` key at all. This is the deliberate contrast with commands, which is
+// a non-nil slice — aliases is added under schema_version 1 as an OPTIONAL field
+// per shll.ai's schema-evolution rule, so absence must remain valid (the other
+// toolkit binaries won't emit it until they adopt).
 type HelpNode struct {
 	Name     string     `json:"name"`
+	Aliases  []string   `json:"aliases,omitempty"`
 	Path     string     `json:"path"`
 	Short    string     `json:"short"`
 	Usage    string     `json:"usage"`
@@ -127,6 +135,7 @@ func buildNode(cmd *cobra.Command) (HelpNode, error) {
 
 	return HelpNode{
 		Name:     cmd.Name(),
+		Aliases:  cmd.Aliases,
 		Path:     cmd.CommandPath(),
 		Short:    cmd.Short,
 		Usage:    cmd.UseLine(),

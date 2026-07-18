@@ -16,6 +16,7 @@ type helpDumpDoc struct {
 
 type helpDumpNode struct {
 	Name     string         `json:"name"`
+	Aliases  []string       `json:"aliases,omitempty"`
 	Path     string         `json:"path"`
 	Short    string         `json:"short"`
 	Usage    string         `json:"usage"`
@@ -84,6 +85,64 @@ func TestHelpDump_EmitsValidEnvelope(t *testing.T) {
 	}
 	if got := len(doc.Root.Commands); got != 9 {
 		t.Errorf("expected 9 visible subcommands, got %d: %v", got, names)
+	}
+}
+
+// TestHelpDump_EmitsAliases asserts the emitted tree surfaces each aliased
+// command's registered Cobra aliases in the structured `aliases` field:
+// list→[ls], create→[new], delete→[rm]. Non-aliased nodes and the root MUST
+// emit no `aliases` key at all — asserted against the raw JSON to pin omitempty.
+func TestHelpDump_EmitsAliases(t *testing.T) {
+	repo := createTestRepo(t)
+	r := runWtSuccess(t, repo, nil, "help-dump")
+
+	// Decoded view: assert the exact alias lists on the three aliased nodes.
+	var doc helpDumpDoc
+	if err := json.Unmarshal([]byte(r.Stdout), &doc); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	byName := map[string]helpDumpNode{}
+	for _, c := range doc.Root.Commands {
+		byName[c.Name] = c
+	}
+	wantAliases := map[string][]string{
+		"list":   {"ls"},
+		"create": {"new"},
+		"delete": {"rm"},
+	}
+	for name, want := range wantAliases {
+		got := byName[name].Aliases
+		if len(got) != len(want) || (len(want) == 1 && got[0] != want[0]) {
+			t.Errorf("%s.aliases = %v, want %v", name, got, want)
+		}
+	}
+
+	// Raw view: aliased children carry the key; non-aliased children and the
+	// root do NOT (pins omitempty on the emitted JSON, not just the struct).
+	var top struct {
+		Root struct {
+			Aliases  json.RawMessage `json:"aliases"`
+			Commands []struct {
+				Name    string          `json:"name"`
+				Aliases json.RawMessage `json:"aliases"`
+			} `json:"commands"`
+		} `json:"root"`
+	}
+	if err := json.Unmarshal([]byte(r.Stdout), &top); err != nil {
+		t.Fatalf("raw decode: %v", err)
+	}
+	if top.Root.Aliases != nil {
+		t.Errorf("root must NOT carry an `aliases` key, got: %s", top.Root.Aliases)
+	}
+	aliased := map[string]bool{"list": true, "create": true, "delete": true}
+	for _, c := range top.Root.Commands {
+		if aliased[c.Name] {
+			if c.Aliases == nil {
+				t.Errorf("aliased node %q must carry an `aliases` key in the emitted JSON", c.Name)
+			}
+		} else if c.Aliases != nil {
+			t.Errorf("non-aliased node %q must NOT carry an `aliases` key, got: %s", c.Name, c.Aliases)
+		}
 	}
 }
 

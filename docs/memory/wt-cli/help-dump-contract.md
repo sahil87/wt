@@ -49,21 +49,29 @@ This file documents the contract that `wt help-dump` honors. Future changes touc
 - **AND** `captured_at` SHALL be absent
 - **AND** `tool` SHALL equal `"wt"` and `schema_version` SHALL equal integer `1`
 
-### Recursive Node shape: `{name, path, short, usage, text, commands}`
+### Recursive Node shape: `{name, aliases?, path, short, usage, text, commands}`
 
-- Each `HelpNode` marshals to six fields in contract order:
+- Each `HelpNode` marshals to its fields in contract order:
   - `name` = `cmd.Name()`
+  - `aliases` = `cmd.Aliases` — the command's registered Cobra aliases, **optional** (`json:"aliases,omitempty"`), positioned immediately after `name` (see below).
   - `path` = `cmd.CommandPath()` (full invocation, e.g. `"wt create"`)
   - `short` = `cmd.Short`
   - `usage` = `cmd.UseLine()`
   - `text` = the raw `-h` render for that command (see below)
   - `commands` = the array of child `HelpNode`s.
-- `commands` is a **non-nil slice** (`make([]HelpNode, 0, ...)`), so a leaf marshals to `"commands": []`, never `null`. shll.ai's `NodeSchema` requires `z.array(NodeSchema)`; a `null` would fail validation.
+- `aliases` is the **optional** member of the node shape: a nil/empty `Aliases` marshals with **no `aliases` key at all** (`omitempty`), so non-aliased nodes and the root are byte-identical to a shape without the field. Exactly three nodes emit it — `create` → `["new"]`, `delete` → `["rm"]`, `list` → `["ls"]` — and `buildNode` populates it directly from `cmd.Aliases`. This is the deliberate contrast with `commands`: `aliases` is absent when empty, while `commands` is always a present `[]`.
+- `commands` is a **non-nil slice** (`make([]HelpNode, 0, ...)`), so a leaf marshals to `"commands": []`, never `null`. shll.ai's `NodeSchema` requires `z.array(NodeSchema)`; a `null` would fail validation. `aliases` carries no such requirement — it is added as an `.optional()` upstream field, so its absence MUST validate.
 
 - **GIVEN** the root node
 - **WHEN** marshaled
-- **THEN** it SHALL carry the six fields in contract order
+- **THEN** it SHALL carry its fields in contract order (`name`, then `path`, `short`, `usage`, `text`, `commands`)
 - **AND** a leaf command's `commands` SHALL serialize as `[]`, not `null`
+- **AND** the root SHALL carry no `aliases` key (it has no aliases)
+
+- **GIVEN** an aliased command node (`create`, `delete`, or `list`)
+- **WHEN** marshaled
+- **THEN** it SHALL carry an `aliases` array immediately after `name` holding exactly its registered alias(es) — `["new"]`, `["rm"]`, `["ls"]` respectively
+- **AND** a non-aliased node (e.g. `open`) SHALL carry no `aliases` key at all (not `"aliases": []`, not `null`)
 
 ### `text` is the raw `-h` render, captured into a buffer, byte-for-byte
 
@@ -77,7 +85,7 @@ This file documents the contract that `wt help-dump` honors. Future changes touc
 ### Discovery: recursive walk of `rootCmd.Commands()`, never regex
 
 - The tree is discovered programmatically by `buildNode` walking `cmd.Commands()` recursively to **full depth**. It NEVER regex-parses `-h` text to discover structure.
-- `wt` is currently flat (root + 7 visible leaves), but the walk recurses for correctness under any future nesting.
+- `wt` is currently flat (root + 9 visible leaves), but the walk recurses for correctness under any future nesting.
 
 - **GIVEN** the root command with its registered children
 - **WHEN** the builder walks the tree
@@ -93,16 +101,17 @@ This file documents the contract that `wt help-dump` honors. Future changes touc
 - **GIVEN** the live command tree (which includes auto-generated `completion`, `help`, and the Hidden `help-dump`)
 - **WHEN** the builder walks it
 - **THEN** `completion`, `help`, and `help-dump` SHALL be absent from the output tree
-- **AND** the remaining 7 visible subcommands (`create`, `delete`, `init`, `list`, `open`, `shell-init`, `update`) SHALL be present
+- **AND** the remaining 9 visible subcommands (`create`, `delete`, `go`, `init`, `list`, `open`, `shell-init`, `skill`, `update`) SHALL be present
 
-### Schema is frozen at `schema_version: 1`
+### `schema_version: 1`; optional fields evolve without a bump
 
-- `schema_version` stays the integer `1` for this contract revision. No new fields are added to the envelope or node shape in this change.
-- Future enrichment is a separate, deliberate change and SHALL add new fields as **OPTIONAL** (so a consumer pinned to `schema_version: 1` keeps validating). A breaking shape change would bump `schema_version`.
+- `schema_version` is the integer `1`. Under the standard's schema-evolution rule, a **new OPTIONAL field is added without a `schema_version` bump** — each tool adopts it on its own release cadence, older captures keep validating, and a consumer pinned to `schema_version: 1` is unaffected. The node's optional `aliases` field is exactly such an addition (present on the three aliased nodes, absent elsewhere), added under `schema_version: 1` without a bump.
+- A **breaking** shape change (removing or renaming a field, changing a field's type, or making a previously-optional field required) is the only kind that bumps `schema_version`; it is a separate, deliberate change.
+- The envelope shape is fixed at exactly `{tool, version, schema_version, root}` — its four keys are frozen (an added envelope-level field would itself be an optional-field evolution, but none exists today).
 
 ### Conformance to the reference sample and upstream schema
 
-- The emitted output, after shll.ai adds `captured_at` and with `version` normalized, SHALL validate against shll.ai's `HelpDocSchema`/`NodeSchema` and match the committed `help/wt.json` structure: same 7 subcommands, same field names/shapes, same `text`/`short`/`usage`/`path` per node.
+- The emitted output, after shll.ai adds `captured_at` and with `version` normalized, SHALL validate against shll.ai's `HelpDocSchema`/`NodeSchema` and match the committed `help/wt.json` structure: same 9 subcommands, same field names/shapes, same `text`/`short`/`usage`/`path` per node, plus the optional `aliases` on the three aliased nodes.
 
 - **GIVEN** `wt help-dump` output with `version` normalized and `captured_at` inserted
 - **WHEN** diffed against the committed reference sample
@@ -132,6 +141,16 @@ Cobra adds the `-h, --help` flag, the `-v, --version` flag, and the auto-generat
 
 `HelpNode.Commands` is initialized to `make([]HelpNode, 0, ...)` so a leaf marshals to `"commands": []`. shll.ai's `NodeSchema` is `z.array(NodeSchema)`; a `null` (which a nil slice would produce) fails validation. (Source: change qqkj, plan Design Decision 3.)
 
+### `aliases` is an optional node field (`omitempty`), populated straight from `cmd.Aliases`
+
+**Decision**: The node carries an optional `Aliases []string` tagged `json:"aliases,omitempty"`, placed immediately after `Name`; `buildNode` copies `cmd.Aliases` verbatim, so a command's registered Cobra aliases surface in the structured tree (e.g. `list` → `["ls"]`). A node with no aliases marshals with no `aliases` key.
+**Why**: The alias forms `ls`/`new`/`rm` are real, working invocations, but they lived only inside `text` (Cobra's `Aliases:` section) — invisible to any consumer that reads the structured fields. shll.ai's README-drift checker builds its known-command set from `node.commands[].name` alone, so alias-form invocations documented in the README were flagged as fabricated commands. An optional structured field makes them discoverable. `omitempty` (absence, not an always-present `[]`) minimizes capture drift — only the three aliased nodes change — and absence MUST validate, because the field is `.optional()` upstream and the other toolkit binaries won't emit it until they adopt. This is the deliberate contrast with `commands`' non-nil-`[]` rule, which exists only because that field is already required by shll's `z.array`.
+**Why an optional field, not per-alias sibling nodes**: An alias is a *property of a command*, not a sibling command. Emitting `ls`/`new`/`rm` as additional Node entries would corrupt tree semantics — phantom `helpFacts.commandPaths`, duplicated `text`, and misreported `path`/`usage` — rendering them as separate full commands in the site's command-reference tree.
+**Rejected**: additional Node entries per alias (corrupts tree/path semantics as above); an always-present `"aliases": []` (unnecessary capture drift; the non-nil-`[]` rule is `commands`-specific).
+*Introduced by*: 260718-zb77-help-dump-emit-aliases
+
+wt is the **first mover** on this field: at implementation time shll.ai's `NodeSchema`, its `docs/specs/help-dump-contract.md`, and the published `help-dump` standard were all alias-free, so wt defined the shape per the standard's schema-evolution rule rather than matching a landed upstream shape. The **consumer half is pending in shll.ai** (separate cross-repo work, not in this repo): `NodeSchema` gains `aliases: z.array(z.string()).optional()`, `helpFacts` folds child aliases into the known-command set, and the standard page documents the field. Emitting before that lands is safe — `NodeSchema` is a non-strict `z.object`, so the unknown `aliases` key passes validation today and simply rides along in the puller's captured JSON until the consumer reads it. The README-drift false positives clear only once shll.ai's consumer half ships; wt's obligation ends at emitting a conformant dump.
+
 ### No `captured_at` field on the struct at all
 
 `HelpDoc` deliberately has no `captured_at` field — not even an `omitempty` one. The contract §3 asymmetry is that the tool emits the structural tree and shll.ai stamps the timestamp post-capture; adding the field (even unset) would risk emitting it and drift from the contract. The tool's envelope is structurally incapable of carrying `captured_at`. (Source: change qqkj, intake assumption #2.)
@@ -144,7 +163,7 @@ Cobra adds the `-h, --help` flag, the `-v, --version` flag, and the auto-generat
 ## Cross-references
 
 - Source: `src/internal/worktree/helpdump.go` — `HelpDoc`, `HelpNode`, `BuildHelpDump`, `initHelpTree`, `buildNode`, `isFilteredCommand`, `renderHelpText`, the `helpDumpSchemaVersion = 1` and `toolName = "wt"` constants. `src/cmd/wt/help_dump.go` — `helpDumpCmd()` (thin Cobra wiring). `src/cmd/wt/main.go` — registers `helpDumpCmd()` on root; owns `var version = "dev"` (ldflags-injected).
-- Tests: `src/internal/worktree/helpdump_test.go` — `TestBuildHelpDump_Envelope`, `TestBuildHelpDump_OmitsCapturedAt`, `TestBuildHelpDump_FiltersCompletionHelpHidden`, `TestBuildHelpDump_RecursiveDiscovery`, `TestBuildHelpDump_NodeShape` (asserts `-h, --help` line present + leaf `commands: []`), `TestBuildHelpDump_RestoresLiveTree` (live tree unmutated). `src/cmd/wt/help_dump_test.go` — `TestHelpDump_EmitsValidEnvelope` (exit 0, empty stderr, exactly the four top-level keys, no `captured_at`, 7 subcommands, banned names absent), `TestHelpDump_HiddenFromRootHelp`, `TestHelpDump_RejectsArgs` (`cobra.NoArgs`).
+- Tests: `src/internal/worktree/helpdump_test.go` — `TestBuildHelpDump_Envelope`, `TestBuildHelpDump_OmitsCapturedAt`, `TestBuildHelpDump_FiltersCompletionHelpHidden`, `TestBuildHelpDump_RecursiveDiscovery`, `TestBuildHelpDump_NodeShape` (asserts `-h, --help` line present + leaf `commands: []`), `TestBuildHelpDump_NodeAliases` (aliased node carries its exact alias list; non-aliased node + root emit no `aliases` key, asserted on marshaled JSON to pin `omitempty`), `TestBuildHelpDump_RestoresLiveTree` (live tree unmutated). `src/cmd/wt/help_dump_test.go` — `TestHelpDump_EmitsValidEnvelope` (exit 0, empty stderr, exactly the four top-level keys, no `captured_at`, 9 subcommands, banned names absent), `TestHelpDump_EmitsAliases` (emitted `list`/`create`/`delete` carry `["ls"]`/`["new"]`/`["rm"]`; non-aliased nodes + root carry no `aliases` key), `TestHelpDump_HiddenFromRootHelp`, `TestHelpDump_RejectsArgs` (`cobra.NoArgs`).
 - Constitution: Principle II (Cobra command surface — `RunE`, `SilenceUsage`/`SilenceErrors` inherited from root), III (Typed exit codes — builder/marshal errors map to `ExitGeneralError`), IV (test what the user sees — builder unit test + command-level test), V (internal package boundary — tree-walk/envelope logic in `internal/worktree`, `cmd/` thin).
 - Sibling memory: `wt-cli/init-failure-contract.md`, `wt-cli/list-status-contract.md`, `wt-cli/update-command-contract.md` — same pattern of post-change invariant capture for other `wt` subcommands. `update-command-contract.md` documents another **cross-toolkit** contract (`--skip-brew-update`) whose semantics are likewise fixed externally and not open to local reinterpretation.
 - Backlog: `[pc47]` is marked **superseded by qqkj** in `fab/backlog.md` — its producer half is realized here; its push half (build-time CI step, PR-opening into sahil87/shll.ai, auto-merge, `SHLLAI_TOKEN`) was intentionally dropped per the pull-model inversion.

@@ -1,0 +1,12 @@
+{"action":"enter","driver":"fab-new","event":"stage-transition","stage":"intake","ts":"2026-07-18T11:44:47Z"}
+{"args":"wt's help-dump command only emits each cobra command's canonical Name(), never its Aliases() -- so alias subcommands like 'ls' (alias for list), 'new' (alias for create), and 'rm' (alias for delete) don't appear in the generated help/wt.json, causing shll.ai's README-drift checker to flag 'wt ls', 'wt new', 'wt rm' from the README as unknown/nonexistent commands. Fix: extend help-dump's tree-walk to also emit registered aliases for each command node so alias-form invocations are discoverable in the dump.","cmd":"fab-new","event":"command","ts":"2026-07-18T11:44:47Z"}
+{"delta":"+4.7","event":"confidence","score":4.7,"trigger":"calc-score","ts":"2026-07-18T11:46:46Z"}
+{"cmd":"fab-fff","event":"command","ts":"2026-07-18T11:51:32Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"apply","ts":"2026-07-18T11:51:44Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"review","ts":"2026-07-18T11:56:23Z"}
+{"cmd":"fab-continue","event":"command","ts":"2026-07-18T11:57:30Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"hydrate","ts":"2026-07-18T12:02:47Z"}
+{"event":"review","result":"passed","ts":"2026-07-18T12:02:47Z"}
+{"action":"enter","driver":"fab-fff","event":"stage-transition","stage":"ship","ts":"2026-07-18T12:06:22Z"}
+{"action":"enter","driver":"git-pr","event":"stage-transition","stage":"review-pr","ts":"2026-07-18T12:09:18Z"}
+{"event":"review","result":"passed","ts":"2026-07-18T12:16:03Z"}
