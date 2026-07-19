@@ -15,22 +15,20 @@ existence business-rule out of `cmd/`. Future changes touching `src/cmd/wt/creat
 create/checkout functions in `src/internal/worktree/crud.go` should preserve these invariants
 unless an explicit spec amendment supersedes them.
 
-**Why this contract exists.** Before this change, `wt create [branch]` silently dispatched on
-branch existence: an unused name created a new branch, an *existing* local/remote name checked
-that branch out directly into the new worktree — with no warning. The two outcomes differ
-wildly in consequence: a user typing `wt create --name foo sockets-v2` intending a
-scratch worktree landed *on* `sockets-v2` itself, one `git commit` away from polluting a shared
-/ collector branch. The overload is now split into explicit modes so the dangerous direction
-(check out an existing branch) is an opt-in (`--checkout`) and the safe common path
-(`wt create <new-branch>`) stays short and fails closed on an existing name.
+**Why this contract exists.** Create-new and checkout-existing differ wildly in consequence: a
+user typing `wt create --name foo sockets-v2` intending a scratch worktree would otherwise land
+*on* `sockets-v2` itself, one `git commit` away from polluting a shared / collector branch. The
+two operations are therefore explicit modes: the dangerous direction (check out an existing
+branch) is an opt-in (`--checkout`) and the safe common path (`wt create <new-branch>`) stays
+short and fails closed on an existing name (260717-2af2).
 
 ## Requirements
 
 ### The positional `[branch]` names a NEW branch only
 
 - `wt create <branch>` treats the positional as the name of a **new** branch to create (off
-  `--base`, else HEAD). Its signature is unchanged (`Use: "create [branch]"`,
-  `Args: cobra.MaximumNArgs(1)`); only its *meaning* narrowed to a single mode.
+  `--base`, else HEAD). Its signature is `Use: "create [branch]"`,
+  `Args: cobra.MaximumNArgs(1)`; the positional has exactly this one meaning.
 - If `<branch>` already exists **locally OR remotely**, the command exits `ExitInvalidArgs` (2)
   **before any worktree mutation**, pointing at `--checkout`. Copy (via
   `ExitWithError(what, why, fix)`):
@@ -55,8 +53,7 @@ scratch worktree landed *on* `sockets-v2` itself, one `git commit` away from pol
 
 - `wt create --checkout <branch>` places the new worktree on an **existing** branch: a local
   branch checked out as-is (`git worktree add <path> <branch>`, no `-b`); a remote-only branch
-  fetched via `FetchRemoteBranch` (`git fetch origin <branch>:<branch>`) then checked out. This
-  is the same existing-branch code path the old positional had — relocated, not reworked.
+  fetched via `FetchRemoteBranch` (`git fetch origin <branch>:<branch>`) then checked out.
 - If the branch exists neither locally nor remotely, the command exits `ExitInvalidArgs` (2),
   pointing at the create-new form:
   - what: `Branch '<branch>' not found`
@@ -85,14 +82,11 @@ scratch worktree landed *on* `sockets-v2` itself, one `git commit` away from pol
 ### `--base <ref>` is the NEW-branch start-point; it always applies to the positional
 
 - `--base` is the git start-point (branch / tag / SHA) for the **new** branch, validated via
-  `git rev-parse --verify` whenever it is set and `--reuse` is not. Because the positional is now
-  *always* a new branch, `--base` always applies to it — the former warn-and-ignore behavior
-  (`--base` silently dropped when the positional named an existing branch) is **gone**.
-- The old `baseWarnings` / `effectiveBase` machinery and the `existingBranch`-probe carve-out in
-  the `--base` validation are removed. Validation simplified to a single guard: `if base != ""
-  && !reuse { git rev-parse --verify <base> }`. `--reuse` still short-circuits before `--base` is
-  validated, so `wt create --reuse --name X --base <bad-ref>` on an existing worktree
-  reuses without failing on the ref.
+  `git rev-parse --verify` whenever it is set and `--reuse` is not. Because the positional is
+  *always* a new branch, `--base` always applies to it — there is no warn-and-ignore path.
+- Validation is a single guard: `if base != "" && !reuse { git rev-parse --verify <base> }`.
+  `--reuse` short-circuits before `--base` is validated, so `wt create --reuse --name X --base
+  <bad-ref>` on an existing worktree reuses without failing on the ref.
 
 - **GIVEN** `--base <bad-ref>` with a new positional branch and no `--reuse`
 - **WHEN** the user runs `wt create newbranch --base bad-ref`
@@ -110,7 +104,7 @@ the documented exit-2 class "mutually exclusive flags". Both are pure argument-p
   - what: `--checkout cannot be combined with a positional branch argument`
   - why: `The positional creates a new branch; --checkout checks out an existing one`
   - fix: `Use one of: wt create <new-branch> | wt create --checkout <existing-branch>`
-- `--checkout` + `--base` (replaces the former warn-and-ignore of `--base` on an existing branch):
+- `--checkout` + `--base`:
   - what: `--base cannot be combined with --checkout`
   - why: `--base is the start-point for a NEW branch; --checkout targets an existing branch`
   - fix: `Drop --base, or create a new branch: wt create <name> --base <ref>`
@@ -140,14 +134,14 @@ the documented exit-2 class "mutually exclusive flags". Both are pure argument-p
 `ExitInvalidArgs` = 2, `ExitGitError` = 3 (`git worktree add` failure), both from
 `src/internal/worktree/errors.go`.
 
-### The creation mode is visible at creation time in the summary output (`260717-aeka`)
+### The creation mode is visible at creation time in the summary output
 
-As of `260717-aeka-create-summary-base-ref`, the three creation modes are **visually distinguished
-in the Git-phase summary output** by a fourth `From:` line — so a user can tell from the output
-which of this file's modes ran and what ref the branch was based on (the exact create-vs-checkout
-confusion this contract's flag split targets, now surfaced at the output layer too). This is a
-*display* addition only — **no branch-selection semantics change**; the `From:` value is derived
-from the same `checkout` / `base` inputs and the mode dispatch stays exactly as defined above:
+The three creation modes are **visually distinguished in the Git-phase summary output** by a
+fourth `From:` line — so a user can tell from the output which of this file's modes ran and what
+ref the branch was based on (the exact create-vs-checkout confusion this contract's flag split
+targets, surfaced at the output layer too) (260717-aeka-create-summary-base-ref). This is
+*display* only — the `From:` value is derived from the same `checkout` / `base` inputs and the
+mode dispatch is exactly as defined above:
 
 | This file's mode | `From:` summary value |
 |------------------|-----------------------|
@@ -162,8 +156,9 @@ best-effort `DescribeHead()` helper) lives in [`create-output-phases`](/wt-cli/c
 
 ### `--reuse` is unchanged
 
-`--reuse` still requires `--name` (the worktree-name flag, renamed from `--worktree-name` by
-`260717-59u8` — the deprecated `--worktree-name` alias also satisfies the requirement), and on
+`--reuse` requires `--name` (the worktree-name flag; its deprecated alias `--worktree-name`
+also satisfies the requirement — see
+[flag-naming-conventions](/wt-cli/flag-naming-conventions.md)), and on
 name collision it reuses the existing worktree **without consulting any branch selector**
 (positional / `--checkout` / `--base`). The reuse short-circuit sits *before* the branch-dispatch
 switch, so a reused worktree's branch is never re-derived. (Init-on-reuse remains
@@ -181,9 +176,7 @@ warn-but-continue — see `/wt-cli/init-failure-contract.md`.)
 
 The interactive "Initialize worktree?" confirm fires when a branch was explicitly named —
 positional (new branch) **or** `--checkout` (existing branch) — and is skipped for the bare
-exploratory create, preserving the pre-change user-visible behavior. The gate generalized from
-`!(nonInteractive || branchArg == "")` to `!(nonInteractive || (branchArg == "" && checkout ==
-""))`.
+exploratory create. The gate is `!(nonInteractive || (branchArg == "" && checkout == ""))`.
 
 - **GIVEN** an interactive `wt create --checkout foo` (foo exists)
 - **WHEN** init would run
@@ -195,10 +188,9 @@ exploratory create, preserving the pre-change user-visible behavior. The gate ge
 
 ### The `internal/worktree` seam: two mode-explicit functions + sentinel errors
 
-The existence-dispatch formerly hidden inside `CreateBranchWorktree` is now split into two
-mode-explicit functions in `src/internal/worktree/crud.go`, so the branch-existence business
-rule lives in `internal/` and `cmd/` only routes flags (Constitution V). `CreateBranchWorktree`
-is removed.
+Two mode-explicit functions in `src/internal/worktree/crud.go` own the existence dispatch, so
+the branch-existence business rule lives in `internal/` and `cmd/` only routes flags
+(Constitution V). There is deliberately no combined create-or-checkout entry point.
 
 - `CreateNewBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback, startPoint string) (string, error)`
   — returns the sentinel `ErrBranchExists` and creates nothing when `BranchExistsLocally(branch)
@@ -232,14 +224,14 @@ duplicate pre-check in `cmd/` — a single source of truth, no double git query.
 ### fab-kit `batch switch` migration note (hard break — no deprecation window)
 
 fab-kit's `fab batch switch` (`src/go/fab/cmd/fab/batch_switch.go:98`) invokes
-`wt create --non-interactive --reuse --worktree-name <name> <branch>`, relying on the old
-create-or-checkout dual semantics. (As of `260717-59u8` `--worktree-name` is the deprecated
-alias of `--name`; the call still parses and behaves identically — the alias is permanent — but
-now also prints a one-line deprecation warning to stderr, harmless to the machine-parsed stdout.)
-After the `2af2` change that call exits `ExitInvalidArgs` (2)
+`wt create --non-interactive --reuse --worktree-name <name> <branch>`, written against the
+pre-split create-or-checkout dual semantics. (`--worktree-name` is the permanent deprecated
+alias of `--name`; the call parses and behaves identically but prints a one-line deprecation
+warning to stderr, harmless to the machine-parsed stdout.)
+That call exits `ExitInvalidArgs` (2)
 whenever the branch already exists and the worktree does not (e.g. worktree deleted, branch
-kept) — because the positional now rejects an existing branch. This is a **deliberate hard
-break**, no deprecation window: the fab-kit migration (an existence probe + routing to
+kept) — the positional rejects an existing branch. This is a **deliberate hard
+break** (260717-2af2), no deprecation window: the fab-kit migration (an existence probe + routing to
 `--checkout` vs. the positional) is a coordinated follow-up **in the fab-kit repo**, out of
 scope for this change. The typed error + fix hint is the migration signal. `fab batch new`
 (no positional) is unaffected. This was accepted at intake because the single known external
@@ -311,12 +303,13 @@ author — hence the hard break above).
   `Long` help text with no schema change (see `/wt-cli/help-dump-contract.md`).
 - Sibling memory: [`create-output-phases`](/wt-cli/create-output-phases.md) — the Git / Init /
   Open phase-separator + stdout-path-line contract shared by every create mode (new-branch,
-  `--checkout`, and bare); as of `260717-aeka` it also owns the fourth `From:` summary line that
-  *names* which of this file's modes ran (base ref verbatim / resolved HEAD / existing-branch copy). [`init-failure-contract`](/wt-cli/init-failure-contract.md) — the
+  `--checkout`, and bare); it also owns the fourth `From:` summary line that
+  *names* which of this file's modes ran (base ref verbatim / resolved HEAD / existing-branch copy) (260717-aeka). [`init-failure-contract`](/wt-cli/init-failure-contract.md) — the
   kept-worktree / `ExitInitFailed` / open-anyway / SIGINT-Option-B / foreground-reclaim behavior
   that runs identically on the `--checkout` path and the positional-new path; also the source of
   the `--reuse` init warn-but-continue exemption. [`help-dump-contract`](/wt-cli/help-dump-contract.md)
-  — the JSON envelope that carries the rewritten `create` help text to shll.ai.
-  [`flag-naming-conventions`](/wt-cli/flag-naming-conventions.md) — the `260717-59u8` flag-surface
-  convention behind the `--worktree-name` → `--name`/`-n` (and `--worktree-open` → `--open`/`-o`,
-  `--worktree-init` → `--no-init`) renames and the `wt new` command alias on this command.
+  — the JSON envelope that carries the `create` help text to shll.ai.
+  [`flag-naming-conventions`](/wt-cli/flag-naming-conventions.md) — the flag-surface
+  conventions behind the `--name`/`-n` (deprecated `--worktree-name`), `--open`/`-o` (deprecated
+  `--worktree-open`), and `--no-init` (deprecated `--worktree-init`) surface and the `wt new`
+  command alias on this command (260717-59u8).

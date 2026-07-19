@@ -19,9 +19,7 @@ This file documents the contract that `wt list` honors after the status-opt-in c
 
 ### Human output layout is keyed on the resolved sort mode
 
-> **Amended by `260601-73cv-list-recency-column`** — the prior invariant "default human output is always Name / Branch / Path" is superseded for the recency-ordered view. The default human view (and explicit `--sort=recent`) now renders a 4th `Last Active` column. `name`/`branch` human modes stay 3-column; `--status` stays 5-column.
-
-- `handleFormattedOutput(entries, ctx, showStatus, mode sortMode)` keys its layout on the resolved sort `mode`, **not on `showStatus` alone**. It derives `recentLayout := mode == sortRecent && !showStatus` and selects:
+- `handleFormattedOutput(entries, ctx, showStatus, mode sortMode)` keys its layout on the resolved sort `mode`, **not on `showStatus` alone** (260601-73cv). It derives `recentLayout := mode == sortRecent && !showStatus` and selects:
   - `--status` (`showStatus == true`, any mode) → **5-column** `Name / Branch / Status / Last Active / Path` (unchanged).
   - else recent human mode (`recentLayout == true`) → **4-column** `Name / Branch / Last Active / Path`. Because `recent` is the human default (per "Audience-split default ordering" below), bare `wt list` and `wt list --sort=recent` both land here.
   - else (`name`/`branch` human modes) → **3-column** `Name / Branch / Path` (unchanged). The `Status` and `Last Active` headers are NOT emitted.
@@ -97,8 +95,8 @@ This file documents the contract that `wt list` honors after the status-opt-in c
 - This preserves deterministic machine-readable output (Constitution VI) — fab-kit
   operators parsing `wt list`/`--json` get stable name order — while giving humans
   recency by default. It mirrors the opt-in, JSON-aware design of `--status`.
-- `wt list` gained a `--non-interactive` `BoolVar` (previously absent on `list`;
-  added following the `create.go`/`delete.go` flag pattern) whose *only* effect is
+- `wt list` has a `--non-interactive` `BoolVar` (following the
+  `create.go`/`delete.go` flag pattern) whose *only* effect on `list` is
   selecting the stable default order. A piped `wt list | cat` without
   `--non-interactive` still gets recency — the accepted tradeoff of the
   no-new-dependency constraint.
@@ -110,8 +108,8 @@ This file documents the contract that `wt list` honors after the status-opt-in c
   matches the `git worktree list --porcelain` convention.
 - `sortEntries(entries, mode, persistKey)` partitions the porcelain-first entry out
   when `entries[0].IsMain`, then reorders only `entries[1:]`. (The `persistKey` param
-  was added by `260601-73cv`; it gates the recent-mode `LastActive` write-back and
-  does not affect ordering or main pinning.)
+  gates the recent-mode `LastActive` write-back and does not affect ordering or
+  main pinning — 260601-73cv.)
 
 ### Sorting is a deterministic post-enrichment step
 
@@ -130,15 +128,14 @@ This file documents the contract that `wt list` honors after the status-opt-in c
   the same `wt.RecencyLess` comparator. See `wt-cli/recency-ordering-contract.md`
   for the shared comparator definition.
 
-### Recent mode persists the sort key into `LastActive` on the human path (`260601-73cv`)
+### Recent mode persists the sort key into `LastActive` on the human path
 
 - `sortEntries(entries, mode, persistKey bool)` takes a third `persistKey bool`
-  parameter. The `listCmd` caller passes `!jsonOut` — `persistKey` is true on the
+  parameter (260601-73cv). The `listCmd` caller passes `!jsonOut` — `persistKey` is true on the
   human-output path and false on the `--json` path. The resolved sort mode is
   captured once into a local (`mode := resolveSort(...)`) and reused for both
   `sortEntries(entries, mode, !jsonOut)` and `handleFormattedOutput(..., mode)`.
-- Previously the `keys[]` recency slice was computed and **discarded** after
-  ordering. Now, in `recent` mode when `persistKey` is true, `sortEntries` writes
+- In `recent` mode when `persistKey` is true, `sortEntries` writes
   each non-main entry's key back into `entries[i].LastActive` — but **only when the
   pointer is nil**. A non-nil `LastActive` (the `--status` enrichment value set by
   `listEntriesEnriched`) is the source of truth and is NEVER clobbered. The write
@@ -170,9 +167,8 @@ This file documents the contract that `wt list` honors after the status-opt-in c
   with `persistKey == false` (caller passes `!jsonOut`), so even `--json
   --sort=recent` leaves the pointer nil and `omitempty` omits the key. Consumers
   MUST treat an absent `last_active` as "recency was not computed", not as a real
-  timestamp. JSON output is **unchanged** by `260601-73cv` (see the dedicated
-  amendment note below).
-- **Human output**: the pointer is now ALSO populated transiently on the recent-mode
+  timestamp.
+- **Human output**: the pointer is ALSO populated transiently on the recent-mode
   human path (no `--status`) by `sortEntries` when `persistKey == true` — see "Recent
   mode persists the sort key into `LastActive`" above. This is the value the
   4-column `Last Active` cell displays. It never reaches JSON because the JSON path
@@ -193,16 +189,16 @@ This file documents the contract that `wt list` honors after the status-opt-in c
   `name`/`branch` human modes still perform zero per-worktree `os.Stat`.
 - Human output renders a relative value via `relativeTime(t time.Time)` with coarse
   buckets (`just now`, `Nm ago`, `Nh ago`, `Nd ago`); a zero time renders as `-`.
-  This rendering is **no longer exclusive to `--status`** (amended by `260601-73cv`):
+  The rendering is not exclusive to `--status`:
   the per-entry `displayRow` loop populates `lastActive` whenever `showStatus ||
-  recentLayout`. JSON emits the raw RFC3339 timestamp via the `*time.Time` field,
+  recentLayout` (260601-73cv). JSON emits the raw RFC3339 timestamp via the `*time.Time` field,
   never the relative string. The `--status` table renders 5 columns (Name / Branch /
   Status / Last Active / Path); the recent-mode human table renders 4 columns (Name /
   Branch / Last Active / Path).
 
-### `idle` opt-in pointer field (`260530-5fyu`)
+### `idle` opt-in pointer field
 
-- `listEntry` has `Idle *bool` with the `json:"idle,omitempty"` tag — the **same
+- `listEntry` has `Idle *bool` with the `json:"idle,omitempty"` tag (260530-5fyu) — the **same
   opt-in pointer shape** as `Dirty *bool` / `Unpushed *int` / `LastActive
   *time.Time`. This extends the existing pointer-field/omitempty contract; it does
   not contradict it.
@@ -227,7 +223,7 @@ This file documents the contract that `wt list` honors after the status-opt-in c
   `--status`), NOT as "not idle" — the same present-vs-uncomputed discipline as
   `dirty`/`unpushed`/`last_active`.
 
-### `⚠ idle` marker on the `Last Active` cell (`260530-5fyu`)
+### `⚠ idle` marker on the `Last Active` cell
 
 - In the human layouts that display `Last Active`, an idle non-main worktree gets a
   trailing ` ⚠ idle` marker appended to its `Last Active` cell: `relativeTime(t) + "
@@ -275,7 +271,7 @@ CLI is pre-1.0 (per `build-and-release.md`). The constitution does not require o
 
 Default output has NO footer like "Run `wt list --status` for dirty/unpushed". Discoverability is via `--help` and the cobra `Long:` description. Matches the `ls` convention (no hint about `-l`).
 
-### Audience-split default ordering, flag-based not isatty (`260530-rtmf`)
+### Audience-split default ordering, flag-based not isatty
 
 Human output (neither `--json` nor `--non-interactive`) defaults to `recent`;
 `--json`/`--non-interactive` default to stable `name`. The human-vs-machine
@@ -285,10 +281,10 @@ the change forbade adding one. A recency-shuffling default in machine modes woul
 make fab-kit operators' parsed output non-deterministic, so JSON/non-interactive
 stay stable (Constitution VI). A recency default in *all* modes (breaks machine
 parsers) and an opt-in-only default with no human recency (loses the ergonomic
-win) were both rejected. `wt list` gained a `--non-interactive` BoolVar solely to
-drive this — it has no other effect on `list`.
+win) were both rejected. `wt list`'s `--non-interactive` BoolVar exists solely to
+drive this — it has no other effect on `list`. (260530-rtmf)
 
-### `LastActive *time.Time` opt-in pointer (`260530-rtmf`)
+### `LastActive *time.Time` opt-in pointer
 
 Same opt-in pointer shape as `Dirty *bool` / `Unpushed *int`: nil → key omitted
 ("not computed"); non-nil → key present ("computed", including the zero time for a
@@ -296,9 +292,9 @@ vanished worktree). A plain `time.Time` with `omitempty` was rejected — the ze
 time would be indistinguishable from uncomputed, the exact ambiguity the pointer
 pattern exists to avoid. The field is computed inside the existing
 `listEntriesEnriched` pass by reusing the stat-gate's `os.Stat` result, so it adds
-no new `os.Stat` and no new `git` subprocess.
+no new `os.Stat` and no new `git` subprocess. (260530-rtmf)
 
-### `Idle *bool` opt-in pointer, tied to `LastActive` presence (`260530-5fyu`)
+### `Idle *bool` opt-in pointer, tied to `LastActive` presence
 
 Same opt-in pointer shape as `Dirty`/`Unpushed`/`LastActive`: nil → key omitted
 ("idleness not computed"); non-nil → key present (including `false`). `Idle` is set
@@ -311,13 +307,13 @@ rejected for the same present-vs-uncomputed reason as the sibling fields; a glyp
 JSON was rejected because machine consumers want a boolean, not display text. The
 idle predicate itself (`wt.IsIdle`, `wt.DefaultIdleThreshold`) lives in
 `internal/worktree` and is shared with `wt delete` — see
-`wt-cli/idle-staleness-contract.md`.
+`wt-cli/idle-staleness-contract.md`. (260530-5fyu)
 
-### Persist the discarded recency key vs. re-stat in the render path (`260601-73cv`)
+### Persist the recency key vs. re-stat in the render path
 
 The recent-mode `Last Active` column displays the recency key `sortEntries` already
 computes, persisted into `entries[i].LastActive` rather than re-stat'd in the render
-path. Writing it back shows the value at zero additional cost and guarantees the
+path (260601-73cv). Writing it back shows the value at zero additional cost and guarantees the
 displayed value equals the sort key (no TOCTOU drift window). Gated on a `persistKey
 bool` (caller passes `!jsonOut`): the human path persists and renders; the JSON path
 passes `false`, leaving the pointer nil so `omitempty` keeps `last_active` out of
@@ -327,24 +323,22 @@ render layer should not own); an unconditional write-back in `sortEntries` (woul
 serialize the transiently-set `LastActive` into `--json --sort=recent`, breaking the
 present-vs-uncomputed JSON contract).
 
-### Thread the resolved sort mode into `handleFormattedOutput` (`260601-73cv`)
+### Thread the resolved sort mode into `handleFormattedOutput`
 
-`handleFormattedOutput` previously keyed layout only on `showStatus`. To select the
-4-column recent layout it now receives the resolved `sortMode` and derives
-`recentLayout := mode == sortRecent && !showStatus`. The already-resolved mode (from
+`handleFormattedOutput` receives the resolved `sortMode` and derives
+`recentLayout := mode == sortRecent && !showStatus` to select the 4-column recent
+layout (260601-73cv). The already-resolved mode (from
 `resolveSort`, captured once in `listCmd`) is the minimal seam — no new state, no
 recomputation. Rejected: recomputing `resolveSort` inside `handleFormattedOutput`
 (duplicates resolution logic and its flag inputs); inferring recency from a non-nil
 `LastActive` (ambiguous — `--status` also sets it, and that path must stay 5-column).
 
-### Scope the `Last Active` column to recent mode only (`260601-73cv`)
+### Scope the `Last Active` column to recent mode only
 
-`name`/`branch` human modes do zero per-worktree work today; adding a `Last Active`
+`name`/`branch` human modes do zero per-worktree work; adding a `Last Active`
 column there would force a per-worktree `os.Stat` purely for display, violating the
-cheap-default-path spirit of this contract. The user explicitly chose to treat the
-default-layout change (Name/Branch/Path → Name/Branch/Last Active/Path under recent)
-as a deliberate amendment to this contract, documented at hydrate, rather than
-arguing it is not a violation. Rejected: showing the column in all human modes (adds
+cheap-default-path spirit of this contract. The 4-column recent-mode layout is a
+deliberate, user-confirmed amendment to this contract (260601-73cv). Rejected: showing the column in all human modes (adds
 stats to cheap modes); an absolute timestamp column (wider, less scannable than the
 relative buckets).
 
@@ -358,9 +352,5 @@ relative buckets).
 - Sibling memory: `wt-cli/init-failure-contract.md` — same pattern of post-change invariant capture for a different `wt` subcommand.
 - Sibling memory: `wt-cli/recency-ordering-contract.md` — the shared `RecencyOf`/`RecencyLess`/`SortByRecency` definition that this file's `--sort`/`recent` ordering and `last_active` field consume; also covers the `wt open`/`wt delete` menu ordering.
 - Sibling memory: `wt-cli/idle-staleness-contract.md` — the `wt.IsIdle` predicate, `DefaultIdleThreshold`, and `wt delete --stale` selector that the `Idle *bool` field and `⚠ idle` marker documented here consume. That file is the authoritative cross-command (list + delete) idle contract; this file documents only the `wt list` display/JSON surface of it.
-- Sibling memory: `/wt-cli/go-command-contract.md` — the `wt go`/`wt open` `Worktree '<name>' not found` structured-error format that `--path` not-found now matches byte-for-byte (`260622-log5`).
-
-## Open follow-ups (not in scope for this change)
-
-- `src/internal/worktree/git.go` still hosts the OLD slow patterns (`HasUncommittedChanges` + `HasUntrackedFiles`, and `HasUnpushedCommits` + `GetUnpushedCount` with a separate upstream lookup). These are consumed by `wt create` / `wt delete`, not `wt list`, so they were intentionally left untouched. A future change SHOULD unify them with the faster patterns from this change. (Note: `260530-rtmf` consolidated only the *inline mtime/recency loops* in `open.go`/`delete.go` into `wt.SortByRecency` — these slow dirty/unpushed `git.go` patterns are a separate concern and remain unchanged.)
-- ~~The worktree-directory `mtime` recency signal is noisy (moves on any file write). The follow-up `260530-5fyu-stale-worktree-hints` will revisit signal quality for staleness detection.~~ **Resolved by `260530-5fyu`**: the signal-quality question was settled as **keep dir-mtime + honest "idle / untouched on disk" framing** (option b — no second/cleaner staleness signal). The idle predicate built on `RecencyOf` now powers the `idle` field / `⚠ idle` marker here and the `wt delete --stale` selector. See `wt-cli/idle-staleness-contract.md`.
+- Sibling memory: `/wt-cli/go-command-contract.md` — the `wt go`/`wt open` `Worktree '<name>' not found` structured-error format that `--path` not-found matches byte-for-byte (`260622-log5`).
+- Backlog: unifying `src/internal/worktree/git.go`'s slower dirty/unpushed patterns (consumed by `wt create` / `wt delete`, not `wt list`) with this file's faster collapsed patterns is tracked in `fab/backlog.md`.

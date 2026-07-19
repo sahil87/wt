@@ -13,8 +13,7 @@ description: "The `wt` CLI flag-surface conventions — no command-noun prefixes
 ## Overview
 
 This file records the flag-naming and back-compat conventions that govern every
-`wt` subcommand's flag surface. They were established (and the whole surface was
-swept to conform) by `260717-59u8-intuitive-flag-names`. These are
+`wt` subcommand's flag surface (`260717-59u8-intuitive-flag-names`). These are
 **cross-command** rules — they sit above any single command contract. The
 per-command flag *behavior* still lives in its own contract file
 ([`create-branch-semantics`](/wt-cli/create-branch-semantics.md),
@@ -37,10 +36,11 @@ its command's context, so `wt create --worktree-name` said "worktree" twice and
 `wt delete --delete-branch` said "delete" twice. The prefix carries no
 information the command name has not already established.
 
-- The `260717-59u8` sweep dropped these prefixes: `--worktree-name` → `--name`,
-  `--worktree-open` → `--open`, `--worktree-init` → (see negation below),
-  `--delete-all` → `--all`, `--delete-branch` → `--branch`,
-  `--delete-remote` → (see negation below).
+- Primary names and their permanent deprecated aliases: `--name`
+  (`--worktree-name`), `--open` (`--worktree-open`), `--no-init`
+  (`--worktree-init` — see negation below), `--all` (`--delete-all`),
+  `--branch` (`--delete-branch`), `--no-remote` (`--delete-remote` — see
+  negation below) (260717-59u8).
 
 #### Scenario: a renamed flag drops its redundant prefix
 - **GIVEN** the `wt create` command
@@ -54,11 +54,12 @@ A flag that turns OFF a default-ON behavior SHALL be a **real boolean** named
 inconsistent verb (`--skip-*`). The default (behavior ON) is preserved; passing
 `--no-<thing>` disables it.
 
-- Applied renames: `--worktree-init true|false` (string) → `--no-init` (bool);
-  `--delete-remote true|false` (string) → `--no-remote` (bool);
-  `--skip-brew-update` → `--no-brew-update`.
-- **Genuine tri-states stay strings.** `--delete-branch true|false|auto` →
-  `--branch` KEEPS its string type because `auto` is a real third state, not a
+- Current `--no-*` booleans and their string-typed deprecated aliases:
+  `--no-init` (alias `--worktree-init true|false`, string); `--no-remote`
+  (alias `--delete-remote true|false`, string); `--no-brew-update` (alias
+  `--skip-brew-update`).
+- **Genuine tri-states stay strings.** `--branch` (`true|false|auto`) KEEPS its
+  string type because `auto` is a real third state, not a
   boolean — see [`create-branch-semantics`](/wt-cli/create-branch-semantics.md)
   and the `wt delete` flag table in `docs/specs/cli-surface.md`.
 
@@ -73,9 +74,9 @@ A single-letter short SHALL be added only for a flag reached often at an
 interactive terminal, and only where it does not collide or mislead. Script-facing
 or rare flags stay long-form-only (Principle II).
 
-- Added shorts: `-n` (`--name`), `-o` (`--open`) on `wt create`; `-a` (`--all`)
-  on `wt delete`; `-a` (`--app`) on `wt open`. `-s` was already `--stash` on
-  `wt delete`, so `--all` took the free `-a`.
+- Shorts: `-n` (`--name`), `-o` (`--open`) on `wt create`; `-a` (`--all`)
+  on `wt delete`; `-a` (`--app`) on `wt open`. `-s` is `--stash` on
+  `wt delete`, so `--all` takes `-a`.
 - **`-a` reused across commands is fine** — `wt delete --all` and `wt open --app`
   are different commands, no collision.
 - **Deliberately NO short** for: `--select` on `wt open` (not frequent enough);

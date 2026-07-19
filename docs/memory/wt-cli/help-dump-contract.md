@@ -9,7 +9,7 @@ description: "Contract for the hidden `wt help-dump` command — the JSON envelo
 
 This file documents the contract that `wt help-dump` honors. Future changes touching `src/internal/worktree/helpdump.go` or `src/cmd/wt/help_dump.go` should preserve these invariants unless an explicit spec amendment supersedes them.
 
-`help-dump` is one half of a **cross-repo contract** with shll.ai: shll.ai's command-reference page for `wt` is refreshed by a scheduled puller that runs `wt help-dump`, `brew install`s the tool, and commits the captured JSON. The output shape, field semantics, and `schema_version` are fixed by that contract and are NOT open to local reinterpretation — see "Upstream forward contract" below. `wt`'s sole obligation is to emit valid help-dump output to stdout; everything downstream (capture, `captured_at` stamping, schema validation, commit) is shll.ai's job. The prior **push** model (where `wt` would PR `help/wt.json` into shll.ai — backlog `[pc47]`) is **retired**; this command is the producer half of the inverted pull model and the push wiring was deliberately never built.
+`help-dump` is one half of a **cross-repo contract** with shll.ai: shll.ai's command-reference page for `wt` is refreshed by a scheduled puller that runs `wt help-dump`, `brew install`s the tool, and commits the captured JSON. The output shape, field semantics, and `schema_version` are fixed by that contract and are NOT open to local reinterpretation — see "Upstream forward contract" below. `wt`'s sole obligation is to emit valid help-dump output to stdout; everything downstream (capture, `captured_at` stamping, schema validation, commit) is shll.ai's job. This command is the producer half of the pull model — see § Design Decisions (Pull model over push).
 
 ## Requirements
 
@@ -149,11 +149,18 @@ Cobra adds the `-h, --help` flag, the `-v, --version` flag, and the auto-generat
 **Rejected**: additional Node entries per alias (corrupts tree/path semantics as above); an always-present `"aliases": []` (unnecessary capture drift; the non-nil-`[]` rule is `commands`-specific).
 *Introduced by*: 260718-zb77-help-dump-emit-aliases
 
-wt is the **first mover** on this field: at implementation time shll.ai's `NodeSchema`, its `docs/specs/help-dump-contract.md`, and the published `help-dump` standard were all alias-free, so wt defined the shape per the standard's schema-evolution rule rather than matching a landed upstream shape. The **consumer half is pending in shll.ai** (separate cross-repo work, not in this repo): `NodeSchema` gains `aliases: z.array(z.string()).optional()`, `helpFacts` folds child aliases into the known-command set, and the standard page documents the field. Emitting before that lands is safe — `NodeSchema` is a non-strict `z.object`, so the unknown `aliases` key passes validation today and simply rides along in the puller's captured JSON until the consumer reads it. The README-drift false positives clear only once shll.ai's consumer half ships; wt's obligation ends at emitting a conformant dump.
+wt is the **first mover** on this field — it defined the shape per the standard's schema-evolution rule (260718-zb77). The **consumer half is pending in shll.ai** (separate cross-repo work, not in this repo): `NodeSchema` gains `aliases: z.array(z.string()).optional()`, `helpFacts` folds child aliases into the known-command set, and the standard page documents the field. Emitting ahead of the consumer is safe — `NodeSchema` is a non-strict `z.object`, so the unknown `aliases` key passes validation and rides along in the puller's captured JSON until the consumer reads it. The README-drift false positives clear only once shll.ai's consumer half ships; wt's obligation ends at emitting a conformant dump.
 
 ### No `captured_at` field on the struct at all
 
 `HelpDoc` deliberately has no `captured_at` field — not even an `omitempty` one. The contract §3 asymmetry is that the tool emits the structural tree and shll.ai stamps the timestamp post-capture; adding the field (even unset) would risk emitting it and drift from the contract. The tool's envelope is structurally incapable of carrying `captured_at`. (Source: change qqkj, intake assumption #2.)
+
+### Pull model over push
+
+**Decision**: shll.ai *pulls* — its scheduled puller runs `wt help-dump`, `brew install`s the tool, stamps `captured_at`, and commits the captured JSON. `wt` ships no push wiring: no build-time CI step, no PR-opening into sahil87/shll.ai, no `SHLLAI_TOKEN` use.
+**Why**: the pull model keeps `wt`'s obligation to a single deterministic stdout emission and centralizes capture, stamping, validation, and commit on the consumer side — avoiding the multi-repo push race the push design had to work around.
+**Rejected**: the push model (backlog `[pc47]`, marked superseded — `wt` PR-ing `help/wt.json` into shll.ai with auto-merge); its wiring was deliberately never built and must not be reintroduced.
+*Introduced by*: `260603-qqkj-help-dump-command`
 
 ## Upstream forward contract
 
