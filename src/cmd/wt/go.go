@@ -30,7 +30,7 @@ navigates there directly, with no menu.
 
 Navigation reuses the same shell-cd plumbing as the "Open here" launcher option:
 the resolved absolute path is written to WT_CD_FILE (when set) and also printed
-to stdout as the last line, so both the shell wrapper (eval "$(wt shell-init)")
+to stdout as the last line, so both the shell wrapper (eval "$(wt shell-init zsh)")
 and the scripting form (cd "$(command wt go some-name)") work.
 
 Requires a git repository — worktree resolution walks the repo's worktree list.`,
@@ -132,7 +132,7 @@ func navigateTo(ctx *wt.RepoContext, path string) error {
 				"Check that WT_CD_FILE points to a writable path")
 		}
 	} else if os.Getenv("WT_WRAPPER") != "1" {
-		fmt.Fprintln(os.Stderr, `hint: wt go requires the shell wrapper to cd. Run: eval "$(wt shell-init)"`)
+		fmt.Fprintln(os.Stderr, `hint: wt go requires the shell wrapper to cd. Run: eval "$(wt shell-init zsh)" (or bash)`)
 		fmt.Fprintln(os.Stderr, `      Add it to your ~/.zshrc or ~/.bashrc to make it permanent.`)
 	}
 

@@ -35,16 +35,17 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   `--all/-a` removes every worktree; `-s/--stash` stashes uncommitted changes first;
   `--branch <true|false|auto>` and `--no-remote` control branch deletion.
 - `init` — run the worktree init script for the current worktree/main repo.
-- `shell-init` — print the shell wrapper function for `eval` in your profile.
+- `shell-init <shell>` — print the shell wrapper function (`zsh` or `bash`) for
+  `eval` in your profile; a missing/unsupported shell is a usage error (exit 2).
 - `update` — self-update the binary via Homebrew.
 
 ## Composition patterns
 
 - **Shell-wrapper eval flow.** A child process cannot `cd` its parent shell, so
-  `wt` prints shell code that the user evals: `eval "$(wt shell-init)"` installs a
-  function wrapping the binary. That function powers the "Open here" menu option in
-  `wt open` and the navigation in `wt go`. Without it, those fall back to printing a
-  path for the caller to `cd`.
+  `wt` prints shell code that the user evals: `eval "$(wt shell-init zsh)"` (or
+  `bash`) installs a function wrapping the binary. That function powers the "Open
+  here" menu option in `wt open` and the navigation in `wt go`. Without it, those
+  fall back to printing a path for the caller to `cd`.
 - **Launcher contract (`WT_CD_FILE` / `WT_WRAPPER`).** `wt open` is the toolkit's
   canonical directory launcher — external callers (e.g. `hop`) delegate to it as a
   subprocess. When `WT_CD_FILE` is set, "Open here" and `wt go` write the resolved
@@ -94,7 +95,7 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   back. (Two non-failures still exit 0: a missing init command/file, and — for the
   default `fab sync` only — a repo that is not fab-managed.)
 - **`wt open` can't `cd` without the shell wrapper.** That is a Unix constraint;
-  install `eval "$(wt shell-init)"` to make "Open here" and `wt go` change your
-  shell's directory.
+  install `eval "$(wt shell-init zsh)"` (or `bash`) to make "Open here" and
+  `wt go` change your shell's directory.
 - **Deleting a worktree externally leaves git bookkeeping.** If you `rm -rf` a
   worktree, run `git worktree prune` in the main repo to clean up.

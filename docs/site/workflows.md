@@ -15,7 +15,7 @@ Run `wt <command> --help` for the same reference inline at your terminal.
 | `wt open [name\|path]` | Open a worktree (or any directory) in a detected app. |
 | `wt delete [names...]` | Delete one or more worktrees with optional branch cleanup. |
 | `wt init` | Run the per-worktree init script. |
-| `wt shell-init` | Print the shell wrapper function for `eval`. |
+| `wt shell-init <shell>` | Print the shell wrapper function (`zsh` or `bash`) for `eval`. |
 | `wt update` | Self-update the binary via Homebrew. |
 
 ### `wt create [branch]`
@@ -93,11 +93,15 @@ warning and exits 0 (a graceful skip) — so a freshly cloned repo without an
 init script just no-ops. If the script **is** found but exits non-zero, `wt`
 surfaces a typed init-failure exit code so wrappers can offer a retry.
 
-### `wt shell-init`
+### `wt shell-init <shell>`
 
-Prints a bash/zsh wrapper function to stdout for `eval` in your shell profile.
-See the [install guide](./install.md#shell-wrapper-enables-open-here) for setup.
-No flags, no positional args; always exits 0.
+Prints a wrapper function for the named shell (`zsh` or `bash`) to stdout for
+`eval` in your shell profile. See the
+[install guide](./install.md#shell-wrapper-enables-open-here) for setup.
+
+The shell argument is required. Everything on stdout is eval-safe shell source
+and the command exits 0; a missing or unsupported shell argument is a usage
+error — exit 2, usage message on stderr, nothing on stdout.
 
 ### `wt update`
 
@@ -107,7 +111,8 @@ formula (`sahil87/tap/wt`) for the latest stable version, and runs
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--skip-brew-update` | `false` | Skip the internal `brew update` tap-metadata refresh (the version check and upgrade still run). |
+| `--skip-brew-update` | `false` | Skip the internal `brew update` tap-metadata refresh (toolkit contract flag; the version check and upgrade still run). |
+| `--no-brew-update` | `false` | Alias for `--skip-brew-update` — identical behavior. |
 
 If `wt` was installed via `just local-install` (in `~/.local/bin`) rather than
 Homebrew, `wt update` reports that and tells you to reinstall with
@@ -206,8 +211,8 @@ but for a worktree created on an existing branch they differ freely.
 
 - **`wt open` can't `cd` without the shell wrapper.** A child process can't
   change its parent shell's directory — that's a Unix constraint, not a `wt`
-  bug. `eval "$(wt shell-init)"` installs a shell function that wraps the binary
-  so the "Open here" menu option actually works. See the
+  bug. `eval "$(wt shell-init zsh)"` (or `bash`) installs a shell function that
+  wraps the binary so the "Open here" menu option actually works. See the
   [install guide](./install.md#shell-wrapper-enables-open-here).
 - **The `wt create` positional never checks out an existing branch.** Naming a
   branch that already exists (locally or on the remote) is an error (exit 2) —

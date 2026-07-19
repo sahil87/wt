@@ -65,22 +65,26 @@ func TestUpdate_SkipBrewUpdateFlagAccepted(t *testing.T) {
 	}
 }
 
-// ---------- Intuitive flag names (change 59u8) ----------
+// ---------- Toolkit update-standard flag surface (change 32su) ----------
 
-// TestUpdate_NoBrewUpdateFlagInHelp asserts the new --no-brew-update flag is
-// registered and visible in `wt update --help`, while the deprecated
-// --skip-brew-update alias is hidden.
-func TestUpdate_NoBrewUpdateFlagInHelp(t *testing.T) {
+// TestUpdate_HelpContainsBothFlags asserts both flags are registered and
+// visible in `wt update --help`. The literal substring `--skip-brew-update`
+// is a frozen textual contract from the toolkit update standard: shll
+// discovers the flag with a strings.Contains probe on the help text before
+// every toolkit-wide run, so this assertion mirrors that probe exactly.
+// --no-brew-update stays visible as the alias.
+func TestUpdate_HelpContainsBothFlags(t *testing.T) {
 	repo := createTestRepo(t)
 	r := runWt(t, repo, nil, "update", "--help")
 	if r.ExitCode != 0 {
 		t.Fatalf("wt update --help failed (exit %d)\nstderr: %s", r.ExitCode, r.Stderr)
 	}
+	// The exact probe shll runs (strings.Contains on the help text).
+	if !strings.Contains(r.Stdout, "--skip-brew-update") {
+		t.Fatalf("expected literal `--skip-brew-update` in `wt update --help` (toolkit contract substring), got:\n%s", r.Stdout)
+	}
 	if !strings.Contains(r.Stdout, "--no-brew-update") {
 		t.Fatalf("expected `--no-brew-update` in `wt update --help`, got:\n%s", r.Stdout)
-	}
-	if strings.Contains(r.Stdout, "--skip-brew-update") {
-		t.Fatalf("expected deprecated `--skip-brew-update` to be hidden from `wt update --help`, got:\n%s", r.Stdout)
 	}
 }
 
@@ -101,16 +105,18 @@ func TestUpdate_NoBrewUpdateFlagAccepted(t *testing.T) {
 	}
 }
 
-// TestUpdate_SkipBrewUpdateDeprecated asserts the deprecated --skip-brew-update
-// alias is still accepted and emits a stderr deprecation warning naming the new
-// flag.
-func TestUpdate_SkipBrewUpdateDeprecated(t *testing.T) {
+// TestUpdate_SkipBrewUpdateNoDeprecationWarning asserts the contract flag is
+// accepted WITHOUT any deprecation warning: shll passes --skip-brew-update on
+// every toolkit-wide run, so a per-run stderr warning on the standard's own
+// flag would be noise (the flag was previously MarkDeprecated'd; that is
+// undone by the update standard's frozen-substring contract).
+func TestUpdate_SkipBrewUpdateNoDeprecationWarning(t *testing.T) {
 	repo := createTestRepo(t)
 	r := runWt(t, repo, nil, "update", "--skip-brew-update")
 	if r.ExitCode != 0 {
 		t.Fatalf("wt update --skip-brew-update failed (exit %d)\nstderr: %s", r.ExitCode, r.Stderr)
 	}
-	if !strings.Contains(r.Stderr, "deprecated") {
-		t.Fatalf("expected deprecation warning on stderr for --skip-brew-update, got:\n%s", r.Stderr)
+	if strings.Contains(r.Stderr, "deprecated") {
+		t.Fatalf("--skip-brew-update must not emit a deprecation warning (toolkit contract flag), stderr:\n%s", r.Stderr)
 	}
 }

@@ -2,10 +2,13 @@ package update
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeVersion(t *testing.T) {
@@ -127,6 +130,77 @@ exit 0
 			t.Errorf("expected log to contain %q, got:\n%s", "update", log)
 		}
 	})
+}
+
+// ---------- Brew-handling safety (toolkit update standard, change 32su) ----------
+
+// TestBrewBoundsAreGenerous pins the bound constants required by the toolkit
+// update standard's brew-handling clause: any bound must be generous (sized
+// for a network transfer). The former 30s bounds — and the 120s SIGKILL bound
+// on `brew upgrade`, whose constant no longer exists (its removal is a
+// compile-time guarantee) — are the regression this test guards against.
+func TestBrewBoundsAreGenerous(t *testing.T) {
+	if brewUpdateTimeout != 5*time.Minute {
+		t.Errorf("brewUpdateTimeout = %v, want 5m (generous bound per the update standard)", brewUpdateTimeout)
+	}
+	if brewInfoTimeout != 60*time.Second {
+		t.Errorf("brewInfoTimeout = %v, want 60s (network-tolerant)", brewInfoTimeout)
+	}
+	if brewGraceDelay != 10*time.Second {
+		t.Errorf("brewGraceDelay = %v, want 10s (SIGTERM unwind grace)", brewGraceDelay)
+	}
+}
+
+// TestNewBoundedBrewCmd_GracefulSIGTERM proves that a bounded brew call whose
+// context expires receives a TRAPPABLE SIGTERM, never the exec.CommandContext
+// default SIGKILL. A fake `brew` first on PATH traps TERM, writes a marker
+// file from the trap handler, and exits — SIGKILL cannot be trapped, so the
+// marker existing is proof the graceful path ran. This is the standard's
+// "MUST NOT send SIGKILL to a package-manager subprocess mid-transaction"
+// clause, pinned with a short test-injected context (the production bound is
+// minutes; the helper takes the timeout from its caller's ctx).
+func TestNewBoundedBrewCmd_GracefulSIGTERM(t *testing.T) {
+	tmpDir := t.TempDir()
+	markerPath := filepath.Join(tmpDir, "sigterm-trapped")
+	brewPath := filepath.Join(tmpDir, "brew")
+
+	script := `#!/bin/sh
+trap 'echo trapped > "` + markerPath + `"; exit 0' TERM
+# Signal readiness, then wait long past the test context's deadline.
+echo ready
+i=0
+while [ $i -lt 100 ]; do
+  sleep 0.1
+  i=$((i+1))
+done
+exit 1
+`
+	if err := os.WriteFile(brewPath, []byte(script), 0755); err != nil {
+		t.Fatalf("writing fake brew: %v", err)
+	}
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	cmd := newBoundedBrewCmd(ctx, "update", "--quiet")
+
+	start := time.Now()
+	_, err := cmd.Output()
+	elapsed := time.Since(start)
+
+	// The fake brew exits 0 from its TERM trap after the context expired, so
+	// the error (if any) reflects the cancellation, never a kill.
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected nil or context.DeadlineExceeded after graceful TERM, got: %v", err)
+	}
+	if _, statErr := os.Stat(markerPath); statErr != nil {
+		t.Fatalf("marker file missing — fake brew's TERM trap never ran, so the process was not gracefully SIGTERMed (SIGKILL is untrappable): %v", statErr)
+	}
+	// Sanity: the trap fired promptly (well inside the WaitDelay grace), not
+	// after the fake brew's full 10s sleep loop.
+	if elapsed > 5*time.Second {
+		t.Errorf("bounded command took %v; expected prompt graceful termination", elapsed)
+	}
 }
 
 func TestIsBrewInstalledReturnsBool(t *testing.T) {
