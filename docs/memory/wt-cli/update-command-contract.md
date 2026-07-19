@@ -5,12 +5,11 @@ description: "`wt update` self-upgrade contract and the cross-toolkit brew-metad
 # wt-cli: Update Command Contract
 
 > Post-implementation behavior capture for the `wt update` self-upgrade flow and the brew-metadata-refresh flag.
-> Source change: `260531-ipe5-skip-brew-update-flag`
-> (flag renamed `--skip-brew-update` → `--no-brew-update` with a deprecated alias by `260717-59u8-intuitive-flag-names`).
+> Source changes: `260531-ipe5`, `260717-59u8` (each contract below carries its citation).
 
 This file documents the contract that `wt update` honors. Future changes touching `cmd/wt/update.go` or `src/internal/update/update.go` should preserve these invariants unless an explicit spec amendment supersedes them.
 
-The brew-metadata-refresh flag implements a **cross-toolkit contract** shared across the toolkit: the *semantics* and *default behavior* are fixed by that contract and are NOT open to local reinterpretation. The **flag surface** was originally `--skip-brew-update` (identical across all tools). As of `260717-59u8`, this repo makes `--no-brew-update` the **primary** name (aligning the negation convention to `--no-*` — see [flag-naming-conventions](/wt-cli/flag-naming-conventions.md)) and keeps `--skip-brew-update` as a **permanent deprecated alias** — so the historical surface still works for every existing caller and cross-tool script. This aliasing is an **explicit, user-confirmed amendment** to the earlier "renaming/aliasing the flag in this repo alone is a contract violation" clause: the additive-rename mechanism (new name primary + old name kept as a hidden deprecated alias, never removed) preserves the cross-toolkit contract's *behavioral* guarantee (same semantics, same default, old name still accepted) while modernizing the human-facing surface. What remains forbidden is *re-scoping* the flag's semantics or *removing* the `--skip-brew-update` alias.
+The brew-metadata-refresh flag implements a **cross-toolkit contract** shared across the toolkit: the *semantics* and *default behavior* are fixed by that contract and are NOT open to local reinterpretation. In this repo `--no-brew-update` is the **primary** name (the `--no-*` negation convention — see [flag-naming-conventions](/wt-cli/flag-naming-conventions.md)) and `--skip-brew-update` (the cross-tool name) is a **permanent deprecated alias**, so the shared surface works for every existing caller and cross-tool script. What is forbidden is *re-scoping* the flag's semantics or *removing* the `--skip-brew-update` alias — see § Design Decisions (`--no-brew-update` primary over the cross-tool name).
 
 ## Requirements
 
@@ -60,7 +59,7 @@ The brew-metadata-refresh flag implements a **cross-toolkit contract** shared ac
   - `skipBrewUpdate` leads so the two `io.Writer` parameters stay adjacent at the tail (the existing convention) and the flag reads as a mode flag preceding the operands.
   - `currentVersion` is the binary's reported version (e.g. `v0.1.0`); `normalizeVersion` strips a single leading `v` before comparison since `brew info` reports the bare form.
 - `update.Run` is internal to this module; the only caller is `cmd/wt/update.go`. No public API surface changed.
-- Subprocess invocation uses `os/exec` directly (no `internal/proc` wrapper) — consistent with the rest of the wt codebase, which has no centralized subprocess routing. This change did NOT refactor that into a runner/interface.
+- Subprocess invocation uses `os/exec` directly (no `internal/proc` wrapper) — consistent with the rest of the wt codebase, which has no centralized subprocess routing (deliberate — see Design Decisions).
 
 ### `WT_TEST_FORCE_BREW=1` test seam in `isBrewInstalled()`
 
@@ -80,7 +79,14 @@ The test seam is the test-only `WT_TEST_FORCE_BREW=1` env var that forces `isBre
 
 ### Brew-not-found detection deliberately shifts to `brew info`, no new code
 
-Rather than adding a pre-flight `brew` existence check to preserve not-found detection when `brew update` is skipped, the change relies on the fact that `brew info` (`brewLatestVersion`) already has identical `exec.ErrNotFound` → `ErrBrewNotFound` handling. Detection still happens, just one call later, and the single-line stderr contract is preserved with zero added code. (Source: spec ipe5 "Brew-not-found detection preserved".)
+Rather than adding a pre-flight `brew` existence check to preserve not-found detection when `brew update` is skipped, the design relies on `brew info` (`brewLatestVersion`) having identical `exec.ErrNotFound` → `ErrBrewNotFound` handling. Detection still happens, just one call later, and the single-line stderr contract is preserved with zero added code. (Source: spec ipe5 "Brew-not-found detection preserved".)
+
+### `--no-brew-update` primary over the cross-tool `--skip-brew-update`
+
+**Decision**: `--no-brew-update` is the primary flag name; `--skip-brew-update` — the flag surface the other toolkit tools share — is a permanent hidden deprecated alias bound to the same variable. Re-scoping the flag's semantics or removing the alias stays forbidden.
+**Why**: the additive-rename mechanism (new name primary + old name kept, never removed) preserves the cross-toolkit contract's *behavioral* guarantee — same semantics, same default, the cross-tool name still accepted — while aligning the human-facing surface to the `--no-*` negation convention. This is an explicit, user-confirmed amendment to the earlier clause that renaming/aliasing the flag in this repo alone is a contract violation.
+**Rejected**: keeping `--skip-brew-update` primary (breaks the repo's negation convention); a hard rename (breaks every cross-tool caller — the exact violation the clause exists to prevent).
+*Introduced by*: `260717-59u8-intuitive-flag-names`
 
 ## Cross-references
 
@@ -88,5 +94,5 @@ Rather than adding a pre-flight `brew` existence check to preserve not-found det
 - Tests: `src/internal/update/update_test.go` — `TestRunSkipBrewUpdate` (fake `brew` on `PATH` + `WT_TEST_FORCE_BREW=1`, asserts skip omits `update` but keeps `info`/`upgrade`), `TestRunNonBrewInstall`, `TestNormalizeVersion`, `TestIsBrewInstalledReturnsBool`.
 - Constitution: Principle II (Cobra command surface — long-form flag name, `RunE`), Principle III (Typed exit codes — `ErrBrewNotFound` → `ExitGeneralError`).
 - Sibling memory: `wt-cli/init-failure-contract.md`, `wt-cli/list-status-contract.md` — same pattern of post-change invariant capture for other `wt` subcommands. The `WT_TEST_FORCE_BREW` seam is a sibling of the `WT_TEST_NO_LAUNCH` seam documented in `init-failure-contract.md`.
-- Cross-toolkit: the flag's **semantics and default** MUST stay identical to the other tools implementing the same contract. As of `260717-59u8` this repo's **primary** flag name is `--no-brew-update` while `--skip-brew-update` (the historical cross-tool name) is retained as a permanent deprecated alias — so the cross-tool name still works and the behavioral contract is preserved (see the amended cross-toolkit clause in the header).
+- Cross-toolkit: the flag's **semantics and default** MUST stay identical to the other tools implementing the same contract. This repo's **primary** flag name is `--no-brew-update` while `--skip-brew-update` (the cross-tool name) is a permanent deprecated alias — the cross-tool name works and the behavioral contract holds (260717-59u8; see § Design Decisions).
 - Sibling memory: [flag-naming-conventions](/wt-cli/flag-naming-conventions.md) — the `--no-*` negation convention and the additive rename-via-`MarkDeprecated` back-compat mechanism this flag now follows.

@@ -23,8 +23,8 @@ leaf mutations are gated. It also records the destructive-path audit that
 confirmed `wt delete` is the only `wt` command with wt-owned destructive writes,
 so no other command needs `--dry-run`.
 
-This is the change that flips toolkit principle №5 (visible mutation boundaries)
-to conformant for `wt delete` — see
+This contract satisfies toolkit principle №5 (visible mutation boundaries) for
+`wt delete` — see
 [toolkit-standards-conformance](/wt-cli/toolkit-standards-conformance.md). The
 flag's long-only, no-short shape is recorded in
 [flag-naming-conventions](/wt-cli/flag-naming-conventions.md).
@@ -179,11 +179,10 @@ the caller asked for (principle №2 / repo stdout=machine convention). A `Dry r
 per-mutation lines and prints **once per invocation** (R8). Multi-target forms
 (`--all`, `--stale`, positionals) keep their per-worktree block structure with
 the same `Would …` lines per block; `--stale` with zero matches keeps its live
-`No idle worktrees (threshold: Nd).` empty-state (R8). The `[ohwb]` realignment
-of the *existing* live-path human chatter to stderr was a separately tracked
-deferral, **since landed** as `260717-ohwb-delete-copy-stderr-realign` (see
-[create-output-phases](/wt-cli/create-output-phases.md)): all live human copy —
-including that empty-state line — now prints to **stderr**, so under `--dry-run`
+`No idle worktrees (threshold: Nd).` empty-state (R8). All live human copy —
+including that empty-state line — prints to **stderr**
+(260717-ohwb-delete-copy-stderr-realign; see
+[create-output-phases](/wt-cli/create-output-phases.md)), so under `--dry-run`
 stdout carries *exactly* the `Dry run` header + `Would …` preview lines, and on
 live paths stdout is empty.
 
@@ -293,8 +292,8 @@ BranchExistsRemotely`, independently — mirroring the live path's independent
 local/remote deletion rather than nesting the remote check inside local
 existence.
 **Why**: a remote-only `wt/<name>` orphan is deleted by the live run but would be
-missed by a local-nested preview — a real preview↔live drift (caught in review
-cycle 1). Separate gating closes it.
+missed by a local-nested preview — a real preview↔live drift. Separate gating
+closes it.
 **Rejected**: nesting the remote preview inside the local-existence check (the
 drift bug the review found).
 *Introduced by*: `260717-p5m9-delete-dry-run`

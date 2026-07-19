@@ -6,16 +6,11 @@ description: "The single recency definition (`RecencyOf`/`RecencyLess`/`SortByRe
 
 > Post-implementation behavior capture for the shared recency signal and
 > newest-first ordering across `wt list`, `wt open`, and `wt delete`.
-> Source change: `260530-rtmf-recency-aware-listing`.
-> Amended by `260718-daqj-go-include-main-worktree` (the open/go selection menus
-> now pin the main worktree to row 1 *outside* the recency ordering — mirroring
-> `wt list`'s pin-first convention — shifting the pre-selected default to the
-> newest non-main worktree at `defaultIdx = 2` (or `1` when main is the only
-> row); non-main newest-first ordering and the single `SortByRecency` call site
-> unchanged).
+> Source changes: `260530-rtmf`, `260620-3pp5`, `260530-5fyu`, `260601-73cv`,
+> `260718-daqj` (each contract below carries its citation).
 
 This file documents the single definition of "recent" that `wt list`, `wt open`,
-and `wt delete` honor after the recency-aware-listing change. Future changes
+and `wt delete` honor. Future changes
 touching `src/internal/worktree/recency.go`, or the menu/list ordering in
 `cmd/wt/{list,open,delete}.go`, should preserve these invariants unless an
 explicit spec amendment supersedes them.
@@ -29,8 +24,7 @@ explicit spec amendment supersedes them.
   that defines it — `wt.RecencyOf(path string) time.Time` in
   `src/internal/worktree/recency.go` — consumed by every caller (`wt list`,
   `wt open`, `wt delete`). No caller may define a second notion of recency.
-- The signal is the **full-precision** `os.Stat` `ModTime()` (sub-second), NOT
-  the whole-second `ModTime().Unix()` granularity used by the old inline loops.
+- The signal is the **full-precision** `os.Stat` `ModTime()` (sub-second).
   Ordering ties are resolved by the Name tie-break (below), not by porcelain
   position.
 - `RecencyOf` takes a directory **path** (`string`), never a `worktree.Info`.
@@ -53,8 +47,7 @@ explicit spec amendment supersedes them.
   when recencies differ.
 - Ties (equal mtime, **including two zero-time entries**) are broken
   deterministically by worktree `Name` **ascending** (`aName < bName`), so output
-  is stable across runs. This is a strict improvement over the old loops'
-  non-deterministic first-wins behavior on equal seconds.
+  is stable across runs.
 
 ### Shared sort adapter: `SortByRecency`
 
@@ -70,14 +63,13 @@ explicit spec amendment supersedes them.
   `wt-cli/list-status-contract.md`). Both paths use the same `RecencyLess`
   ordering definition, so they never drift. (`260601-73cv` did not change this:
   `wt list` still inlines `RecencyLess` and does not call `SortByRecency`.)
-- **`260601-73cv` (sort-key reuse for display)**: `wt list` recent mode now
-  PERSISTS the recency key it computes — previously discarded after sorting —
+- **Sort-key reuse for display** (260601-73cv): `wt list` recent mode
+  PERSISTS the recency key it computes
   into `entries[i].LastActive`, gated on the human-output path (`persistKey ==
-  !jsonOut`), so the new `Last Active` column can display it without a second
-  `os.Stat`. This is a pure side-effect on the existing key computation: the
+  !jsonOut`), so the `Last Active` column can display it without a second
+  `os.Stat`. This is a pure side-effect on the key computation: the
   comparator/ordering definition (`RecencyOf`/`RecencyLess`/`SortByRecency`,
-  newest-first with Name-ascending tie-break) is UNCHANGED. The resulting order is
-  byte-for-byte identical to before; only the discard was removed. See
+  newest-first with Name-ascending tie-break) is untouched by it. See
   `wt-cli/list-status-contract.md` ("Recent mode persists the sort key into
   `LastActive`") for the `persistKey` seam and the main-worktree populate.
 
@@ -86,13 +78,9 @@ explicit spec amendment supersedes them.
 - `selectAndOpen` (`src/cmd/wt/open.go`, via the shared `selectWorktree` helper as
   of `260620-3pp5` — see below) and `handleDeleteMenu` (`src/cmd/wt/delete.go`)
   sort the **non-main** worktrees with `wt.SortByRecency` so the **newest
-  non-main worktree appears at the top** of that group. This replaces the
-  previous behavior where items appeared in porcelain order and only the newest
-  was highlighted.
-- The pre-selected menu default remains the **most-recent non-main** worktree —
-  this is behavior-preserving for the default selection. Only the item
-  *ordering* changed (and, for open/go, the addition of the pinned main row —
-  see below).
+  non-main worktree appears at the top** of that group.
+- The pre-selected menu default is the **most-recent non-main** worktree (for
+  open/go, below the pinned main row — see below).
 - **`wt open` / `wt go` menus pin main to row 1, OUTSIDE the recency ordering**
   (`260718-daqj`, via the shared `selectWorktree` helper): the porcelain-first
   entry (`entries[0]`, always the main worktree) is partitioned out and
@@ -102,15 +90,13 @@ explicit spec amendment supersedes them.
   `wt-cli/list-status-contract.md`). Main is pinned, never sorted into the
   recency order. The pre-selected default stays the newest *non-main* worktree:
   `defaultIdx = 2` when ≥1 non-main worktree exists (main row 1, newest worktree
-  row 2), `defaultIdx = 1` when main is the only row. (Before `260718-daqj` the
-  main worktree was *skipped* in these menus and `defaultIdx = 1`; `wt delete`'s
-  main exclusion at all its list sites is a separate contract and is **not**
-  changed by this — see below.)
-- **`wt delete`** still builds a `wtOption` slice of **non-main** worktrees only
+  row 2), `defaultIdx = 1` when main is the only row. (`wt delete`'s
+  main exclusion at all its list sites is a separate contract — see below.)
+- **`wt delete`** builds a `wtOption` slice of **non-main** worktrees only
   (the main worktree / `ctx.RepoRoot` is skipped — deleting main must stay
   impossible, an explicit Non-Goal of `260718-daqj`).
 - `wt delete`: `defaultIdx` is **2 by default**, shifting to **3 ONLY when the
-  "All idle (N)" entry is present** (amended by `260530-5fyu` — see below). The
+  "All idle (N)" entry is present** (260530-5fyu — see below). The
   newest worktree is always the first *worktree* row and stays the pre-selected
   default; the index just shifts by the number of prepended summary entries
   ("All (N worktrees)" always, plus "All idle (N)" when ≥1 worktree is idle).
@@ -120,40 +106,39 @@ explicit spec amendment supersedes them.
   (`260718-daqj`); delete prepends its "All (N worktrees)" / "All idle (N)"
   summary rows and omits main entirely.
 
-### `wt go`'s no-arg menu is a new `SortByRecency` consumer (`260620-3pp5`)
+### `wt go`'s no-arg menu is a `SortByRecency` consumer
 
-- The `260620-3pp5-open-worktree-from-worktree` change extracted the
-  `selectAndOpen` menu logic into the shared `selectWorktree` helper
-  (`src/cmd/wt/open.go`), which calls `wt.SortByRecency` over its local non-main
-  `wtOption` slice. That single helper now backs **three** menu callers —
+- The shared `selectWorktree` helper (`src/cmd/wt/open.go`, extracted from
+  `selectAndOpen` — 260620-3pp5) calls `wt.SortByRecency` over its local
+  non-main `wtOption` slice. That single helper backs **three** menu callers —
   `wt open` (main-repo no-arg, prompt "Select worktree to open:"), `wt go`
   (no-arg, prompt "Select worktree to go to:"), and `wt open --select` (no-arg).
   So `wt go`'s selection menu is a consumer of the same newest-first ordering,
-  joining `wt list` / `wt open` / `wt delete` — there is still exactly one
+  joining `wt list` / `wt open` / `wt delete` — there is exactly one
   `SortByRecency` call site for the open/go selection menu, not a per-verb copy.
-  *(The helper's shape has since changed — `260718-daqj` dropped the `ctx`
-  parameter and the main-repo filter, pinning main as row 1 instead, and shifted
-  the default to `defaultIdx = 2/1`; its signature is now `(session, prompt)`.
-  The single-call-site invariant this section documents is unchanged.)*
+  *(The helper's signature is `(session, prompt)`; main is pinned as row 1 and
+  the default is `defaultIdx = 2/1` — 260718-daqj. The single-call-site
+  invariant this section documents holds.)*
 - The non-main ordering, branch display, and newest-non-main default are
   byte-identical across all three callers because they share the one helper. See
   `/wt-cli/go-command-contract.md` for the `wt go` / `wt open --select` behavior
   contract, the pinned main row, and the `selectWorktree` extraction details.
 
-### `wt delete` menu: stale-aware annotation + "All idle" (`260530-5fyu`)
+### `wt delete` menu: stale-aware annotation + "All idle"
 
-- `handleDeleteMenu` (`src/cmd/wt/delete.go`) now annotates each idle non-main
+- `handleDeleteMenu` (`src/cmd/wt/delete.go`) annotates each idle non-main
   option label with a trailing `, idle` (e.g. `feature-x (feat-x), idle`), and
   inserts an **"All idle (N)"** entry immediately after the existing "All (N
-  worktrees)" entry **when at least one non-main worktree is idle**. When none is
-  idle the entry is omitted (no "All idle (0)" row). Menu ordering is unchanged —
-  non-main worktrees still list newest-first via `wt.SortByRecency`.
+  worktrees)" entry **when at least one non-main worktree is idle**
+  (260530-5fyu). When none is
+  idle the entry is omitted (no "All idle (0)" row). Menu ordering: non-main
+  worktrees list newest-first via `wt.SortByRecency`.
 - The pre-selected default index is computed via a local `firstWorktreeIdx`
   (`2`, or `3` when "All idle" is present); `defaultIdx = firstWorktreeIdx`. This
   is what shifts the documented `defaultIdx = 2` to `3` only in the "All idle"
   case. Selecting "All idle" routes the idle subset through `handleDeleteMultiple`
   — no new deletion code path.
-- **Idleness is derived from `RecencyOf` via the new `IsIdle` predicate**:
+- **Idleness is derived from `RecencyOf` via the `IsIdle` predicate**:
   `wt.IsIdle(wt.RecencyOf(o.path), now, wt.DefaultIdleThreshold)`, computed per
   option. This costs **one extra `os.Stat` per option** on the interactive menu
   path, because `SortByRecency` does not expose its internal recency keys for
@@ -164,12 +149,11 @@ explicit spec amendment supersedes them.
   `DefaultIdleThreshold`, and the `--stale` selector are documented in
   `wt-cli/idle-staleness-contract.md`.
 
-### Refactor consolidated the duplicated inline loops
+### All recency logic lives in one place
 
-- The old `os.Stat`/`ModTime` newest-tracking loops that lived inline in
-  `open.go` (`selectAndOpen`) and `delete.go` (`handleDeleteMenu`) are removed.
-  All recency logic now lives only in `src/internal/worktree/recency.go`
-  (Constitution V; no duplicated-utility anti-pattern). A future third consumer
+- All recency logic lives only in `src/internal/worktree/recency.go` — no
+  inline `os.Stat`/`ModTime` newest-tracking loops in `cmd/`
+  (Constitution V; no duplicated-utility anti-pattern). A future consumer
   must reuse `RecencyOf`/`RecencyLess`/`SortByRecency`, not re-derive mtime
   comparison.
 
@@ -201,7 +185,7 @@ otherwise exist — a fabricated cross-package dependency. The generic
 `SortByRecency[T]` with `pathOf`/`nameOf` accessors keeps the helper consumable
 by all three heterogeneous types without conversion.
 
-## Signal-quality caveat (resolved by `260530-5fyu`)
+## Signal quality
 
 Worktree-directory `mtime` is a **noisy** recency signal: the directory's mtime
 moves on *any* file write inside the worktree root (editor save, build artifact,
@@ -209,9 +193,8 @@ moves on *any* file write inside the worktree root (editor save, build artifact,
 "activity". It is sufficient for *ordering* (the most-recently-touched worktree
 is a reasonable default), but it is not a reliable staleness measure.
 
-The follow-up change `260530-5fyu-stale-worktree-hints` revisited this and
-**resolved the signal-quality question**: the decision was to **keep dir-mtime
-with honest "idle / untouched on disk" framing** (option b), NOT to add a
+The settled decision (260530-5fyu) is to **keep dir-mtime
+with honest "idle / untouched on disk" framing**, NOT to add a
 cleaner per-staleness signal (git commit date, reflog, HEAD mtime — each costs a
 `git` subprocess per worktree and a second, divergent definition). The
 under-reporting tendency of mtime is safe-by-direction for the cleanup use case
@@ -219,8 +202,7 @@ because the `wt delete` safety flow backstops every removal — idleness only
 *selects* candidates, never gates them. A configurable recency signal remains a
 future option if under-reporting proves painful. See
 `wt-cli/idle-staleness-contract.md` for the idle predicate, the 7-day
-`DefaultIdleThreshold`, and the `--stale` selector that this resolution
-produced.
+`DefaultIdleThreshold`, and the `--stale` selector.
 
 ## Cross-references
 

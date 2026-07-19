@@ -10,7 +10,7 @@ description: "The shared idle predicate, the `wt delete --stale` selector, and t
 > Source change: `260530-5fyu-stale-worktree-hints`.
 
 This file documents the single definition of "idle" that `wt list` and
-`wt delete` honor after the stale-worktree-hints change, plus the `--stale`
+`wt delete` honor, plus the `--stale`
 flag surface and the safety invariant that backstops it. It is a distinct
 cross-command contract — a predicate + a flag + a safety invariant spanning
 both `wt list` (display) and `wt delete` (selection). Future changes touching
@@ -104,11 +104,10 @@ zero recency, 7d          → idle (vanished worktree is a candidate)
   worktrees, the command prints `No idle worktrees (threshold: Nd).` and exits
   `ExitSuccess` (R17). The `Nd` rendering comes from the local `formatThreshold`
   helper (`fmt.Sprintf("%dd", int(d.Hours())/24)`), which round-trips the
-  resolved duration back to the `--stale=Nd` input form. As of
-  `260717-ohwb-delete-copy-stderr-realign`, this empty-state message is emitted
-  on **stderr** (`fmt.Fprintf(os.Stderr, ...)`), not stdout — part of the
-  command-wide realignment that put all of `wt delete`'s non-error human copy on
-  stderr (stdout is now empty on every delete path). See
+  resolved duration back to the `--stale=Nd` input form. This empty-state
+  message is emitted on **stderr** (`fmt.Fprintf(os.Stderr, ...)`) — all of
+  `wt delete`'s non-error human copy is on stderr and stdout is empty on every
+  live delete path (260717-ohwb). See
   [create-output-phases](/wt-cli/create-output-phases.md) § `wt delete`'s entire
   non-error human copy is on stderr.
 
@@ -119,8 +118,9 @@ zero recency, 7d          → idle (vanished worktree is a candidate)
   (where `30d` becomes a positional) into a loud, recoverable error, matching the
   `--path`↔`--status` idiom in `wt list`.
 - **`--stale` ↔ `--all`** → `ExitInvalidArgs` with "mutually exclusive"
-  (R19). `--all` (renamed from `--delete-all`/`-a` by `260717-59u8`, which retains
-  `--delete-all` as a deprecated alias) already targets every worktree; `--stale`
+  (R19). `--all` (deprecated alias `--delete-all` — see
+  [flag-naming-conventions](/wt-cli/flag-naming-conventions.md)) already
+  targets every worktree; `--stale`
   is a narrowing selector, so combining them is contradictory. The mutex is keyed
   on the shared `deleteAll` bool variable, so passing either the primary `--all`
   or the deprecated `--delete-all` trips it identically.
@@ -131,9 +131,9 @@ zero recency, 7d          → idle (vanished worktree is a candidate)
 #### Composition with existing flags
 
 - `--stale` composes with `--non-interactive`, `--branch`, `--no-remote`
-  (renamed from `--delete-branch`/`--delete-remote` by `260717-59u8`; the old
-  names remain deprecated aliases), and `--stash` exactly as positional/`--all`
-  deletion does today, because it reuses `handleDeleteMultiple` (R18). In
+  (deprecated aliases `--delete-branch`/`--delete-remote`), and `--stash`
+  exactly as positional/`--all`
+  deletion does, because it reuses `handleDeleteMultiple` (R18). In
   `--non-interactive` mode the existing per-worktree safety semantics
   (stash-or-discard default, unpushed handling) are unchanged.
 
@@ -203,13 +203,12 @@ This is the load-bearing invariant of the whole change. **Idleness only ever
 The idle predicate reuses the single `RecencyOf` (worktree-directory mtime)
 signal — one signal definition across `wt list`/`wt open`/`wt delete`, zero new
 `git` subprocesses, and it consumes the recency key `sortEntries`/enrichment
-already computes. This **resolved** the open signal-quality question that was
-deferred from `260530-rtmf` (the recency-ordering contract's "Signal-quality
-caveat"): the decision is **option (b) — keep dir-mtime, with honest "idle /
+already computes. This settles the recency signal-quality question (see
+`wt-cli/recency-ordering-contract.md`): **keep dir-mtime, with honest "idle /
 untouched on disk for Nd" framing**, NOT a cleaner per-staleness signal.
 
 A cleaner per-staleness signal (last-commit-date / reflog / `HEAD` mtime) was
-*rejected* for this change: it costs a `git` subprocess per worktree and
+*rejected*: it costs a `git` subprocess per worktree and
 introduces a second, divergent signal definition, for accuracy the safety flow
 already backstops. It remains a future option if under-reporting proves painful.
 
@@ -274,6 +273,6 @@ than wanted; a bare-int value was rejected as less self-documenting than `Nd`.
   `internal/worktree`), VI (machine-output stability — `idle` is additive and
   absent on the default `--json` path).
 - Sibling memory: [`flag-naming-conventions`](/wt-cli/flag-naming-conventions.md)
-  — the `260717-59u8` `--delete-all` → `--all`/`-a` (and `--delete-branch` →
-  `--branch`, `--delete-remote` → `--no-remote`) renames referenced in the mutex
-  and composition text above, plus the `wt rm` alias on `wt delete`.
+  — the `--all`/`-a`, `--branch`, and `--no-remote` primaries (deprecated aliases
+  `--delete-all`/`--delete-branch`/`--delete-remote`) referenced in the mutex
+  and composition text above, plus the `wt rm` alias on `wt delete` (260717-59u8).
