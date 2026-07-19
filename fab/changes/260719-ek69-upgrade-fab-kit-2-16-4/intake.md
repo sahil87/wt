@@ -17,7 +17,7 @@ One-shot invocation. `fab upgrade-repo` was executed in this session **before** 
 
 ## What Changes
 
-The entire change is the output of `fab upgrade-repo` (already applied to the working tree — uncommitted). Three tracked files changed; `.claude/` skill repairs (6 files) are gitignored and not part of the reviewable diff.
+The substantive change is the output of `fab upgrade-repo` (already applied to the working tree — uncommitted): three upgrade files (the two version pins and `fab/project/config.yaml`). The PR also carries the standard fab change-record files under `fab/changes/260719-ek69-upgrade-fab-kit-2-16-4/` (`intake.md`, `plan.md`, `.status.yaml`, `.history.jsonl`), committed by the pipeline as part of every change. `.claude/` skill repairs (6 files) are gitignored and not part of the reviewable diff.
 
 ### Version pins
 
@@ -39,7 +39,7 @@ The entire change is the output of `fab upgrade-repo` (already applied to the wo
 +# >>> fab reference (kit 2.16.4) >>> ---------------------------------------
 ```
 
-**Apply-stage note**: no code is to be written. The apply stage's tasks are verification only — confirm the diff is exactly the three files above, confirm no source (`src/`) files changed, and confirm the upgrade completed cleanly (`fab/.fab-version` reads `2.16.4`).
+**Apply-stage note**: no code is to be written. The apply stage's tasks are verification only — confirm the upgrade touched exactly the three files above (the rest of the PR diff being the standard fab change record), confirm no source (`src/`) files changed, and confirm the upgrade completed cleanly (`fab/.fab-version` reads `2.16.4`).
 
 ## Affected Memory
 

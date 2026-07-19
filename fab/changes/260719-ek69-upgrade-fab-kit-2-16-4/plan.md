@@ -27,12 +27,12 @@ The regenerated reference fence header in `fab/project/config.yaml` SHALL name k
 - **THEN** the only changed line is the fence header, from `kit 2.16.0` to `kit 2.16.4`
 - **AND** no field above the fence (project identity, source/test paths, true-impact excludes, providers, tiers) is modified
 
-#### R3: change scope is limited to the three tracked upgrade files
-The reviewable diff SHALL consist of exactly the three tracked files produced by `fab upgrade-repo`; no source (`src/`) file SHALL be touched.
+#### R3: change scope is the three upgrade files plus the fab change record — no source touched
+The reviewable diff SHALL consist of the three upgrade files produced by `fab upgrade-repo` plus the standard fab change-record files under `fab/changes/260719-ek69-upgrade-fab-kit-2-16-4/`; no source (`src/`) file SHALL be touched.
 
 - **GIVEN** the upgrade is a tooling-scaffolding version bump excluded from true-impact via `true_impact_exclude: [fab/, docs/]`
-- **WHEN** `git status` is inspected (ignoring the untracked change folder)
-- **THEN** the only tracked modifications are `fab/.fab-version`, `fab/.kit-migration-version`, and `fab/project/config.yaml`
+- **WHEN** `git status` and the PR diff are inspected
+- **THEN** the tracked modifications are the three upgrade files — `fab/.fab-version`, `fab/.kit-migration-version`, and `fab/project/config.yaml` — plus the fab change-record files under `fab/changes/260719-ek69-upgrade-fab-kit-2-16-4/` (`intake.md`, `plan.md`, `.status.yaml`, `.history.jsonl`)
 - **AND** `git status --porcelain -- src/` reports no changes
 
 ### Non-Goals
@@ -55,7 +55,7 @@ The reviewable diff SHALL consist of exactly the three tracked files produced by
 ### Phase 2: Verify Diff Scope
 
 - [x] T003 Diff `fab/project/config.yaml` against HEAD and confirm the sole change is the fence header `kit 2.16.0` → `kit 2.16.4`, with no field above the fence altered <!-- R2 -->
-- [x] T004 Confirm `git status --porcelain` shows only `fab/.fab-version`, `fab/.kit-migration-version`, `fab/project/config.yaml` as tracked modifications (plus the untracked change folder) <!-- R3 -->
+- [x] T004 Confirm the tracked diff is the three upgrade files (`fab/.fab-version`, `fab/.kit-migration-version`, `fab/project/config.yaml`) plus the fab change-record files under `fab/changes/260719-ek69-upgrade-fab-kit-2-16-4/`, and nothing else <!-- R3 -->
 - [x] T005 [P] Confirm `git status --porcelain -- src/` reports no changes <!-- R3 -->
 
 ## Acceptance
@@ -64,7 +64,7 @@ The reviewable diff SHALL consist of exactly the three tracked files produced by
 
 - [x] A-001 R1: `fab/.fab-version` reads `2.16.4` and `fab/.kit-migration-version` reads `2.16.4`
 - [x] A-002 R2: `fab/project/config.yaml`'s only diff hunk changes the fence header from `kit 2.16.0` to `kit 2.16.4`; no overridden field above the fence is touched
-- [x] A-003 R3: The tracked diff is exactly the three upgrade files; no `src/` file is modified
+- [x] A-003 R3: The tracked diff is the three upgrade files plus the fab change-record files under `fab/changes/260719-ek69-upgrade-fab-kit-2-16-4/`; no `src/` file is modified
 
 ### Behavioral Correctness
 
