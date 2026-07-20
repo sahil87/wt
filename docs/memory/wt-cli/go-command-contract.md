@@ -155,7 +155,7 @@ supersedes them.
   3. **Always** prints the resolved absolute path to stdout as the **last line**,
      so the no-wrapper scripting form `cd "$(command wt go some-name)"` works.
   4. When `WT_CD_FILE` is unset **and** `WT_WRAPPER != "1"`, prints the same
-     two-line "shell wrapper required / `eval "$(wt shell-init)"`" hint to stderr
+     two-line "shell wrapper required / `eval "$(wt shell-init zsh)"` (or bash)" hint to stderr
      that the launcher's "Open here" emits (the `WT_WRAPPER`-gated hint
      convention, `launcher-contract.md` §4).
 - `wt go` NEVER `cd`s the parent shell directly — it cooperates via

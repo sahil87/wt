@@ -238,11 +238,17 @@ formula (`sahil87/tap/wt`) for its latest stable version, and invokes
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--no-brew-update` | `false` | Skip the internal `brew update` tap-metadata refresh. The version check (`brew info`) and the `brew upgrade` still run. |
+| `--skip-brew-update` | `false` | Skip the internal `brew update` tap-metadata refresh. The version check (`brew info`) and the `brew upgrade` still run. Toolkit contract flag: the update standard freezes the literal substring `--skip-brew-update` in `wt update --help` (shll probes it via a substring check), so this flag is visible and never deprecated. |
+| `--no-brew-update` | `false` | Alias for `--skip-brew-update` — same bool, identical behavior, no warning. |
 
-No positional args.
+No positional args. Neither flag prints a deprecation warning.
 
-**Deprecated alias** (still accepted; hidden from `--help`; prints a stderr deprecation warning): `--skip-brew-update` → `--no-brew-update`.
+Brew-handling safety (per the toolkit update standard): `brew upgrade` runs
+with **no timeout** (interactive, stream-inheriting; Ctrl-C is the escape).
+The bounded metadata calls are generous and terminate gracefully — `brew
+update` 5 minutes, `brew info` 60 seconds, both canceling via SIGTERM with a
+10-second grace (`cmd.Cancel`/`cmd.WaitDelay`); no code path sends SIGKILL to
+brew.
 
 User-facing outcomes:
 
@@ -266,14 +272,23 @@ when `brew` is missing on PATH, `brew update` / `brew info` / `brew upgrade`
 returns a non-zero status, the `brew info` JSON cannot be parsed, or no
 stable version is reported by the tap formula.
 
-## `wt shell-init`
+## `wt shell-init <shell>`
 
-Print a shell wrapper function (bash/zsh) to stdout. The function reads
-`WT_CD_FILE` after each `wt` invocation and runs `cd` in the parent shell when
-the file is non-empty — this is what powers the "Open here" menu option.
+Print a shell wrapper function for the named shell to stdout. The function
+reads `WT_CD_FILE` after each `wt` invocation and runs `cd` in the parent
+shell when the file is non-empty — this is what powers the "Open here" menu
+option.
 
-Usage: add `eval "$(wt shell-init)"` to `~/.bashrc` or `~/.zshrc`.
+Usage: add `eval "$(wt shell-init zsh)"` to `~/.zshrc`, or
+`eval "$(wt shell-init bash)"` to `~/.bashrc`.
 
-No flags. No positional args. Always exit 0. A warning is printed to stderr if
-`$SHELL` is set to something other than bash/zsh, but the wrapper is still
-emitted (it is bash-compatible).
+One required positional arg: the target shell, `zsh` or `bash` (the emitted
+wrapper is valid source for both). No flags.
+
+Contract (toolkit shell-init standard): with a supported shell argument,
+stdout carries **only** eval-safe shell source and the command exits 0;
+diagnostics, if any, go to stderr. A **missing or unsupported** shell argument
+is a usage error: usage message on stderr, **empty stdout**, exit
+`ExitInvalidArgs` (2) — emitted via the direct-exit pattern since `main.go`
+maps `RunE` errors to exit 1. `$SHELL` is never consulted (the former
+inference path is removed).

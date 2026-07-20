@@ -33,17 +33,18 @@ to reinstall via `brew` rather than attempting a self-update.
 
 A child process can't change its parent shell's directory — that's a Unix
 constraint, not a `wt` limitation. To make `wt open`'s "Open here" menu option
-`cd` your current shell, add the wrapper to your shell profile
-(`~/.bashrc` or `~/.zshrc`):
+`cd` your current shell, add the wrapper to your shell profile:
 
 ```bash
-eval "$(wt shell-init)"
+eval "$(wt shell-init zsh)"     # in ~/.zshrc
+eval "$(wt shell-init bash)"    # in ~/.bashrc
 ```
 
-`wt shell-init` prints a bash/zsh wrapper function that reads `WT_CD_FILE` after
-each `wt` invocation and runs `cd` in the parent shell when that file is
-non-empty. Without it, "Open here" falls back to printing a `cd -- '<path>'`
-line you can copy. See the [gotchas](./workflows.md#gotchas) for the full story.
+`wt shell-init <shell>` prints a wrapper function for the named shell (`zsh` or
+`bash`) that reads `WT_CD_FILE` after each `wt` invocation and runs `cd` in the
+parent shell when that file is non-empty. Without it, "Open here" falls back to
+printing a `cd -- '<path>'` line you can copy. See the
+[gotchas](./workflows.md#gotchas) for the full story.
 
 ## Already use other shll tools?
 

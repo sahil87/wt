@@ -43,7 +43,8 @@ For the "Open here" menu option to actually `cd` your current shell, add the
 wrapper to your shell profile:
 
 ```bash
-eval "$(wt shell-init)"
+eval "$(wt shell-init zsh)"     # in ~/.zshrc
+eval "$(wt shell-init bash)"    # in ~/.bashrc
 ```
 
 > 💡 Have other shll tools? [`shll shell-install`](https://github.com/sahil87/shll#shll-shell-install--wire-the-rc-file-recommended) handles all of their shell integrations and autocompletions at once.
@@ -80,7 +81,7 @@ $ wt delete lively-otter      # removes worktree (and optionally the branch)
 | `wt open [name\|path]` | Open a worktree in a detected app (editor, terminal, file manager). `--app`/`-a` to skip the menu. |
 | `wt delete [names...]` (alias `wt rm`) | Delete one or more worktrees with optional branch cleanup. |
 | `wt init` | Run the worktree init script (default `fab sync`, override via `WORKTREE_INIT_SCRIPT`). |
-| `wt shell-init` | Print a shell wrapper function for `eval` in your shell profile. |
+| `wt shell-init <shell>` | Print a shell wrapper function (`zsh` or `bash`) for `eval` in your shell profile. |
 | `wt skill` | Print the agent usage bundle — a static, one-page markdown briefing for an agent operating `wt` (offline, embedded, versioned with the binary). |
 
 Run `wt <command> --help` for inline flag details. For every flag and exit code, see the auto-generated [command reference](https://shll.ai/wt/commands/); for the `--base` start-point rules and the `wt open` launcher matrix, see the [workflows guide](docs/site/workflows.md).
@@ -154,6 +155,6 @@ detected app, or `7` to copy the absolute path to your clipboard.
 
 ## Gotchas
 
-- **`wt open` can't `cd` without the shell wrapper.** A child process can't change its parent shell's directory — that's a Unix constraint, not a wt bug. `eval "$(wt shell-init)"` installs a shell function that wraps the binary so the "Open here" menu option actually works.
+- **`wt open` can't `cd` without the shell wrapper.** A child process can't change its parent shell's directory — that's a Unix constraint, not a wt bug. `eval "$(wt shell-init zsh)"` (or `bash`) installs a shell function that wraps the binary so the "Open here" menu option actually works.
 - **The `wt create` positional never checks out an existing branch.** Naming a branch that already exists (locally or on the remote) is an error (exit 2) — checkout of an existing branch is an explicit opt-in via `--checkout <branch>`. `--reuse` takes precedence over `--base`.
 - **Worktrees survive `cd` into deleted directories.** If you delete a worktree from outside (`rm -rf`), run `git worktree prune` in the main repo to clean up git's bookkeeping.

@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -23,11 +24,36 @@ import (
 // disambiguates against any same-named formula or cask in Homebrew core.
 const brewFormula = "sahil87/tap/wt"
 
+// Bounds for the brew metadata calls. Per the toolkit update standard's
+// brew-handling clause, any bound must be generous (sized for a network
+// transfer, not a local command) and terminate gracefully — SIGTERM plus a
+// grace period, never SIGKILL. `brew upgrade` is deliberately unbounded (see
+// Run): brew can legitimately block for minutes, the call is interactive and
+// stream-inheriting, and Ctrl-C (SIGINT, which brew traps and unwinds)
+// remains the user's escape.
 const (
-	brewUpdateTimeout  = 30 * time.Second
-	brewInfoTimeout    = 30 * time.Second
-	brewUpgradeTimeout = 120 * time.Second
+	brewUpdateTimeout = 5 * time.Minute
+	brewInfoTimeout   = 60 * time.Second
+	// brewGraceDelay is how long a bounded brew subprocess gets to unwind
+	// after the graceful SIGTERM before the runtime force-kills it.
+	brewGraceDelay = 10 * time.Second
 )
+
+// newBoundedBrewCmd builds a context-bounded brew command that terminates
+// GRACEFULLY on expiry: ctx cancellation sends SIGTERM (trappable — brew can
+// finish or roll back its transaction) instead of exec.CommandContext's
+// default SIGKILL, and WaitDelay grants a grace period before the runtime's
+// forced kill. Every bounded brew call site MUST go through this helper so no
+// code path can SIGKILL a package-manager subprocess mid-transaction (the
+// toolkit update standard's brew-handling MUST).
+func newBoundedBrewCmd(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "brew", args...)
+	cmd.Cancel = func() error {
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
+	cmd.WaitDelay = brewGraceDelay
+	return cmd
+}
 
 // ErrBrewNotFound is returned by Run when the `brew` executable cannot be
 // located on PATH. The cobra wrapper in cmd/wt detects this sentinel and maps
@@ -72,7 +98,7 @@ func Run(skipBrewUpdate bool, currentVersion string, out, errOut io.Writer) erro
 
 	if !skipBrewUpdate {
 		ctx, cancel := context.WithTimeout(context.Background(), brewUpdateTimeout)
-		cmd := exec.CommandContext(ctx, "brew", "update", "--quiet")
+		cmd := newBoundedBrewCmd(ctx, "update", "--quiet")
 		cmd.Stderr = os.Stderr
 		_, err := cmd.Output()
 		cancel()
@@ -101,9 +127,11 @@ func Run(skipBrewUpdate bool, currentVersion string, out, errOut io.Writer) erro
 
 	fmt.Fprintf(out, "Updating %s → v%s...\n", currentVersion, normalizeVersion(latest))
 
-	upCtx, upCancel := context.WithTimeout(context.Background(), brewUpgradeTimeout)
-	defer upCancel()
-	upCmd := exec.CommandContext(upCtx, "brew", "upgrade", brewFormula)
+	// No timeout on `brew upgrade` — the standard forbids a short hard bound
+	// (an un-timed GitHub API call inside brew can block for minutes), and a
+	// kill landing between `brew unlink` and `brew link` corrupts the keg.
+	// The call inherits the user's streams; Ctrl-C (SIGINT) is the escape.
+	upCmd := exec.Command("brew", "upgrade", brewFormula)
 	upCmd.Stdin = os.Stdin
 	upCmd.Stdout = os.Stdout
 	upCmd.Stderr = os.Stderr
@@ -129,7 +157,7 @@ func Run(skipBrewUpdate bool, currentVersion string, out, errOut io.Writer) erro
 func brewLatestVersion() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), brewInfoTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "brew", "info", "--json=v2", brewFormula)
+	cmd := newBoundedBrewCmd(ctx, "info", "--json=v2", brewFormula)
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {

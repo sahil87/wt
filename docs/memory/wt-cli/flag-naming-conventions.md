@@ -56,8 +56,12 @@ inconsistent verb (`--skip-*`). The default (behavior ON) is preserved; passing
 
 - Current `--no-*` booleans and their string-typed deprecated aliases:
   `--no-init` (alias `--worktree-init true|false`, string); `--no-remote`
-  (alias `--delete-remote true|false`, string); `--no-brew-update` (alias
-  `--skip-brew-update`).
+  (alias `--delete-remote true|false`, string).
+- **`--no-brew-update` is a `--no-*` boolean but NOT a rename** — its sibling
+  `--skip-brew-update` is a **visible, non-deprecated** toolkit contract flag, not
+  a deprecated alias (see the frozen-contract-flag carve-out below and
+  [`update-command-contract`](/wt-cli/update-command-contract.md)). Both bind one
+  bool; neither is hidden or warns.
 - **Genuine tri-states stay strings.** `--branch` (`true|false|auto`) KEEPS its
   string type because `auto` is a real third state, not a
   boolean — see [`create-branch-semantics`](/wt-cli/create-branch-semantics.md)
@@ -116,9 +120,11 @@ old flag is ever removed. Precedent: `src/cmd/wt/delete.go`'s pre-existing
 - **Deprecation message wording** is the consistent `"use --<new> instead"` form.
 - **Same-type renames share one variable.** For `--name`/`--worktree-name`,
   `--open`/`--worktree-open`, `--all`/`--delete-all`, `--branch`/`--delete-branch`,
-  `--select`/`--go`, `--no-brew-update`/`--skip-brew-update`, both flags bind the
-  SAME pointer (pflag permits this) — the internal variable name and any downstream
-  signature are unchanged, so the rename is purely `cmd/`-layer flag surface.
+  `--select`/`--go`, both flags bind the SAME pointer (pflag permits this) — the
+  internal variable name and any downstream signature are unchanged, so the rename
+  is purely `cmd/`-layer flag surface. (`--skip-brew-update`/`--no-brew-update` also
+  share one pointer, but that pair is NOT a `MarkDeprecated` rename — see the
+  frozen-contract-flag carve-out below.)
 - **String→bool conversions use two variables reconciled via `Changed()`.** For
   `--no-init` (vs. old string `--worktree-init`) and `--no-remote` (vs. old string
   `--delete-remote`), the types differ, so a shared pointer is impossible. The old
@@ -138,6 +144,32 @@ old flag is ever removed. Precedent: `src/cmd/wt/delete.go`'s pre-existing
 - **GIVEN** any renamed flag
 - **WHEN** the user passes the NEW name (no old flag)
 - **THEN** the command behaves correctly and NO deprecation warning is printed.
+
+### Carve-out: a toolkit-standard frozen contract flag may not be hidden via `MarkDeprecated`
+A flag whose exact name a **published shll toolkit standard freezes as a `--help`
+substring contract** SHALL stay **visible and non-deprecated** — the
+`MarkDeprecated` rename mechanism above yields to the standard. Hiding such a flag
+(the pflag auto-hide) breaks the standard's `strings.Contains` probe, and printing
+a deprecation warning on a flag the toolkit passes on every run is noise. When the
+repo's `--no-*` convention also wants a name, register **both** as visible flags
+bound to one bool (no `MarkDeprecated`); the standard-frozen name carries the
+canonical help text and the convention name reads `alias for --<standard-name>`.
+
+- **Instance**: `--skip-brew-update` is frozen by the shll `update` standard (probed
+  via `strings.Contains` before every toolkit-wide run), so it is visible and
+  non-deprecated; `--no-brew-update` is a visible alias satisfying the `--no-*`
+  convention. Neither is hidden and neither warns
+  ([`update-command-contract`](/wt-cli/update-command-contract.md),
+  [`toolkit-standards-conformance`](/wt-cli/toolkit-standards-conformance.md)).
+- This is the one place the additive-rename shape does NOT apply: the standard's
+  substring contract is the higher authority (Constitution § Toolkit Standards binds
+  published standards without amendment).
+
+#### Scenario: a contract flag stays visible instead of being deprecated
+- **GIVEN** `wt update`, whose `--skip-brew-update` name is a standard-frozen `--help` substring
+- **WHEN** the repo also wants the `--no-brew-update` negation name
+- **THEN** both are registered visible on one bool (no `MarkDeprecated`), so
+  `wt update --help` contains the literal `--skip-brew-update` and neither flag prints a warning.
 
 ### Command aliases for git/unix muscle memory
 Commands with a familiar git/unix equivalent SHALL carry a cobra `Aliases:` entry
@@ -198,9 +230,12 @@ mode — a silent, hard-to-debug footgun.
   per-subcommand flag tables where each new primary name is listed and each old
   name is enumerated as a deprecated alias; the command aliases in the headers.
 - Sibling memory: [`update-command-contract`](/wt-cli/update-command-contract.md)
-  — the `--no-brew-update` primary / `--skip-brew-update` deprecated alias, and
-  the amended cross-toolkit clause that this additive-rename mechanism made
-  compatible with the shared-contract guarantee.
+  — the `--skip-brew-update` visible contract flag / `--no-brew-update` visible
+  alias (the frozen-contract-flag carve-out instance) and the brew-handling safety
+  contract.
+- Sibling memory: [`toolkit-standards-conformance`](/wt-cli/toolkit-standards-conformance.md)
+  — the shll `update` standard that freezes `--skip-brew-update` as a `--help`
+  substring, the authority behind the carve-out above.
 - Sibling memory: [`go-command-contract`](/wt-cli/go-command-contract.md) — the
   `wt open --select` composition flag (formerly `--go`, now a deprecated alias)
   and the `--app` `-a` short.
@@ -223,7 +258,8 @@ mode — a silent, hard-to-debug footgun.
   ["rm"]`; `--dry-run` long-only, added by `260717-p5m9`),
   `src/cmd/wt/open.go` (`--select` + deprecated `--go`, `--app`/`-a`),
   `src/cmd/wt/list.go` (`Aliases: ["ls"]`), `src/cmd/wt/update.go`
-  (`--no-brew-update` + deprecated `--skip-brew-update`), `src/cmd/wt/init.go`
+  (both `--skip-brew-update` contract flag and `--no-brew-update` alias visible on
+  one bool, no `MarkDeprecated` — the carve-out instance), `src/cmd/wt/init.go`
   (Short-text sharpening, no flag change).
 - Tests: `src/cmd/wt/create_test.go`, `delete_test.go`, `open_test.go`,
   `list_test.go`, `update_test.go`, `init_test.go`, `integration_test.go` — cover

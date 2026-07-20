@@ -19,9 +19,10 @@ func main() {
 
 Shell wrapper (recommended):
   To enable the "Open here" menu option (cd into a worktree in the current
-  shell), add this to your shell profile (~/.bashrc or ~/.zshrc):
+  shell), add this to your shell profile:
 
-    eval "$(wt shell-init)"`,
+    eval "$(wt shell-init zsh)"     # in ~/.zshrc
+    eval "$(wt shell-init bash)"    # in ~/.bashrc`,
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
