@@ -4,16 +4,18 @@
 is `git`. Pick the install path that fits your setup, then wire up the shell
 wrapper so the "Open here" menu option can actually `cd` your shell.
 
-## Homebrew (preferred)
+## Via shll.ai (preferred)
 
 ```bash
-brew install sahil87/tap/wt
+curl -fsSL https://shll.ai/install | sh -s -- wt
 ```
 
-This pulls the latest release from the
-[`sahil87/homebrew-tap`](https://github.com/sahil87/homebrew-tap) formula. To
-upgrade later, `wt update` self-updates via Homebrew (see the
-[workflows reference](./workflows.md#wt-update)).
+Installs wt (plus the shll meta-CLI) via Homebrew, handling tap trust
+automatically. To install the entire [shll toolkit](https://shll.ai) instead,
+drop the `-s -- wt` suffix; if you already have the `shll` meta-CLI,
+`shll install wt` does the same thing. For the full install story, see
+[https://shll.ai](https://shll.ai). To upgrade later, `wt update` self-updates
+via Homebrew (see the [workflows reference](./workflows.md#wt-update)).
 
 ## Manual (requires Go and `just`)
 
