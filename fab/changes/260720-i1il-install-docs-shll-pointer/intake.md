@@ -35,7 +35,7 @@ Full-tree grep over `README.md` and `docs/site/` for `brew install`, `sahil87/ta
 
 Replace lines 7–16 (the `## Homebrew (preferred)` section) with a shll.ai-pointer section mirroring the README's already-conformant install copy:
 
-```markdown
+````markdown
 ## Via shll.ai (preferred)
 
 ```bash
@@ -48,7 +48,7 @@ drop the `-s -- wt` suffix; if you already have the `shll` meta-CLI,
 `shll install wt` does the same thing. For the full install story, see
 [https://shll.ai](https://shll.ai). To upgrade later, `wt update` self-updates
 via Homebrew (see the [workflows reference](./workflows.md#wt-update)).
-```
+````
 
 Preserved from the old section: the upgrade pointer (`wt update` self-updates via Homebrew → workflows reference). Dropped: the `brew install sahil87/tap/wt` fenced block and the direct `sahil87/homebrew-tap` formula link (the per-formula documentation Policy B prohibits).
 
