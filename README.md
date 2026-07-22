@@ -78,7 +78,8 @@ $ wt delete lively-otter      # removes worktree (and optionally the branch)
 |---------|---------|
 | `wt create [branch]` (alias `wt new`) | Create a worktree on a **new** branch (random name, or the named positional). Key flags: `--checkout <branch>` (existing branch), `--base <ref>`, `--reuse`, `--name`/`-n`, `--non-interactive`. |
 | `wt list` (alias `wt ls`) | List all worktrees with name, branch, and path. Add `--status` for dirty/unpushed indicators; `--path` and `--json` for scripting. |
-| `wt open [name\|path]` | Open a worktree in a detected app (editor, terminal, file manager). `--app`/`-a` to skip the menu. |
+| `wt open [name\|path]` | Open a worktree — or any directory — in a detected app (editor, terminal, file manager). No arg opens the current context; `--app`/`-a` skips the app menu. |
+| `wt go [name]` | Pick a worktree (menu or by name) and `cd` there via the shell wrapper. `--open` launches the selection instead (menu with `--open prompt`). |
 | `wt delete [names...]` (alias `wt rm`) | Delete one or more worktrees with optional branch cleanup. |
 | `wt init` | Run the worktree init script (default `fab sync`, override via `WORKTREE_INIT_SCRIPT`). |
 | `wt shell-init <shell>` | Print a shell wrapper function (`zsh` or `bash`) for `eval` in your shell profile. |
@@ -108,35 +109,42 @@ back at the positional/`--base` form.
 
 The ref is validated via `git rev-parse --verify` before worktree creation, so invalid refs produce a clear error rather than a partial failure.
 
-### `wt open` — context-aware launcher
+### `wt open` and `wt go` — launcher and selector
 
-`wt open` is the one command worth knowing in detail. It's the canonical
-directory launcher in the toolkit (`hop` delegates to it too), and what it
-does depends on where you run it from and what you pass it:
+The two commands split along two axes — **selection** (which directory) and
+**action** (navigate vs. launch). Each menu lives in exactly one verb: `wt go`
+owns the "which worktree?" menu, `wt open` owns the "which app?" menu. Compose
+them with `wt go --open`:
 
-| Where you are | What you type | What happens |
-|---------------|---------------|--------------|
-| Inside a worktree | `wt open` | Opens the **current** worktree in your editor / terminal / file manager. |
-| In the main repo | `wt open` | Shows a **worktree-selection menu** (most recently modified is highlighted). |
-| In a non-git directory | `wt open` | Opens the **current directory** (equivalent to `wt open .`). |
-| Anywhere | `wt open lively-otter` | Resolves the name against this repo's worktrees and opens it. (Requires a git repo.) |
-| Anywhere | `wt open /tmp/notes` | Opens that directory literally — git context doesn't matter. |
-| Anywhere | `wt open --app cursor` | Skips the menu and opens in the named app. |
+| Invocation | Worktree menu? | App menu? | Result |
+|---|---|---|---|
+| `wt go` | yes | no | `cd` to selection |
+| `wt go frosty-fox` | no | no | `cd` directly |
+| `wt go --open prompt` | yes | yes | launch selection in chosen app |
+| `wt go --open code` | yes | no | launch selection in VS Code |
+| `wt open` | no | yes | launch *current* dir (worktree root / repo root / cwd) |
+| `wt open <name\|path>` | no | yes | launch that dir |
+| `wt open --app code` | no | no | launch current dir in VS Code |
 
-The menu lists the apps wt detected on your machine (editors, terminals, file
-managers) plus an **"Open here"** option that `cd`s your current shell into
-the target — that one needs the shell wrapper (see [Gotchas](#gotchas)).
+`wt open` is the canonical directory **launcher** in the toolkit (`hop`
+delegates to it too): no arg opens the current context, a name resolves against
+this repo's worktrees (requires a git repo), and a path opens literally — git
+context doesn't matter. The app menu lists the apps wt detected on your machine
+(editors, terminals, file managers) plus an **"Open here"** option that `cd`s
+your current shell into the target — that one needs the shell wrapper (see
+[Gotchas](#gotchas)).
 
-Running `wt open` from the main repo, with two worktrees on disk:
+Picking a worktree and launching it, with two worktrees on disk:
 
 ```text
-$ wt open
+$ wt go --open prompt
 Select worktree to open:
-  1) lively-otter (feature/spinner) (default)
-  2) bold-fox    (fix/race-condition)
+  1) main (main)
+  2) lively-otter (feature/spinner) (default)
+  3) bold-fox (fix/race-condition)
   0) Cancel
 
-Choice [1]: 1
+Choice [2]: 2
 Open in:
   1) Open here
   2) VSCode (default)

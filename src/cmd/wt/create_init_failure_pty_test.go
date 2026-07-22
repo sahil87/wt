@@ -19,8 +19,9 @@ import (
 // code back through its own exit code.
 //
 // Host-side-effect safety (code-review.md): wt is invoked with
-// --worktree-open=open_here, the cooperative app that only prints a `cd` line
-// (and never under WT_TEST_NO_LAUNCH short-circuits it anyway). No real
+// --worktree-open=open_here, the cooperative app that only records the
+// navigation target via wt.NavigateTo (stderr → confirmation + bare path on
+// stdout; and never under WT_TEST_NO_LAUNCH short-circuits it anyway). No real
 // editor/tmux/byobu window is ever created. The PTY env also clears
 // TMUX/BYOBU_*/TERM_PROGRAM and sets WT_TEST_NO_LAUNCH=1.
 
@@ -87,9 +88,10 @@ func runInteractiveInitFailure(t *testing.T, repo, wtName, answer string) (strin
 
 // TestCreate_InitFailureInteractive_OpenAnyway exercises the interactive Yes
 // path: the open-anyway prompt is shown, the user answers Yes, control falls
-// through to the existing Open phase (open_here prints a cd line), and the
-// process STILL exits ExitInitFailed (7) — a successful open must not downgrade
-// the exit to 0. The worktree and branch are kept.
+// through to the existing Open phase (open_here emits NavigateTo's stderr `→`
+// confirmation and the bare path on stdout), and the process STILL exits
+// ExitInitFailed (7) — a successful open must not downgrade the exit to 0. The
+// worktree and branch are kept.
 func TestCreate_InitFailureInteractive_OpenAnyway(t *testing.T) {
 	repo := createTestRepo(t)
 
@@ -101,8 +103,13 @@ func TestCreate_InitFailureInteractive_OpenAnyway(t *testing.T) {
 	// The banner (now with the wt go hint) and the open-anyway prompt are shown.
 	assertContains(t, out, "wt go 'open-anyway-yes'")
 	assertContains(t, out, "Continue and open the worktree anyway?")
-	// Yes fell through to the Open phase: open_here prints a cd line.
-	assertContains(t, out, "cd -- '")
+	// Yes fell through to the Open phase: open_here routes through NavigateTo —
+	// the `→` confirmation is emitted, and with WT_CD_FILE unset (and no
+	// wrapper) the shell-wrapper hint is shown. The retired `cd -- '` form must
+	// never reappear (launcher-contract.md §3, v2).
+	assertContains(t, out, "→ ")
+	assertContains(t, out, "cd needs the shell wrapper")
+	assertNotContains(t, out, "cd -- '")
 	// Worktree + branch are kept.
 	assertWorktreeExists(t, repo, "open-anyway-yes")
 	assertBranchExists(t, repo, "open-anyway-yes")
@@ -122,8 +129,9 @@ func TestCreate_InitFailureInteractive_DeclineOpen(t *testing.T) {
 	}
 	assertContains(t, out, "wt go 'open-anyway-no'")
 	assertContains(t, out, "Continue and open the worktree anyway?")
-	// No: the Open phase did not run — no open_here cd line and no "Open in:" menu.
-	assertNotContains(t, out, "cd -- '")
+	// No: the Open phase did not run — no NavigateTo confirmation and no
+	// "Open in:" menu.
+	assertNotContains(t, out, "→ ")
 	assertNotContains(t, out, "Open in:")
 	// Worktree + branch are still kept.
 	assertWorktreeExists(t, repo, "open-anyway-no")

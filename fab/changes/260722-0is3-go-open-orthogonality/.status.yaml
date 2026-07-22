@@ -1,0 +1,56 @@
+id: 0is3
+name: 260722-0is3-go-open-orthogonality
+created: 2026-07-22T11:25:52Z
+created_by: sahil-noon
+change_type: refactor
+issues: []
+progress:
+    intake: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: done
+    review-pr: done
+plan:
+    generated: true
+    task_count: 15
+    acceptance_count: 25
+    acceptance_completed: 24
+confidence:
+    certain: 3
+    confident: 7
+    tentative: 0
+    unresolved: 0
+    score: 4.0
+    fuzzy: true
+    dimensions:
+        signal: 65.5
+        reversibility: 74.5
+        competence: 82.5
+        disambiguation: 73.0
+stage_metrics:
+    intake: {started_at: "2026-07-22T11:25:52Z", driver: fab-new, iterations: 1, completed_at: "2026-07-22T11:47:35Z"}
+    apply: {started_at: "2026-07-22T11:47:35Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-22T12:16:43Z"}
+    review: {started_at: "2026-07-22T12:16:43Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-22T12:23:31Z"}
+    hydrate: {started_at: "2026-07-22T12:23:31Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-22T12:33:18Z"}
+    ship: {started_at: "2026-07-22T12:33:18Z", driver: fab-fff, iterations: 1, completed_at: "2026-07-22T12:35:15Z"}
+    review-pr: {started_at: "2026-07-22T12:35:15Z", driver: git-pr, iterations: 1, completed_at: "2026-07-22T12:37:02Z"}
+prs:
+    - https://github.com/sahil87/wt/pull/52
+true_impact:
+    added: 2450
+    deleted: 1046
+    net: 1404
+    excluding:
+        added: 998
+        deleted: 532
+        net: 466
+    tests:
+        added: 615
+        deleted: 229
+        net: 386
+    computed_at: "2026-07-22T12:35:15Z"
+    computed_at_stage: ship
+summary: Make wt go the sole selection verb with --open launch composition; purify wt open into a pure launcher (repo-root no-arg, --app orthogonal, --select/--go deprecated toward wt go --open); unify shell-cd on wt.NavigateTo
+# true_impact: lazily created on first stage-finish that computes it (no placeholder here).
+last_updated: 2026-07-22T12:37:02Z

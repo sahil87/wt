@@ -1,8 +1,8 @@
 # Workflows & command reference
 
 The depth behind `wt` — every command and flag, the `wt create --base`
-start-point rules, the `wt open` launcher matrix, and the gotchas worth knowing.
-New here? Start with the [install guide](./install.md).
+start-point rules, the `wt open`/`wt go` launcher-and-selector matrix, and the
+gotchas worth knowing. New here? Start with the [install guide](./install.md).
 
 Run `wt <command> --help` for the same reference inline at your terminal.
 
@@ -12,7 +12,8 @@ Run `wt <command> --help` for the same reference inline at your terminal.
 |---------|---------|
 | `wt create [branch]` | Create a worktree as a sibling of the main repo. |
 | `wt list` | List all worktrees with name, branch, and path. |
-| `wt open [name\|path]` | Open a worktree (or any directory) in a detected app. |
+| `wt open [name\|path]` | Open a worktree (or any directory) in a detected app. No arg opens the current context. |
+| `wt go [name]` | Pick a worktree (menu or by name) and `cd` there; `--open` launches it instead. |
 | `wt delete [names...]` | Delete one or more worktrees with optional branch cleanup. |
 | `wt init` | Run the per-worktree init script. |
 | `wt shell-init <shell>` | Print the shell wrapper function (`zsh` or `bash`) for `eval`. |
@@ -37,9 +38,7 @@ an error — put a worktree on an existing branch explicitly with
 | `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for new branches. See the table below. |
 | `--checkout <branch>` | (none) | Check out an **existing** branch (local or remote) into the new worktree. Mutually exclusive with the positional and `--base`. |
 
-On success the worktree path is written as the last line of stdout (suppressed
-when the chosen app was "Open here", because the shell wrapper consumed it via
-`WT_CD_FILE`).
+On success the worktree path is always written as the last line of stdout.
 
 ### `wt list`
 
@@ -57,12 +56,27 @@ per-worktree git invocations occur unless you ask for `--status`.
 ### `wt open [name|path]`
 
 The canonical directory launcher in the toolkit (other tools, like `hop`,
-delegate to it). What it does depends on where you run it and what you pass —
-see the [launcher matrix](#wt-open--context-aware-launcher).
+delegate to it). With no argument it opens the current context (worktree root /
+repo root / cwd); a name resolves against this repo's worktrees; a path opens
+literally — see the [launcher matrix](#wt-open-and-wt-go--launcher-and-selector).
+Worktree *selection* is `wt go`'s job.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--app <name\|default>` | (none) | Open directly in the named app, skipping the menu. `default` selects the auto-detected default. Incompatible with the main-repo selection menu. |
+| `--app <name\|default>`, `-a` | (none) | Open directly in the named app, skipping the app menu. `default` selects the auto-detected default. Works with every target form, including no-arg. |
+| `--list [--json]` | `false` | List the detected launchable host apps and exit — no menu, no launch, no git repo required. `--json` emits `{id, label, kind}` records; every `id` is accepted by `wt open <path> -a <id>`. |
+
+### `wt go [name]`
+
+The worktree **selector**: pick a worktree of the current repo (menu when no
+name; resolve-by-name otherwise — the name `main` resolves to the repo root)
+and `cd` there via the shell wrapper. With `--open`, the selection is launched
+instead of navigated to — the composition mirroring `wt create --open`.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--open <prompt\|default\|skip\|<app>>` | (unset — navigate) | Launch the selection: `prompt` shows the app menu, `default` uses the auto-detected app, an app name launches directly, `skip` navigates. An explicit value is always required. |
+| `--non-interactive` | `false` | No prompts. With no name, refuses deterministically instead of showing the menu. |
 
 ### `wt delete [worktree-names...]`
 
@@ -138,39 +152,43 @@ whether the branch already exists:
 The ref is validated with `git rev-parse --verify` before worktree creation, so
 an invalid ref produces a clear error rather than a partial failure.
 
-## `wt open` — context-aware launcher
+## `wt open` and `wt go` — launcher and selector
 
-`wt open` is the one command worth knowing in detail. What it does depends on
-where you run it from and what you pass it:
+The two commands split along two axes — **selection** (which directory) and
+**action** (navigate vs. launch). Each menu lives in exactly one verb: `wt go`
+owns the "which worktree?" menu, `wt open` owns the "which app?" menu. Compose
+them with `wt go --open`:
 
-| Where you are | What you type | What happens |
-|---------------|---------------|--------------|
-| Inside a worktree | `wt open` | Opens the **current** worktree in your editor / terminal / file manager. |
-| In the main repo | `wt open` | Shows a **worktree-selection menu** (most recently modified is highlighted). |
-| In a non-git directory | `wt open` | Opens the **current directory** (equivalent to `wt open .`). |
-| Anywhere | `wt open lively-otter` | Resolves the name against this repo's worktrees and opens it. (Requires a git repo.) |
-| Anywhere | `wt open /tmp/notes` | Opens that directory literally — git context doesn't matter. |
-| Anywhere | `wt open --app cursor` | Skips the menu and opens in the named app. |
+| Invocation | Worktree menu? | App menu? | Result |
+|---|---|---|---|
+| `wt go` | yes | no | `cd` to selection |
+| `wt go frosty-fox` | no | no | `cd` directly |
+| `wt go --open prompt` | yes | yes | launch selection in chosen app |
+| `wt go --open code` | yes | no | launch selection in VS Code |
+| `wt open` | no | yes | launch *current* dir (worktree root / repo root / cwd) |
+| `wt open <name\|path>` | no | yes | launch that dir |
+| `wt open --app code` | no | no | launch current dir in VS Code |
 
-Path-arg precedence: when you supply an argument, `wt` tries it as a literal
-directory path first; only if that's not an existing directory (and the cwd is
-inside a git repo) does it fall back to resolving the argument as a worktree
-name.
+Path-arg precedence: when you supply an argument to `wt open`, `wt` tries it as
+a literal directory path first; only if that's not an existing directory (and
+the cwd is inside a git repo) does it fall back to resolving the argument as a
+worktree name.
 
-The menu lists the apps `wt` detected on your machine (editors, terminals, file
-managers) plus an **"Open here"** option that `cd`s your current shell into the
-target — that one needs the shell wrapper (see [Gotchas](#gotchas)).
+The app menu lists the apps `wt` detected on your machine (editors, terminals,
+file managers) plus an **"Open here"** option that `cd`s your current shell
+into the target — that one needs the shell wrapper (see [Gotchas](#gotchas)).
 
-Running `wt open` from the main repo, with two worktrees on disk:
+Picking a worktree and launching it, with two worktrees on disk:
 
 ```text
-$ wt open
+$ wt go --open prompt
 Select worktree to open:
-  1) lively-otter (feature/spinner) (default)
-  2) bold-fox    (fix/race-condition)
+  1) main (main)
+  2) lively-otter (feature/spinner) (default)
+  3) bold-fox (fix/race-condition)
   0) Cancel
 
-Choice [1]: 1
+Choice [2]: 2
 Open in:
   1) Open here
   2) VSCode (default)

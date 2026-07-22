@@ -59,9 +59,10 @@ and a branch that exists neither locally nor remotely fails with
 [--base <ref>]`). The worktree name is suggested from the branch name via
 `DeriveWorktreeName`.
 
-On success, the worktree path is written as the last line of stdout (suppressed
-when the chosen app was `open_here` because the wrapper consumed it via
-`WT_CD_FILE`).
+On success, the worktree path is always written as the last line of stdout.
+(When the chosen app was `open_here`, the unified shell-cd contract's own
+path emission precedes it — the contract is "the path is the last line", not
+"exactly one line".)
 
 Exit codes: `ExitInvalidArgs` for flag misuse (including `--checkout` combined
 with a positional argument or with `--base`), invalid `--base`/branch name, a
@@ -100,6 +101,23 @@ Exit codes: `ExitInvalidArgs` if `--path` is combined with `--json` or
 `--status`; `ExitGitError` if `git worktree list --porcelain` fails;
 `ExitGeneralError` if `--path` cannot resolve the name.
 
+## Selection × action model: `wt go` vs `wt open`
+
+The two verbs split along two axes — **selection** (which directory) and
+**action** (navigate vs. launch). Each menu lives in exactly one verb: `go`
+owns the "which worktree?" menu, `open` owns the "which app?" menu. Composition
+is via `wt go --open` (same value grammar as `wt create --open`).
+
+| Invocation | Worktree menu? | App menu? | Result |
+|---|---|---|---|
+| `wt go` | yes | no | cd to selection |
+| `wt go frosty-fox` | no | no | cd directly |
+| `wt go --open prompt` | yes | yes | launch selection in chosen app |
+| `wt go --open code` | yes | no | launch selection in VS Code |
+| `wt open` | no | yes | launch *current* dir (worktree root / repo root / cwd) |
+| `wt open <name\|path>` | no | yes | launch that dir |
+| `wt open --app code` | no | no | launch current dir in VS Code |
+
 ## `wt open [name|path]`
 
 Open a directory in a detected application (editor, terminal, file manager).
@@ -107,25 +125,29 @@ Open a directory in a detected application (editor, terminal, file manager).
 `hop`) MAY delegate to it via subprocess invocation. The full env-var contract
 is documented in [`launcher-contract.md`](launcher-contract.md). Worktree
 **selection** (picking which worktree) is the job of [`wt go`](#wt-go-name);
-`wt open --select` composes the two (select, then launch).
+`wt go --open` composes the two (select, then launch). `wt open` runs no
+worktree-selection menu on any path.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--app`, `-a <name\|default>` | (none) | Open directly in the named app, skipping the menu. `default` selects the auto-detected default. |
-| `--select` | `false` | Select a worktree first (via `wt go`'s menu when no name is given, or resolve-by-name when one is), then launch it. Requires a git repository; composes with `--app`. From a non-git cwd, exits `ExitGitError`. |
-| `--list` | `false` | List the detected launchable host apps (kinds `editor` / `terminal` / `file-manager`) and exit — no menu, no launch, **no git repository required** (the branch runs before git-context detection). Action rows (`open_here`, `copy_*`, `byobu_tab`, `tmux_window`, `tmux_session`) are excluded from the listing but remain in the interactive menu and remain valid `--app` values. Human output is an aligned Id / Label / Kind table in `BuildAvailableApps()` detection order. Mutually exclusive with a positional target, `--app`, and `--select`. |
+| `--app`, `-a <name\|default>` | (none) | Open directly in the named app, skipping the app menu. `default` selects the auto-detected default. Composes with every target form, including the no-arg current-context forms. |
+| `--list` | `false` | List the detected launchable host apps (kinds `editor` / `terminal` / `file-manager`) and exit — no menu, no launch, **no git repository required** (the branch runs before git-context detection). Action rows (`open_here`, `copy_*`, `byobu_tab`, `tmux_window`, `tmux_session`) are excluded from the listing but remain in the interactive menu and remain valid `--app` values. Human output is an aligned Id / Label / Kind table in `BuildAvailableApps()` detection order. Mutually exclusive with a positional target, `--app`, and `--select` (or `--go`). |
 | `--json` | `false` | With `--list`, emit the app registry as a JSON array of `{id, label, kind}` records — `id` is the internal command key (`AppInfo.Cmd`, the exact token `wt open <path> -a <id>` accepts), `label` the display name, `kind` one of `editor` / `terminal` / `file-manager`. Zero detected apps emit `[]` (never `null`) and exit 0. Without `--list`, exits `ExitInvalidArgs`. |
 
-**Deprecated alias** (still accepted; hidden from `--help`; prints a stderr deprecation warning): `--go` → `--select`.
+**Deprecated aliases** (still accepted; hidden from `--help`; print a stderr
+deprecation warning `use "wt go --open" instead`): `--select` and `--go` — the
+former select-then-launch composition flags. Both still perform the full
+select-then-launch flow (menu when no name, resolve-by-name when one is given;
+require a git repository, else `ExitGitError`; compose with `--app`) until a
+later removal change.
 
-Positional arg `[name|path]`:
+Positional arg `[name|path]` — omitted, the **current context** is opened:
 
-- Omitted, called from inside a worktree: opens the current worktree.
-- Omitted, called from the main repo: shows a worktree-selection menu. The
-  **main worktree is pinned to row 1** (rendered `main (<branch>)`); non-main
-  worktrees follow newest-first below it. The default highlight is the most
-  recently modified *non-main* worktree (or the main row when it is the only
-  entry).
+- Omitted, called from inside a worktree: opens the current worktree root.
+- Omitted, called from the main repo (a non-worktree git cwd): opens the
+  **repo root** (tab-named `main`). A one-line transitional stderr tip points
+  worktree-picking at the selection verb:
+  `tip: to pick a worktree, use wt go (or wt go --open)`.
 - Omitted, called from a non-git directory: opens the current working
   directory (equivalent to `wt open .`).
 - Existing directory path: treated as a literal path. Works regardless of git
@@ -137,39 +159,51 @@ Positional arg `[name|path]`:
   main worktree (the repo root); an exact-basename match takes precedence, so a
   worktree directory literally named `main` still resolves to that worktree.
 
-Exit codes: `ExitInvalidArgs` when `--app` is used with the main-repo selection
-menu, when `--list` is combined with a positional target / `--app` / `--select`
-(or `--go`), or when `--json` is passed without `--list` (all `--list`/`--json`
-validation happens at flag-check time, before any detection or git work);
-`ExitGitError` when a git operation fails during name resolution, or when
-`--select` is invoked from a non-git cwd (the `--select` git-repo precondition) — but
-not for path-only or no-args invocations from outside a repo;
-`ExitByobuTabError` / `ExitTmuxWindowError` for terminal-app failures;
-`ExitGeneralError` for unknown apps, unresolved targets, or name args supplied
-from a non-git cwd.
+Choosing "Open here" in the app menu (or `--app open_here`) records the target
+via the unified shell-cd contract shared with `wt go` — `WT_CD_FILE` write when
+set, bare resolved path as the last stdout line, stderr confirmation — see
+[`launcher-contract.md`](launcher-contract.md) §3.
+
+Exit codes: `ExitInvalidArgs` when `--list` is combined with a positional
+target / `--app` / `--select` (or `--go`), or when `--json` is passed without
+`--list` (all `--list`/`--json` validation happens at flag-check time, before
+any detection or git work); `ExitGitError` when a git operation fails during
+name resolution, or when `--select`/`--go` is invoked from a non-git cwd (the
+selection git-repo precondition) — but not for path-only or no-args invocations
+from outside a repo; `ExitByobuTabError` / `ExitTmuxWindowError` for
+terminal-app failures; `ExitGeneralError` for unknown apps, unresolved targets,
+or name args supplied from a non-git cwd. (The former `ExitInvalidArgs`
+"`--app` with the main-repo selection menu" case is retired — there is no menu
+on that path; `--app` from the main repo opens the repo root.)
 
 ## `wt go [name]`
 
-Select a worktree of the current repository and **navigate** there. `wt go` is
-the worktree **selector** (the counterpart to `wt open`, the launcher): it
-changes the shell's working directory to the chosen worktree and launches
-nothing. Navigation reuses the same `WT_CD_FILE` shell-cd plumbing as the
-launcher's "Open here" option — see [`launcher-contract.md`](launcher-contract.md) §3.
+Select a worktree of the current repository and act on it. `wt go` is the
+worktree **selector** (the counterpart to `wt open`, the launcher): it owns the
+"which worktree?" menu. By default the selection is **navigated** to (the
+shell's working directory changes; nothing is launched); with `--open` the
+selection is **launched** instead — the selector composing with the launcher,
+mirroring `wt create --open`. Navigation uses the same unified `WT_CD_FILE`
+shell-cd contract as the launcher's "Open here" option — see
+[`launcher-contract.md`](launcher-contract.md) §3.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--non-interactive` | `false` | No prompts. With no name, refuses deterministically (a no-arg selection menu has no non-interactive default) instead of prompting. |
+| `--open <prompt\|default\|skip\|<app>>` | (unset — navigate) | What to do with the selection: `prompt` shows the "Open in:" app menu, `default` launches the auto-detected default app, an app name (e.g. `code`, `cursor`, `tmux_window`) launches it directly, `skip` navigates (equivalent to omitting the flag; kept for grammar parity with `wt create --open`). Requires an explicit value (no bare form — a bare `--open code` would be parsed as the positional `[name]`). No short flag. A non-`skip` value replaces navigation with launch — it does not also cd the parent shell (`--open open_here` yields navigation via the unified shell-cd contract). |
+| `--non-interactive` | `false` | No prompts. With no name, refuses deterministically (a no-arg selection menu has no non-interactive default) instead of prompting — regardless of `--open`. With a name, an explicit `--open prompt` is honored as-is (mirroring `wt create --open`, where the flag only affects `--open`'s default). |
 
 Positional arg `[name]`:
 
-- Omitted: shows a worktree-selection menu for the current repo. The **main
+- Omitted: shows the worktree-selection menu for the current repo. The **main
   worktree is pinned to row 1** (rendered `main (<branch>)`); non-main worktrees
   follow newest-first below it, branch shown per entry. The pre-selected default
   is the newest *non-main* worktree (or the main row when it is the only entry).
   Reachable from anywhere in the repository — the main repo **or** inside another
-  worktree. On selection, navigates to the chosen worktree.
-- Provided: resolved as a worktree name (case-insensitive); navigates there
-  directly with no menu. The name `main` resolves to the main worktree (the repo
+  worktree. On selection, navigates to (or, with `--open`, launches) the chosen
+  worktree. With `--open prompt`, the selection menu and the "Open in:" menu run
+  on one shared menu session (single stdin reader).
+- Provided: resolved as a worktree name (case-insensitive); acted on directly
+  with no worktree menu. The name `main` resolves to the main worktree (the repo
   root); an exact-basename match takes precedence, so a worktree directory
   literally named `main` still resolves to that worktree.
 
@@ -177,17 +211,21 @@ Positional arg `[name]`:
 repo's worktree list. It is scoped to the current repo's worktrees only;
 cross-repo navigation is `hop`'s job.
 
-Navigation mechanism: the resolved absolute path is written to `WT_CD_FILE`
-(when set; mode `0600`, truncate-on-write) so the `wt shell-init` wrapper cd's
-the parent shell there, **and** is printed to stdout as the last line so the
-no-wrapper scripting form works: `cd "$(command wt go some-name)"`. When
-`WT_CD_FILE` is unset and `WT_WRAPPER` is not `1`, the same "shell wrapper not
-loaded" hint the launcher prints applies. `wt go` never cd's the parent shell
-directly.
+Navigation mechanism (the unified shell-cd contract, shared with "Open here"):
+the resolved absolute path is written to `WT_CD_FILE` (when set; mode `0600`,
+truncate-on-write) so the `wt shell-init` wrapper cd's the parent shell there,
+**and** is printed to stdout as the last line so the no-wrapper scripting form
+works: `cd "$(command wt go some-name)"`. When `WT_CD_FILE` is unset and
+`WT_WRAPPER` is not `1`, the "shell wrapper not loaded" hint applies. `wt go`
+never cd's the parent shell directly.
 
 Exit codes: `ExitGitError` (3) when the cwd is not in a git repository or
 `git worktree list` fails; `ExitGeneralError` (1) for an unknown worktree name,
-or for a no-arg invocation under `--non-interactive`.
+for a no-arg invocation under `--non-interactive`, or — via `--open` — for an
+unknown app / no detected default app; `ExitByobuTabError` (5) /
+`ExitTmuxWindowError` (6) when a `--open` launch into a byobu tab / tmux
+window-or-session fails (the launcher exit codes, gained through the `--open`
+composition).
 
 ## `wt delete [worktree-names...]`
 

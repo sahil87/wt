@@ -224,8 +224,8 @@ func tabName(repoName, wtName string) string {
 // stderr and returns nil instead of exec'ing a GUI/terminal/clipboard binary.
 // Defaulted ON in cmd/wt's runWt test helper so `go test ./...` cannot leak
 // real VSCode/iTerm/etc. windows onto the developer's host. The "open_here"
-// case is exempt because it is cooperative (writes to WT_CD_FILE or stdout)
-// and has no host side effect.
+// case is exempt because it is cooperative (writes to WT_CD_FILE / stdout via
+// the unified NavigateTo helper) and has no host side effect.
 func OpenInApp(appCmd, path, repoName, wtName string) error {
 	if appCmd != "open_here" && os.Getenv("WT_TEST_NO_LAUNCH") == "1" {
 		fmt.Fprintf(os.Stderr, "[wt-test-no-launch] would open %q in %q (repo=%q wt=%q)\n",
@@ -234,16 +234,12 @@ func OpenInApp(appCmd, path, repoName, wtName string) error {
 	}
 	switch appCmd {
 	case "open_here":
-		cdFile := os.Getenv("WT_CD_FILE")
-		if cdFile != "" {
-			return os.WriteFile(cdFile, []byte(path), 0600)
-		}
-		if os.Getenv("WT_WRAPPER") != "1" {
-			fmt.Fprintln(os.Stderr, `hint: "Open here" requires the shell wrapper to cd. Run: eval "$(wt shell-init zsh)" (or bash)`)
-			fmt.Fprintln(os.Stderr, `      Add it to your ~/.zshrc or ~/.bashrc to make it permanent.`)
-		}
-		fmt.Printf("cd -- '%s'\n", shellQuoteSingle(path))
-		return nil
+		// "Open here" routes through the single unified shell-cd
+		// implementation shared with `wt go` (launcher-contract.md §3, v2):
+		// WT_CD_FILE write when set AND bare path always on stdout AND stderr
+		// confirmation. The former `cd -- '<path>'` stdout fallback is
+		// retired; stdout consumers use cd "$(command wt …)".
+		return NavigateTo(path, repoName, BranchForPath(path))
 	case "code":
 		return runCommand("code", path)
 	case "cursor":

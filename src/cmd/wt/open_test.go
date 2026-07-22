@@ -22,14 +22,34 @@ func TestOpen_ErrorNonexistentWorktree(t *testing.T) {
 	assertContains(t, r.Stderr, "not found")
 }
 
-func TestOpen_ErrorFromMainRepoWithoutTarget(t *testing.T) {
+// TestOpen_MainRepo_AppOrthogonal verifies --app is orthogonal to every
+// selection mode: from the main repo (formerly the ExitInvalidArgs "--app with
+// the selection menu" case), `wt open --app open_here` now opens the repo
+// root. The transitional tip pointing at `wt go` rides the same branch.
+func TestOpen_MainRepo_AppOrthogonal(t *testing.T) {
 	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "ortho-a")
 
-	r := runWt(t, repo, nil, "open", "--app", "code")
-	if r.ExitCode == 0 {
-		t.Error("expected failure from main repo without target")
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	r := runWt(t, repo, env, "open", "--app", "open_here")
+	if r.ExitCode != 0 {
+		t.Fatalf("expected exit 0 (the --app+menu ExitInvalidArgs case is retired), got %d\nstderr: %s",
+			r.ExitCode, r.Stderr)
 	}
-	assertContains(t, r.Stderr, "No worktree specified")
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != repo {
+		t.Errorf("expected cd file to contain repo root %q, got %q", repo, string(data))
+	}
+	// The retired error copy must be gone; the transitional tip is present.
+	assertNotContains(t, r.Stderr, "No worktree specified")
+	assertContains(t, r.Stderr, "tip: to pick a worktree, use wt go (or wt go --open)")
+	// stdout stays the machine contract (bare path, no tip).
+	assertNotContains(t, r.Stdout, "tip:")
 }
 
 // TestOpen_NoArgs_NonGit_OpensCwd verifies that running `wt open` from a
@@ -242,40 +262,27 @@ func chtimesWorktree(t *testing.T, repo, name string, mtime time.Time) {
 	}
 }
 
-// TestOpen_MenuOrdersNewestFirst verifies the open selection menu pins the main
-// worktree to row 1 and lists non-main worktrees newest-first below it, with
-// the newest non-main worktree (not main) as the marked default. Empty stdin
-// makes ShowMenu print the menu then return on EOF; we assert only on the
-// printed ordering and do not exercise any app launch.
-func TestOpen_MenuOrdersNewestFirst(t *testing.T) {
+// TestOpen_MainRepo_NoArg_OpensRepoRootContext verifies the pure-launcher
+// no-arg rule in the main repo: no worktree-selection menu (that menu moved to
+// `wt go`), the "Open in:" app menu renders for the repo root, and the
+// one-release transitional tip points at `wt go`. Menu-ordering coverage for
+// the selection menu now lives in TestGo_OpenPrompt_MenuOrdersNewestFirst.
+func TestOpen_MainRepo_NoArg_OpensRepoRootContext(t *testing.T) {
 	repo := createTestRepo(t)
 	createWorktreeViaWt(t, repo, "alpha")
 	createWorktreeViaWt(t, repo, "bravo")
-	createWorktreeViaWt(t, repo, "charlie")
 
-	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
-	// charlie newest, then bravo, then alpha oldest.
-	chtimesWorktree(t, repo, "alpha", base)
-	chtimesWorktree(t, repo, "bravo", base.Add(time.Hour))
-	chtimesWorktree(t, repo, "charlie", base.Add(2*time.Hour))
+	r := runWt(t, repo, []string{"HOME=" + t.TempDir()}, "open")
 
-	r := runWt(t, repo, nil, "open")
-	// main is pinned to row 1 (outside the recency ordering); non-main entries
-	// follow newest-first.
-	got := menuOrder(r.Stdout, []string{"main", "alpha", "bravo", "charlie"})
-	want := []string{"main", "charlie", "bravo", "alpha"}
-	if len(got) != len(want) {
-		t.Fatalf("expected %v in menu, got %v\nstdout:\n%s", want, got, r.Stdout)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("open menu order = %v, want %v", got, want)
-			break
-		}
-	}
-	// The newest non-main worktree (row 2) is the marked default — NOT main.
-	assertContains(t, r.Stdout, "charlie (charlie) (default)")
-	assertNotContains(t, r.Stdout, "main (main) (default)")
+	// The app menu renders (empty stdin then EOF-refuses it — exit 1), and no
+	// worktree-selection menu appears anywhere.
+	assertContains(t, r.Stdout, "Open in:")
+	assertNotContains(t, r.Stdout, "Select worktree")
+	assertNotContains(t, r.Stdout, "alpha (")
+	assertNotContains(t, r.Stdout, "bravo (")
+	// The transitional tip is on stderr only.
+	assertContains(t, r.Stderr, "tip: to pick a worktree, use wt go (or wt go --open)")
+	assertNotContains(t, r.Stdout, "tip:")
 }
 
 // TestOpen_MainKey_ResolvesToRepoRoot verifies `wt open main` resolves the
@@ -333,18 +340,41 @@ func TestOpen_AppShortFlag(t *testing.T) {
 	}
 }
 
-// TestOpen_HelpHidesGoShowsSelect verifies `wt open --help` shows --select and
-// hides the deprecated --go alias, and shows the -a short for --app.
-func TestOpen_HelpHidesGoShowsSelect(t *testing.T) {
+// TestOpen_HelpHidesSelectAndGo verifies `wt open --help` hides BOTH deprecated
+// selection aliases (--select and --go — the composition moved to
+// `wt go --open`) while keeping the -a short for --app visible.
+func TestOpen_HelpHidesSelectAndGo(t *testing.T) {
 	dir := t.TempDir()
 
 	r := runWt(t, dir, nil, "open", "--help")
 	if r.ExitCode != 0 {
 		t.Fatalf("wt open --help failed (exit %d)\nstderr: %s", r.ExitCode, r.Stderr)
 	}
-	assertContains(t, r.Stdout, "--select")
 	assertContains(t, r.Stdout, "-a, --app")
+	assertNotContains(t, r.Stdout, "--select")
 	assertNotContains(t, r.Stdout, "--go")
+}
+
+// TestOpen_SelectDeprecationWarning verifies --select still composes
+// select-then-launch AND warns on stderr toward the wt go --open replacement.
+func TestOpen_SelectDeprecationWarning(t *testing.T) {
+	repo := createTestRepo(t)
+	pathA := createWorktreeViaWt(t, repo, "dep-alpha")
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	r := runWtSuccess(t, repo, env, "open", "--select", "dep-alpha", "--app", "open_here")
+	assertContains(t, r.Stderr, "deprecated")
+	assertContains(t, r.Stderr, `use "wt go --open" instead`)
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != pathA {
+		t.Errorf("expected cd file to contain %q, got %q", pathA, string(data))
+	}
 }
 
 // ---------- wt open --list ----------
