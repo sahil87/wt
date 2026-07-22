@@ -26,6 +26,7 @@ having both `wt` and consumers import it — is explicitly deferred. See
 
 ```
 wt open [<path>|<name>] [--app <app>]
+wt open --list [--json]
 ```
 
 | Argument | Behavior |
@@ -34,6 +35,7 @@ wt open [<path>|<name>] [--app <app>]
 | `<path>` | Treated as a literal path when `os.Stat(<path>)` succeeds and the entry is a directory. Works regardless of git context — the path may be unrelated to any repo. |
 | `<name>` | Resolved as a worktree name (case-insensitive). The name `main` resolves to the main worktree (the repo root); an exact-basename match takes precedence, so a worktree directory literally named `main` still resolves to that worktree. **Requires** a git repository in the current working directory. From a non-git cwd, exits `ExitGeneralError` with a "name resolution requires a git repository" message; the message suggests passing a path and does NOT suggest cd'ing into a repo. |
 | `--app <app>` | Opens directly in the named app, bypassing the menu. Works in all of the above contexts. The literal name `default` resolves to the auto-detected default app. Incompatible with the main-repo selection menu (`<no args>` from a non-worktree git repo) — combining the two exits `ExitInvalidArgs`. |
+| `--list [--json]` | **Query form** — lists the detected launchable host apps and exits without launching anything. Requires no git repository and no target. `--json` emits a JSON array of `{id, label, kind}` records (`kind` ∈ `editor` / `terminal` / `file-manager`); every emitted `id` is guaranteed accepted by `wt open <path> -a <id>` (the listing derives from the same `BuildAvailableApps()` catalog `-a` resolution uses), making the output a validation source for consumer launch paths. Action rows (`open_here`, `copy_*`, `byobu_tab`, `tmux_window`, `tmux_session`) are excluded from the listing (they signal `wt`'s own process environment, not the consumer's) but remain valid `-a` values. Zero detected apps emit `[]`, not `null`, and exit 0. Ordering is `BuildAvailableApps()` detection order. Mutually exclusive with a positional arg, `--app`, and `--select` (`ExitInvalidArgs`); `--json` without `--list` also exits `ExitInvalidArgs`. Added under §6's "adding new internal flags to `wt open`" non-breaking evolution clause. |
 
 Path-arg precedence: when an arg is supplied, `os.Stat` + `IsDir()` is
 attempted *first*. Name resolution is only attempted when the arg is not an

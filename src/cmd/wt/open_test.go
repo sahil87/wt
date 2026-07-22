@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	wt "github.com/sahil87/wt/internal/worktree"
 )
 
 func TestOpen_ErrorNonexistentWorktree(t *testing.T) {
@@ -341,4 +345,202 @@ func TestOpen_HelpHidesGoShowsSelect(t *testing.T) {
 	assertContains(t, r.Stdout, "--select")
 	assertContains(t, r.Stdout, "-a, --app")
 	assertNotContains(t, r.Stdout, "--go")
+}
+
+// ---------- wt open --list ----------
+
+// TestOpen_List_HumanTable verifies the human-mode listing: an aligned
+// Id/Label/Kind table of launchable host apps with action rows excluded.
+func TestOpen_List_HumanTable(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWt(t, repo, nil, "open", "--list")
+	assertExitCode(t, r, 0)
+
+	lines := strings.Split(strings.TrimRight(r.Stdout, "\n"), "\n")
+	if len(lines) == 0 {
+		t.Fatal("expected at least a header line")
+	}
+	header := lines[0]
+	for _, col := range []string{"Id", "Label", "Kind"} {
+		if !strings.Contains(header, col) && !strings.Contains(r.Stdout, "No launchable applications detected.") {
+			t.Errorf("expected header column %q in %q", col, header)
+		}
+	}
+
+	// Action rows must never appear in the listing.
+	for _, actionID := range []string{"open_here", "copy_macos", "copy_linux", "byobu_tab", "tmux_window", "tmux_session"} {
+		if strings.Contains(r.Stdout, actionID) {
+			t.Errorf("action row %q leaked into --list output:\n%s", actionID, r.Stdout)
+		}
+	}
+}
+
+// TestOpen_List_NoGitRequired verifies that --list works from a non-git cwd:
+// app detection is host-only, so the branch runs before git-context detection.
+func TestOpen_List_NoGitRequired(t *testing.T) {
+	dir := t.TempDir() // not a git repository
+
+	r := runWt(t, dir, nil, "open", "--list")
+	assertExitCode(t, r, 0)
+
+	rj := runWt(t, dir, nil, "open", "--list", "--json")
+	assertExitCode(t, rj, 0)
+	var records []map[string]string
+	if err := json.Unmarshal([]byte(rj.Stdout), &records); err != nil {
+		t.Fatalf("cannot parse --list --json output from non-git cwd: %v\n%s", err, rj.Stdout)
+	}
+}
+
+// TestOpen_ListJSON_ShapeAndOrder verifies the machine-readable registry:
+// a JSON array of {id, label, kind} records — all three keys always present,
+// kind in the closed enum, no action rows, detection order preserved.
+func TestOpen_ListJSON_ShapeAndOrder(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWt(t, repo, nil, "open", "--list", "--json")
+	assertExitCode(t, r, 0)
+
+	var records []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(r.Stdout), &records); err != nil {
+		t.Fatalf("output is not a JSON array: %v\n%s", err, r.Stdout)
+	}
+
+	validKinds := map[string]bool{"editor": true, "terminal": true, "file-manager": true}
+	actionIDs := map[string]bool{
+		"open_here": true, "copy_macos": true, "copy_linux": true,
+		"byobu_tab": true, "tmux_window": true, "tmux_session": true,
+	}
+
+	var gotIDs []string
+	for i, rec := range records {
+		if len(rec) != 3 {
+			t.Errorf("record %d has %d keys, want exactly 3 (id, label, kind): %v", i, len(rec), rec)
+		}
+		var id, label, kind string
+		for key, dst := range map[string]*string{"id": &id, "label": &label, "kind": &kind} {
+			raw, ok := rec[key]
+			if !ok {
+				t.Fatalf("record %d missing key %q: %v", i, key, rec)
+			}
+			if err := json.Unmarshal(raw, dst); err != nil {
+				t.Fatalf("record %d key %q is not a string: %v", i, key, err)
+			}
+		}
+		if id == "" || label == "" {
+			t.Errorf("record %d has empty id/label: id=%q label=%q", i, id, label)
+		}
+		if !validKinds[kind] {
+			t.Errorf("record %d kind %q not in editor|terminal|file-manager", i, kind)
+		}
+		if actionIDs[id] {
+			t.Errorf("action row %q leaked into --list --json output", id)
+		}
+		gotIDs = append(gotIDs, id)
+	}
+
+	// Order preserves BuildAvailableApps() detection order minus filtered
+	// rows. The test process and the child binary see the same host apps
+	// (tmux/byobu rows differ by env, but those carry empty Kind and are
+	// filtered either way).
+	wantIDs := []string{}
+	for _, a := range wt.ListableApps(wt.BuildAvailableApps()) {
+		wantIDs = append(wantIDs, a.Cmd)
+	}
+	if len(gotIDs) != len(wantIDs) {
+		t.Fatalf("got %d records %v, want %d %v", len(gotIDs), gotIDs, len(wantIDs), wantIDs)
+	}
+	for i := range wantIDs {
+		if gotIDs[i] != wantIDs[i] {
+			t.Errorf("record %d id = %q, want %q (detection order must be preserved)", i, gotIDs[i], wantIDs[i])
+		}
+	}
+}
+
+// TestOpen_ListJSON_IDsRoundTrip verifies the validation-source guarantee:
+// every id the registry emits is accepted by `wt open <path> -a <id>`.
+// WT_TEST_NO_LAUNCH=1 (runWt default) short-circuits the actual launch.
+func TestOpen_ListJSON_IDsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+
+	r := runWt(t, dir, nil, "open", "--list", "--json")
+	assertExitCode(t, r, 0)
+
+	var records []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(r.Stdout), &records); err != nil {
+		t.Fatalf("cannot parse --list --json output: %v\n%s", err, r.Stdout)
+	}
+
+	for _, rec := range records {
+		launch := runWt(t, dir, nil, "open", dir, "-a", rec.ID)
+		if launch.ExitCode != 0 {
+			t.Errorf("id %q from --list --json was rejected by `wt open <dir> -a %s`: exit %d\nstderr: %s",
+				rec.ID, rec.ID, launch.ExitCode, launch.Stderr)
+		}
+	}
+}
+
+// TestPrintOpenListJSON_EmptyEmitsArray verifies the zero-apps machine output
+// is `[]` (a non-nil empty array), never `null` — direct unit test of the
+// emitter since a host with zero detected apps cannot be forced end-to-end.
+func TestPrintOpenListJSON_EmptyEmitsArray(t *testing.T) {
+	old := os.Stdout
+	rp, wp, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = wp
+	emitErr := printOpenListJSON(wt.ListableApps(nil))
+	wp.Close()
+	os.Stdout = old
+
+	out, err := io.ReadAll(rp)
+	if err != nil {
+		t.Fatalf("io.ReadAll: %v", err)
+	}
+	if emitErr != nil {
+		t.Fatalf("printOpenListJSON returned error: %v", emitErr)
+	}
+	if got := strings.TrimSpace(string(out)); got != "[]" {
+		t.Errorf("empty registry emitted %q, want %q (null would break machine consumers)", got, "[]")
+	}
+}
+
+// TestOpen_List_FlagExclusivity verifies each invalid combination exits
+// ExitInvalidArgs (2) at flag-check time — from a non-git cwd, proving the
+// validation needs no detection or git work.
+func TestOpen_List_FlagExclusivity(t *testing.T) {
+	dir := t.TempDir() // not a git repository
+
+	tests := []struct {
+		name      string
+		args      []string
+		wantOnErr string
+	}{
+		{"list with positional target", []string{"open", "--list", "some-target"}, "mutually exclusive"},
+		{"list with app", []string{"open", "--list", "--app", "code"}, "mutually exclusive"},
+		{"list with select", []string{"open", "--list", "--select"}, "mutually exclusive"},
+		{"list with deprecated go alias", []string{"open", "--list", "--go"}, "mutually exclusive"},
+		{"json without list", []string{"open", "--json"}, "requires --list"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := runWt(t, dir, nil, tt.args...)
+			assertExitCode(t, r, 2)
+			assertContains(t, r.Stderr, tt.wantOnErr)
+		})
+	}
+}
+
+// TestOpen_HelpShowsListAndJSON pins the new flags into the visible help
+// surface (both are script-facing contract flags, never hidden).
+func TestOpen_HelpShowsListAndJSON(t *testing.T) {
+	dir := t.TempDir()
+
+	r := runWt(t, dir, nil, "open", "--help")
+	assertExitCode(t, r, 0)
+	assertContains(t, r.Stdout, "--list")
+	assertContains(t, r.Stdout, "--json")
 }
