@@ -201,6 +201,22 @@ func TestIntegration_LauncherContract_NonGitTempDir(t *testing.T) {
 	if strings.Contains(r.Stderr, "shell wrapper") {
 		t.Errorf("expected no shell-wrapper hint with WT_WRAPPER=1, got stderr: %q", r.Stderr)
 	}
+
+	// Unified shell-cd contract (launcher-contract.md §3 v2): the bare resolved
+	// path is ALWAYS the last stdout line (no retired `cd -- '<path>'` form),
+	// and the stderr confirmation degrades to the basename-only arrow form
+	// outside a git context.
+	if strings.Contains(r.Stdout, "cd -- ") {
+		t.Errorf("the cd -- stdout fallback is retired, got stdout: %q", r.Stdout)
+	}
+	outLines := strings.Split(strings.TrimRight(r.Stdout, "\n"), "\n")
+	if last := outLines[len(outLines)-1]; last != target {
+		t.Errorf("expected stdout last line %q, got %q (full stdout: %q)", target, last, r.Stdout)
+	}
+	if !strings.Contains(r.Stderr, "→ "+filepath.Base(target)) {
+		t.Errorf("expected degraded (non-git) stderr confirmation %q, got stderr: %q",
+			"→ "+filepath.Base(target), r.Stderr)
+	}
 }
 
 // writeFailingInitScript writes a committed init script that exits 1 and
@@ -598,10 +614,11 @@ func TestIntegration_WorktreeCommitIndependent(t *testing.T) {
 	runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--worktree-name", "independent")
 }
 
-// TestIntegration_OpenSelect_NameArg_ResolvesAndLaunches exercises the new
-// --select flag (renamed from --go): `wt open --select <name> --app open_here`
+// TestIntegration_OpenSelect_NameArg_ResolvesAndLaunches exercises the
+// deprecated --select alias: `wt open --select <name> --app open_here` still
 // composes resolve-by-name selection with the launcher, writing the resolved
-// path to WT_CD_FILE via open_here. No deprecation warning on the new flag.
+// path to WT_CD_FILE via open_here — and warns on stderr toward the
+// `wt go --open` replacement (change 0is3).
 func TestIntegration_OpenSelect_NameArg_ResolvesAndLaunches(t *testing.T) {
 	repo := createTestRepo(t)
 	createWorktreeViaWt(t, repo, "alpha")
@@ -611,7 +628,8 @@ func TestIntegration_OpenSelect_NameArg_ResolvesAndLaunches(t *testing.T) {
 	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
 
 	r := runWtSuccess(t, worktreePath(repo, "alpha"), env, "open", "--select", "bravo", "--app", "open_here")
-	assertNotContains(t, r.Stderr, "deprecated")
+	assertContains(t, r.Stderr, "deprecated")
+	assertContains(t, r.Stderr, `use "wt go --open" instead`)
 
 	data, err := os.ReadFile(cdFile)
 	if err != nil {
@@ -645,14 +663,43 @@ func TestIntegration_OpenGo_Deprecated(t *testing.T) {
 	}
 }
 
+// TestIntegration_GoOpen_NameArg_ResolvesAndLaunches exercises the primary
+// composition `wt go <name> --open open_here` end-to-end from a sibling
+// worktree: selection resolves bravo, the launch routes through the unified
+// shell-cd contract (WT_CD_FILE + bare path last on stdout), and no
+// deprecation warning is printed (this is the replacement surface).
+func TestIntegration_GoOpen_NameArg_ResolvesAndLaunches(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "alpha")
+	pathB := createWorktreeViaWt(t, repo, "bravo")
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1", "HOME=" + t.TempDir()}
+
+	r := runWtSuccess(t, worktreePath(repo, "alpha"), env, "go", "bravo", "--open", "open_here")
+	assertNotContains(t, r.Stderr, "deprecated")
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != pathB {
+		t.Errorf("expected cd file to contain %q, got %q", pathB, string(data))
+	}
+	lines := strings.Split(strings.TrimRight(r.Stdout, "\n"), "\n")
+	if last := lines[len(lines)-1]; last != pathB {
+		t.Errorf("expected stdout last line %q, got %q", pathB, last)
+	}
+}
+
 // TestIntegration_NonTTYMenuActionableRefusal asserts the toolkit-standards
 // principles №1 (non-interactive by default) / №4 (fail fast with actionable
-// errors): when an interactive selection menu is reached with stdin that is not
+// errors): when an interactive menu is reached with stdin that is not
 // a terminal (runWt feeds an empty, immediate-EOF reader), the command MUST
 // refuse with an actionable, flag-naming error on stderr — never hang, and never
-// surface the bare "reading input: EOF". Covers the three menu entry points
-// (wt open main-repo menu, wt go no-name, wt delete no-name) through the single
-// shared fallback-menu choke point.
+// surface the bare "reading input: EOF". Covers three menu entry points
+// (wt open's main-repo "Open in:" app menu, wt go no-name, wt delete no-name)
+// through the single shared fallback-menu choke point.
 func TestIntegration_NonTTYMenuActionableRefusal(t *testing.T) {
 	repo := createTestRepo(t)
 	// Two worktrees so each menu has entries (an empty menu short-circuits before

@@ -196,6 +196,22 @@ func DescribeHead() string {
 	return "HEAD"
 }
 
+// BranchForPath returns the checked-out branch of the git checkout at path
+// (a worktree root, the main repo root, or any directory inside one), via a
+// single `git rev-parse --abbrev-ref HEAD` run in that directory. Best-effort:
+// returns "unknown" on any git error (e.g. a non-git directory), so a display
+// label can never fail the caller. It is the branch source for the shared
+// navigation confirmation (NavigateTo) and the worktree-selection menu rows.
+func BranchForPath(path string) string {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = path
+	out, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // InitScriptPath returns the init-script value plus its provenance, respecting
 // the WORKTREE_INIT_SCRIPT env var.
 //
