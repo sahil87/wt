@@ -113,6 +113,8 @@ is documented in [`launcher-contract.md`](launcher-contract.md). Worktree
 |------|---------|-------------|
 | `--app`, `-a <name\|default>` | (none) | Open directly in the named app, skipping the menu. `default` selects the auto-detected default. |
 | `--select` | `false` | Select a worktree first (via `wt go`'s menu when no name is given, or resolve-by-name when one is), then launch it. Requires a git repository; composes with `--app`. From a non-git cwd, exits `ExitGitError`. |
+| `--list` | `false` | List the detected launchable host apps (kinds `editor` / `terminal` / `file-manager`) and exit — no menu, no launch, **no git repository required** (the branch runs before git-context detection). Action rows (`open_here`, `copy_*`, `byobu_tab`, `tmux_window`, `tmux_session`) are excluded from the listing but remain in the interactive menu and remain valid `--app` values. Human output is an aligned Id / Label / Kind table in `BuildAvailableApps()` detection order. Mutually exclusive with a positional target, `--app`, and `--select`. |
+| `--json` | `false` | With `--list`, emit the app registry as a JSON array of `{id, label, kind}` records — `id` is the internal command key (`AppInfo.Cmd`, the exact token `wt open <path> -a <id>` accepts), `label` the display name, `kind` one of `editor` / `terminal` / `file-manager`. Zero detected apps emit `[]` (never `null`) and exit 0. Without `--list`, exits `ExitInvalidArgs`. |
 
 **Deprecated alias** (still accepted; hidden from `--help`; prints a stderr deprecation warning): `--go` → `--select`.
 
@@ -136,7 +138,10 @@ Positional arg `[name|path]`:
   worktree directory literally named `main` still resolves to that worktree.
 
 Exit codes: `ExitInvalidArgs` when `--app` is used with the main-repo selection
-menu; `ExitGitError` when a git operation fails during name resolution, or when
+menu, when `--list` is combined with a positional target / `--app` / `--select`
+(or `--go`), or when `--json` is passed without `--list` (all `--list`/`--json`
+validation happens at flag-check time, before any detection or git work);
+`ExitGitError` when a git operation fails during name resolution, or when
 `--select` is invoked from a non-git cwd (the `--select` git-repo precondition) — but
 not for path-only or no-args invocations from outside a repo;
 `ExitByobuTabError` / `ExitTmuxWindowError` for terminal-app failures;

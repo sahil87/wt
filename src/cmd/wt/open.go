@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,8 @@ import (
 func openCmd() *cobra.Command {
 	var appFlag string
 	var goFlag bool
+	var listFlag bool
+	var jsonFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "open [name|path]",
@@ -31,12 +34,49 @@ requires a git repository.
 With --select, "wt open" first performs "wt go"'s worktree selection (a menu when
 no name is given, or resolve-by-name when a name is given) and then launches the
 selected worktree — composing the selector and the launcher. --select requires a
-git repository and composes with --app.`,
+git repository and composes with --app.
+
+With --list, "wt open" prints the detected launchable host applications
+(editors, terminals, file managers) and exits — no menu, no launch, no git
+repository required. Add --json for a machine-readable JSON array of
+{id, label, kind} records; each id is accepted by "wt open <path> -a <id>".`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var target string
 			if len(args) > 0 {
 				target = args[0]
+			}
+
+			// --list is a pure query: validate flag exclusivity first, before
+			// any detection or git work, then list and exit. It runs before the
+			// soft git-context detection below so `wt open --list` works from
+			// any cwd (external consumers may invoke it from anywhere).
+			if listFlag {
+				if target != "" {
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						"--list and a target are mutually exclusive",
+						"--list queries the detected apps; it does not open anything",
+						"Run 'wt open --list' with no target, or drop --list to open the target")
+				}
+				if appFlag != "" {
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						"--list and --app are mutually exclusive",
+						"--list queries the detected apps; --app launches one",
+						"Run 'wt open --list' to see valid --app values")
+				}
+				if goFlag {
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						"--list and --select are mutually exclusive",
+						"--list queries the detected apps; --select picks a worktree to launch",
+						"Run 'wt open --list' on its own")
+				}
+				return handleOpenList(jsonFlag)
+			}
+			if jsonFlag {
+				wt.ExitWithError(wt.ExitInvalidArgs,
+					"--json requires --list",
+					"wt open has no JSON output surface besides the --list app registry",
+					"Run 'wt open --list --json'")
 			}
 
 			// --select (deprecated alias: --go): compose "wt go"'s selection with
@@ -158,8 +198,77 @@ git repository and composes with --app.`,
 	cmd.Flags().BoolVar(&goFlag, "select", false, "Select a worktree (menu or by name) first, then launch it")
 	cmd.Flags().BoolVar(&goFlag, "go", false, "Select a worktree (menu or by name) first, then launch it")
 	cmd.Flags().MarkDeprecated("go", "use --select instead")
+	// --list/--json are script-facing query flags: long-form only, no shorts.
+	cmd.Flags().BoolVar(&listFlag, "list", false, "List detected launchable apps instead of opening anything")
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "With --list, output the app registry as a JSON array")
 
 	return cmd
+}
+
+// openAppRecord is the machine-readable record `wt open --list --json` emits
+// per detected app. All three keys are always present: id is the internal
+// command key (AppInfo.Cmd — the exact token `wt open <path> -a <id>`
+// accepts), label the display name (AppInfo.Name), kind the closed enum
+// editor|terminal|file-manager (AppInfo.Kind).
+type openAppRecord struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Kind  string `json:"kind"`
+}
+
+// handleOpenList implements `wt open --list [--json]`: it lists the launchable
+// host applications from the same BuildAvailableApps() catalog the interactive
+// menu and -a resolution use (filtered to non-empty Kind via ListableApps,
+// detection order preserved) and exits without launching anything. No git
+// repository is required — app detection is host-only.
+func handleOpenList(jsonOut bool) error {
+	apps := wt.ListableApps(wt.BuildAvailableApps())
+	if jsonOut {
+		return printOpenListJSON(apps)
+	}
+	return printOpenListTable(apps)
+}
+
+// printOpenListJSON emits the app registry as a JSON array, mirroring
+// `wt list --json`'s encoding (MarshalIndent, two-space indent, trailing
+// newline). The records slice is initialized non-nil so zero detected apps
+// emit `[]`, never `null` (a nil Go slice marshals to null).
+func printOpenListJSON(apps []wt.AppInfo) error {
+	records := make([]openAppRecord, 0, len(apps))
+	for _, a := range apps {
+		records = append(records, openAppRecord{ID: a.Cmd, Label: a.Name, Kind: a.Kind})
+	}
+	data, err := json.MarshalIndent(records, "", "  ")
+	if err != nil {
+		return fmt.Errorf("JSON encoding: %w", err)
+	}
+	fmt.Println(string(data))
+	return nil
+}
+
+// printOpenListTable renders the human-mode aligned Id / Label / Kind table,
+// mirroring `wt list`'s human-default/--json-opt-in split.
+func printOpenListTable(apps []wt.AppInfo) error {
+	if len(apps) == 0 {
+		fmt.Println("No launchable applications detected.")
+		return nil
+	}
+
+	idWidth, labelWidth := len("Id"), len("Label")
+	for _, a := range apps {
+		if l := len(a.Cmd); l > idWidth {
+			idWidth = l
+		}
+		if l := len(a.Name); l > labelWidth {
+			labelWidth = l
+		}
+	}
+
+	fmt.Printf("%-*s  %-*s  %s\n", idWidth, "Id", labelWidth, "Label", "Kind")
+	for _, a := range apps {
+		fmt.Printf("%-*s  %-*s  %s\n", idWidth, a.Cmd, labelWidth, a.Name, a.Kind)
+	}
+	return nil
 }
 
 // openGo implements `wt open --go`: it composes `wt go`'s worktree selection

@@ -280,9 +280,9 @@ func TestBuildAvailableApps_TmuxSession_AbsentInByobu(t *testing.T) {
 
 func TestResolveApp_TmuxSession_ByCmd(t *testing.T) {
 	apps := []AppInfo{
-		{"Open here", "open_here"},
-		{"tmux window", "tmux_window"},
-		{"tmux session", "tmux_session"},
+		{Name: "Open here", Cmd: "open_here"},
+		{Name: "tmux window", Cmd: "tmux_window"},
+		{Name: "tmux session", Cmd: "tmux_session"},
 	}
 
 	resolved, err := ResolveApp("tmux_session", apps)
@@ -299,9 +299,9 @@ func TestResolveApp_TmuxSession_ByCmd(t *testing.T) {
 
 func TestResolveApp_TmuxSession_ByDisplayName(t *testing.T) {
 	apps := []AppInfo{
-		{"Open here", "open_here"},
-		{"tmux window", "tmux_window"},
-		{"tmux session", "tmux_session"},
+		{Name: "Open here", Cmd: "open_here"},
+		{Name: "tmux window", Cmd: "tmux_window"},
+		{Name: "tmux session", Cmd: "tmux_session"},
 	}
 
 	resolved, err := ResolveApp("tmux session", apps)
@@ -315,9 +315,9 @@ func TestResolveApp_TmuxSession_ByDisplayName(t *testing.T) {
 
 func TestResolveApp_TmuxSession_ByDisplayNameCaseInsensitive(t *testing.T) {
 	apps := []AppInfo{
-		{"Open here", "open_here"},
-		{"tmux window", "tmux_window"},
-		{"tmux session", "tmux_session"},
+		{Name: "Open here", Cmd: "open_here"},
+		{Name: "tmux window", Cmd: "tmux_window"},
+		{Name: "tmux session", Cmd: "tmux_session"},
 	}
 
 	resolved, err := ResolveApp("Tmux Session", apps)
@@ -408,9 +408,9 @@ func TestResolveDefaultApp_Success(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	apps := []AppInfo{
-		{"Open here", "open_here"},
-		{"VSCode", "code"},
-		{"tmux window", "tmux_window"},
+		{Name: "Open here", Cmd: "open_here"},
+		{Name: "VSCode", Cmd: "code", Kind: AppKindEditor},
+		{Name: "tmux window", Cmd: "tmux_window"},
 	}
 
 	resolved, err := ResolveDefaultApp(apps)
@@ -429,9 +429,9 @@ func TestResolveDefaultApp_VSCode(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	apps := []AppInfo{
-		{"Open here", "open_here"},
-		{"VSCode", "code"},
-		{"tmux window", "tmux_window"},
+		{Name: "Open here", Cmd: "open_here"},
+		{Name: "VSCode", Cmd: "code", Kind: AppKindEditor},
+		{Name: "tmux window", Cmd: "tmux_window"},
 	}
 
 	resolved, err := ResolveDefaultApp(apps)
@@ -451,7 +451,7 @@ func TestResolveDefaultApp_NoDefault(t *testing.T) {
 
 	// Only open_here available — DetectDefaultApp skips it, returns -1
 	apps := []AppInfo{
-		{"Open here", "open_here"},
+		{Name: "Open here", Cmd: "open_here"},
 	}
 
 	_, err := ResolveDefaultApp(apps)
@@ -557,4 +557,76 @@ func TestOpenInApp_TestNoLaunchSeam(t *testing.T) {
 	// we just need to confirm it doesn't go through the short-circuit path.
 	// A separate run with stdout-capture covers open_here's actual behavior
 	// in TestOpenInApp_OpenHere_Stdout.)
+}
+
+// appKindByCmd is the closed classification table for the wt open --list
+// contract: every Cmd key BuildAvailableApps can emit, mapped to its Kind.
+// Action rows map to "" (excluded from --list, retained in the menu / -a).
+var appKindByCmd = map[string]string{
+	"code":           AppKindEditor,
+	"cursor":         AppKindEditor,
+	"ghostty_macos":  AppKindTerminal,
+	"ghostty_linux":  AppKindTerminal,
+	"iterm":          AppKindTerminal,
+	"terminal_app":   AppKindTerminal,
+	"gnome_terminal": AppKindTerminal,
+	"konsole":        AppKindTerminal,
+	"finder":         AppKindFileManager,
+	"nautilus":       AppKindFileManager,
+	"dolphin":        AppKindFileManager,
+	"open_here":      "",
+	"copy_macos":     "",
+	"copy_linux":     "",
+	"byobu_tab":      "",
+	"tmux_window":    "",
+	"tmux_session":   "",
+}
+
+func TestBuildAvailableApps_KindClassification(t *testing.T) {
+	for _, app := range BuildAvailableApps() {
+		want, known := appKindByCmd[app.Cmd]
+		if !known {
+			t.Errorf("BuildAvailableApps emitted unclassified Cmd %q — add it to the Kind mapping", app.Cmd)
+			continue
+		}
+		if app.Kind != want {
+			t.Errorf("Cmd %q: Kind = %q, want %q", app.Cmd, app.Kind, want)
+		}
+	}
+}
+
+func TestListableApps_FiltersActionRowsPreservingOrder(t *testing.T) {
+	apps := []AppInfo{
+		{Name: "Open here", Cmd: "open_here"},
+		{Name: "VSCode", Cmd: "code", Kind: AppKindEditor},
+		{Name: "Copy path", Cmd: "copy_macos"},
+		{Name: "iTerm2", Cmd: "iterm", Kind: AppKindTerminal},
+		{Name: "tmux window", Cmd: "tmux_window"},
+		{Name: "Finder", Cmd: "finder", Kind: AppKindFileManager},
+		{Name: "tmux session", Cmd: "tmux_session"},
+	}
+
+	got := ListableApps(apps)
+
+	wantCmds := []string{"code", "iterm", "finder"}
+	if len(got) != len(wantCmds) {
+		t.Fatalf("ListableApps returned %d entries, want %d: %+v", len(got), len(wantCmds), got)
+	}
+	for i, cmd := range wantCmds {
+		if got[i].Cmd != cmd {
+			t.Errorf("ListableApps[%d].Cmd = %q, want %q (order must match detection order)", i, got[i].Cmd, cmd)
+		}
+		if got[i].Kind == "" {
+			t.Errorf("ListableApps[%d] (%q) has empty Kind — filter must keep only classified apps", i, got[i].Cmd)
+		}
+	}
+}
+
+func TestListableApps_EmptyInputReturnsNonNil(t *testing.T) {
+	if got := ListableApps(nil); got == nil {
+		t.Error("ListableApps(nil) returned a nil slice; want non-nil empty slice (JSON [] contract)")
+	}
+	if got := ListableApps([]AppInfo{{Name: "Open here", Cmd: "open_here"}}); got == nil || len(got) != 0 {
+		t.Errorf("ListableApps(action rows only) = %v; want non-nil empty slice", got)
+	}
 }

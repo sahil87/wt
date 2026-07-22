@@ -441,6 +441,9 @@ sentinel/Constitution-V constraints above).
   rows, alongside `wt list`/`wt open`/`wt delete`; also the pin-first
   convention (`260718-daqj`) that keeps main pinned to row 1 *outside* that
   ordering and the `defaultIdx = 2/1` arithmetic it produces.
+- Sibling memory: `/wt-cli/open-list-contract.md` — the `wt open --list [--json]`
+  query surface; `--list` is mutually exclusive with `--select` (and its deprecated
+  `--go` alias), rejecting the combination at flag-check time with `ExitInvalidArgs`.
 - Sibling memory: `/wt-cli/menu-navigation-contract.md` — the shared
   `ShowMenu`/`MenuSession` arrow-key navigation, TTY gating, and the non-TTY
   numbered-prompt fallback that `wt go`'s no-arg menu degrades through; also the
