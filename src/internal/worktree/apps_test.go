@@ -71,101 +71,28 @@ func TestDetectDefaultApp_SkipsOpenHere(t *testing.T) {
 	}
 }
 
-func TestOpenInApp_OpenHere(t *testing.T) {
-	path := "/tmp/test-worktree"
+// captureOpenHere runs OpenInApp("open_here", …) with stdout/stderr captured,
+// returning (stdout, stderr). Env setup (WT_CD_FILE / WT_WRAPPER) is the
+// caller's job via t.Setenv.
+func captureOpenHere(t *testing.T, path, repoName, wtName string) (string, string) {
+	t.Helper()
 
-	// Set WT_WRAPPER=1 so the hint is suppressed (original test behavior)
-	t.Setenv("WT_WRAPPER", "1")
-	// Clear WT_CD_FILE so we test the stdout fallback path
-	t.Setenv("WT_CD_FILE", "")
-
-	// Capture stdout
-	origStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	t.Cleanup(func() {
-		os.Stdout = origStdout
-		_ = r.Close()
-		_ = w.Close()
-	})
-	os.Stdout = w
-
-	openErr := OpenInApp("open_here", path, "repo", "wt-name")
-
-	w.Close()
-
-	if openErr != nil {
-		t.Fatalf("OpenInApp returned error: %v", openErr)
-	}
-
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil {
-		t.Fatalf("io.Copy: %v", err)
-	}
-
-	expected := "cd -- '" + path + "'\n"
-	if buf.String() != expected {
-		t.Errorf("expected stdout %q, got %q", expected, buf.String())
-	}
-}
-
-func TestOpenInApp_OpenHere_CdFile(t *testing.T) {
-	path := "/tmp/test-worktree"
-
-	cdFile := filepath.Join(t.TempDir(), "wt-cd")
-	t.Setenv("WT_CD_FILE", cdFile)
-
-	openErr := OpenInApp("open_here", path, "repo", "wt-name")
-	if openErr != nil {
-		t.Fatalf("OpenInApp returned error: %v", openErr)
-	}
-
-	data, err := os.ReadFile(cdFile)
-	if err != nil {
-		t.Fatalf("reading cd file: %v", err)
-	}
-	if string(data) != path {
-		t.Errorf("expected cd file content %q, got %q", path, string(data))
-	}
-}
-
-func TestOpenInApp_OpenHere_WithWrapper(t *testing.T) {
-	path := "/tmp/test-worktree"
-
-	t.Setenv("WT_WRAPPER", "1")
-	t.Setenv("WT_CD_FILE", "")
-
-	// Capture stdout
-	origStdout := os.Stdout
+	origStdout, origStderr := os.Stdout, os.Stderr
 	rOut, wOut, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe stdout: %v", err)
 	}
-
-	// Capture stderr
-	origStderr := os.Stderr
 	rErr, wErr, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe stderr: %v", err)
 	}
+	os.Stdout, os.Stderr = wOut, wErr
 
-	t.Cleanup(func() {
-		os.Stdout = origStdout
-		os.Stderr = origStderr
-		_ = rOut.Close()
-		_ = wOut.Close()
-		_ = rErr.Close()
-		_ = wErr.Close()
-	})
-	os.Stdout = wOut
-	os.Stderr = wErr
-
-	openErr := OpenInApp("open_here", path, "repo", "wt-name")
+	openErr := OpenInApp("open_here", path, repoName, wtName)
 
 	wOut.Close()
 	wErr.Close()
+	os.Stdout, os.Stderr = origStdout, origStderr
 
 	if openErr != nil {
 		t.Fatalf("OpenInApp returned error: %v", openErr)
@@ -178,16 +105,77 @@ func TestOpenInApp_OpenHere_WithWrapper(t *testing.T) {
 	if _, err := io.Copy(&stderrBuf, rErr); err != nil {
 		t.Fatalf("io.Copy stderr: %v", err)
 	}
+	return stdoutBuf.String(), stderrBuf.String()
+}
 
-	// stdout should have the cd command
-	expected := "cd -- '" + path + "'\n"
-	if stdoutBuf.String() != expected {
-		t.Errorf("expected stdout %q, got %q", expected, stdoutBuf.String())
+// TestOpenInApp_OpenHere pins the unified shell-cd contract on the launcher's
+// "Open here" action: stdout carries the bare resolved path as its only line
+// (the retired `cd -- '<path>'` form must NOT reappear).
+func TestOpenInApp_OpenHere(t *testing.T) {
+	path := "/tmp/test-worktree"
+
+	// WT_WRAPPER=1 suppresses the hint; no WT_CD_FILE.
+	t.Setenv("WT_WRAPPER", "1")
+	t.Setenv("WT_CD_FILE", "")
+
+	stdout, _ := captureOpenHere(t, path, "repo", "wt-name")
+
+	if stdout != path+"\n" {
+		t.Errorf("expected stdout to be the bare path %q, got %q", path+"\n", stdout)
 	}
+	if strings.Contains(stdout, "cd -- ") {
+		t.Errorf("the cd -- stdout fallback is retired, got %q", stdout)
+	}
+}
 
-	// stderr should NOT have the hint
-	if stderrBuf.String() != "" {
-		t.Errorf("expected no stderr output with WT_WRAPPER=1, got %q", stderrBuf.String())
+// TestOpenInApp_OpenHere_CdFile verifies the WT_CD_FILE write AND the
+// always-print stdout contract hold together (no longer mutually exclusive).
+func TestOpenInApp_OpenHere_CdFile(t *testing.T) {
+	path := "/tmp/test-worktree"
+
+	cdFile := filepath.Join(t.TempDir(), "wt-cd")
+	t.Setenv("WT_CD_FILE", cdFile)
+
+	stdout, _ := captureOpenHere(t, path, "repo", "wt-name")
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != path {
+		t.Errorf("expected cd file content %q, got %q", path, string(data))
+	}
+	// The bare path is ALWAYS printed to stdout, even when WT_CD_FILE consumed
+	// the navigation target (unified contract step 4).
+	if stdout != path+"\n" {
+		t.Errorf("expected stdout to be the bare path %q, got %q", path+"\n", stdout)
+	}
+}
+
+// TestOpenInApp_OpenHere_WithWrapper verifies WT_WRAPPER=1 suppresses the hint
+// while the stderr navigation confirmation (shared with `wt go`) is emitted.
+func TestOpenInApp_OpenHere_WithWrapper(t *testing.T) {
+	path := "/tmp/test-worktree"
+
+	t.Setenv("WT_WRAPPER", "1")
+	t.Setenv("WT_CD_FILE", "")
+
+	stdout, stderr := captureOpenHere(t, path, "repo", "wt-name")
+
+	if stdout != path+"\n" {
+		t.Errorf("expected stdout to be the bare path %q, got %q", path+"\n", stdout)
+	}
+	// The hint is suppressed…
+	if strings.Contains(stderr, "shell wrapper") {
+		t.Errorf("expected no wrapper hint with WT_WRAPPER=1, got %q", stderr)
+	}
+	// …but the navigation confirmation IS emitted (repo context supplied, the
+	// branch of a nonexistent dir degrades to "unknown").
+	if !strings.Contains(stderr, "→ repo / test-worktree  (unknown)") {
+		t.Errorf("expected stderr navigation confirmation, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "  "+path) {
+		t.Errorf("expected indented path line on stderr, got %q", stderr)
 	}
 }
 
@@ -280,9 +268,9 @@ func TestBuildAvailableApps_TmuxSession_AbsentInByobu(t *testing.T) {
 
 func TestResolveApp_TmuxSession_ByCmd(t *testing.T) {
 	apps := []AppInfo{
-		{"Open here", "open_here"},
-		{"tmux window", "tmux_window"},
-		{"tmux session", "tmux_session"},
+		{Name: "Open here", Cmd: "open_here"},
+		{Name: "tmux window", Cmd: "tmux_window"},
+		{Name: "tmux session", Cmd: "tmux_session"},
 	}
 
 	resolved, err := ResolveApp("tmux_session", apps)
@@ -299,9 +287,9 @@ func TestResolveApp_TmuxSession_ByCmd(t *testing.T) {
 
 func TestResolveApp_TmuxSession_ByDisplayName(t *testing.T) {
 	apps := []AppInfo{
-		{"Open here", "open_here"},
-		{"tmux window", "tmux_window"},
-		{"tmux session", "tmux_session"},
+		{Name: "Open here", Cmd: "open_here"},
+		{Name: "tmux window", Cmd: "tmux_window"},
+		{Name: "tmux session", Cmd: "tmux_session"},
 	}
 
 	resolved, err := ResolveApp("tmux session", apps)
@@ -315,9 +303,9 @@ func TestResolveApp_TmuxSession_ByDisplayName(t *testing.T) {
 
 func TestResolveApp_TmuxSession_ByDisplayNameCaseInsensitive(t *testing.T) {
 	apps := []AppInfo{
-		{"Open here", "open_here"},
-		{"tmux window", "tmux_window"},
-		{"tmux session", "tmux_session"},
+		{Name: "Open here", Cmd: "open_here"},
+		{Name: "tmux window", Cmd: "tmux_window"},
+		{Name: "tmux session", Cmd: "tmux_session"},
 	}
 
 	resolved, err := ResolveApp("Tmux Session", apps)
@@ -336,64 +324,23 @@ func TestOpenInApp_OpenHere_WithoutWrapper(t *testing.T) {
 	t.Setenv("WT_WRAPPER", "")
 	t.Setenv("WT_CD_FILE", "")
 
-	// Capture stdout
-	origStdout := os.Stdout
-	rOut, wOut, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe stdout: %v", err)
+	stdout, stderr := captureOpenHere(t, path, "repo", "wt-name")
+
+	// stdout is the bare resolved path (the machine contract survives the
+	// hint path).
+	if stdout != path+"\n" {
+		t.Errorf("expected stdout to be the bare path %q, got %q", path+"\n", stdout)
 	}
 
-	// Capture stderr
-	origStderr := os.Stderr
-	rErr, wErr, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe stderr: %v", err)
+	// stderr carries the wrapper hint (shared copy with wt go).
+	if !strings.Contains(stderr, "hint: cd needs the shell wrapper") {
+		t.Errorf("expected stderr to contain hint, got %q", stderr)
 	}
-
-	t.Cleanup(func() {
-		os.Stdout = origStdout
-		os.Stderr = origStderr
-		_ = rOut.Close()
-		_ = wOut.Close()
-		_ = rErr.Close()
-		_ = wErr.Close()
-	})
-	os.Stdout = wOut
-	os.Stderr = wErr
-
-	openErr := OpenInApp("open_here", path, "repo", "wt-name")
-
-	wOut.Close()
-	wErr.Close()
-
-	if openErr != nil {
-		t.Fatalf("OpenInApp returned error: %v", openErr)
+	if !strings.Contains(stderr, `eval "$(wt shell-init zsh)"`) {
+		t.Errorf("expected stderr to contain eval instruction, got %q", stderr)
 	}
-
-	var stdoutBuf, stderrBuf bytes.Buffer
-	if _, err := io.Copy(&stdoutBuf, rOut); err != nil {
-		t.Fatalf("io.Copy stdout: %v", err)
-	}
-	if _, err := io.Copy(&stderrBuf, rErr); err != nil {
-		t.Fatalf("io.Copy stderr: %v", err)
-	}
-
-	// stdout should still have the cd command
-	expected := "cd -- '" + path + "'\n"
-	if stdoutBuf.String() != expected {
-		t.Errorf("expected stdout %q, got %q", expected, stdoutBuf.String())
-	}
-
-	// stderr should have the hint
-	stderrStr := stderrBuf.String()
-	if !strings.Contains(stderrStr, `hint: "Open here" requires the shell wrapper`) {
-		t.Errorf("expected stderr to contain hint, got %q", stderrStr)
-	}
-	if !strings.Contains(stderrStr, `eval "$(wt shell-init zsh)"`) {
-		t.Errorf("expected stderr to contain eval instruction, got %q", stderrStr)
-	}
-	if !strings.Contains(stderrStr, `Add it to your ~/.zshrc or ~/.bashrc`) {
-		t.Errorf("expected stderr to contain profile hint, got %q", stderrStr)
+	if !strings.Contains(stderr, `Add it to your ~/.zshrc or ~/.bashrc`) {
+		t.Errorf("expected stderr to contain profile hint, got %q", stderr)
 	}
 }
 
@@ -408,9 +355,9 @@ func TestResolveDefaultApp_Success(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	apps := []AppInfo{
-		{"Open here", "open_here"},
-		{"VSCode", "code"},
-		{"tmux window", "tmux_window"},
+		{Name: "Open here", Cmd: "open_here"},
+		{Name: "VSCode", Cmd: "code", Kind: AppKindEditor},
+		{Name: "tmux window", Cmd: "tmux_window"},
 	}
 
 	resolved, err := ResolveDefaultApp(apps)
@@ -429,9 +376,9 @@ func TestResolveDefaultApp_VSCode(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	apps := []AppInfo{
-		{"Open here", "open_here"},
-		{"VSCode", "code"},
-		{"tmux window", "tmux_window"},
+		{Name: "Open here", Cmd: "open_here"},
+		{Name: "VSCode", Cmd: "code", Kind: AppKindEditor},
+		{Name: "tmux window", Cmd: "tmux_window"},
 	}
 
 	resolved, err := ResolveDefaultApp(apps)
@@ -451,7 +398,7 @@ func TestResolveDefaultApp_NoDefault(t *testing.T) {
 
 	// Only open_here available — DetectDefaultApp skips it, returns -1
 	apps := []AppInfo{
-		{"Open here", "open_here"},
+		{Name: "Open here", Cmd: "open_here"},
 	}
 
 	_, err := ResolveDefaultApp(apps)
@@ -463,49 +410,26 @@ func TestResolveDefaultApp_NoDefault(t *testing.T) {
 	}
 }
 
-func TestOpenInApp_OpenHere_ShellSafeQuoting(t *testing.T) {
+func TestOpenInApp_OpenHere_PathPrintedVerbatim(t *testing.T) {
+	// The retired `cd -- '<path>'` fallback was eval'd and needed shell
+	// quoting. The unified contract prints the BARE path verbatim — consumers
+	// use cd "$(command wt …)", where the shell substitution handles special
+	// characters. No quoting layer may reappear.
 	t.Setenv("WT_WRAPPER", "1")
 	t.Setenv("WT_CD_FILE", "")
 
-	tests := []struct {
-		name     string
-		path     string
-		expected string
-	}{
-		{"dollar sign", "/tmp/$(whoami)", "cd -- '/tmp/$(whoami)'\n"},
-		{"backticks", "/tmp/`id`", "cd -- '/tmp/`id`'\n"},
-		{"single quote", "/tmp/it's-here", "cd -- '/tmp/it'\\''s-here'\n"},
-		{"spaces", "/tmp/my worktree", "cd -- '/tmp/my worktree'\n"},
+	paths := []string{
+		"/tmp/$(whoami)",
+		"/tmp/`id`",
+		"/tmp/it's-here",
+		"/tmp/my worktree",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			origStdout := os.Stdout
-			r, w, err := os.Pipe()
-			if err != nil {
-				t.Fatalf("os.Pipe: %v", err)
-			}
-			t.Cleanup(func() {
-				os.Stdout = origStdout
-				_ = r.Close()
-				_ = w.Close()
-			})
-			os.Stdout = w
-
-			openErr := OpenInApp("open_here", tt.path, "repo", "wt")
-			w.Close()
-
-			if openErr != nil {
-				t.Fatalf("OpenInApp returned error: %v", openErr)
-			}
-
-			var buf bytes.Buffer
-			if _, err := io.Copy(&buf, r); err != nil {
-				t.Fatalf("io.Copy: %v", err)
-			}
-
-			if buf.String() != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, buf.String())
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			stdout, _ := captureOpenHere(t, path, "repo", "wt")
+			if stdout != path+"\n" {
+				t.Errorf("expected verbatim bare path %q, got %q", path+"\n", stdout)
 			}
 		})
 	}
@@ -557,4 +481,76 @@ func TestOpenInApp_TestNoLaunchSeam(t *testing.T) {
 	// we just need to confirm it doesn't go through the short-circuit path.
 	// A separate run with stdout-capture covers open_here's actual behavior
 	// in TestOpenInApp_OpenHere_Stdout.)
+}
+
+// appKindByCmd is the closed classification table for the wt open --list
+// contract: every Cmd key BuildAvailableApps can emit, mapped to its Kind.
+// Action rows map to "" (excluded from --list, retained in the menu / -a).
+var appKindByCmd = map[string]string{
+	"code":           AppKindEditor,
+	"cursor":         AppKindEditor,
+	"ghostty_macos":  AppKindTerminal,
+	"ghostty_linux":  AppKindTerminal,
+	"iterm":          AppKindTerminal,
+	"terminal_app":   AppKindTerminal,
+	"gnome_terminal": AppKindTerminal,
+	"konsole":        AppKindTerminal,
+	"finder":         AppKindFileManager,
+	"nautilus":       AppKindFileManager,
+	"dolphin":        AppKindFileManager,
+	"open_here":      "",
+	"copy_macos":     "",
+	"copy_linux":     "",
+	"byobu_tab":      "",
+	"tmux_window":    "",
+	"tmux_session":   "",
+}
+
+func TestBuildAvailableApps_KindClassification(t *testing.T) {
+	for _, app := range BuildAvailableApps() {
+		want, known := appKindByCmd[app.Cmd]
+		if !known {
+			t.Errorf("BuildAvailableApps emitted unclassified Cmd %q — add it to the Kind mapping", app.Cmd)
+			continue
+		}
+		if app.Kind != want {
+			t.Errorf("Cmd %q: Kind = %q, want %q", app.Cmd, app.Kind, want)
+		}
+	}
+}
+
+func TestListableApps_FiltersActionRowsPreservingOrder(t *testing.T) {
+	apps := []AppInfo{
+		{Name: "Open here", Cmd: "open_here"},
+		{Name: "VSCode", Cmd: "code", Kind: AppKindEditor},
+		{Name: "Copy path", Cmd: "copy_macos"},
+		{Name: "iTerm2", Cmd: "iterm", Kind: AppKindTerminal},
+		{Name: "tmux window", Cmd: "tmux_window"},
+		{Name: "Finder", Cmd: "finder", Kind: AppKindFileManager},
+		{Name: "tmux session", Cmd: "tmux_session"},
+	}
+
+	got := ListableApps(apps)
+
+	wantCmds := []string{"code", "iterm", "finder"}
+	if len(got) != len(wantCmds) {
+		t.Fatalf("ListableApps returned %d entries, want %d: %+v", len(got), len(wantCmds), got)
+	}
+	for i, cmd := range wantCmds {
+		if got[i].Cmd != cmd {
+			t.Errorf("ListableApps[%d].Cmd = %q, want %q (order must match detection order)", i, got[i].Cmd, cmd)
+		}
+		if got[i].Kind == "" {
+			t.Errorf("ListableApps[%d] (%q) has empty Kind — filter must keep only classified apps", i, got[i].Cmd)
+		}
+	}
+}
+
+func TestListableApps_EmptyInputReturnsNonNil(t *testing.T) {
+	if got := ListableApps(nil); got == nil {
+		t.Error("ListableApps(nil) returned a nil slice; want non-nil empty slice (JSON [] contract)")
+	}
+	if got := ListableApps([]AppInfo{{Name: "Open here", Cmd: "open_here"}}); got == nil || len(got) != 0 {
+		t.Errorf("ListableApps(action rows only) = %v; want non-nil empty slice", got)
+	}
 }

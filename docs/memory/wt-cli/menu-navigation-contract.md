@@ -5,10 +5,10 @@ description: "Arrow-key navigation contract for the shared `ShowMenu` — TTY ga
 # wt-cli: Menu Navigation Contract
 
 > Post-implementation behavior capture for the shared interactive menu navigation.
-> Source changes: `260516-dkg7`, `260705-3wr8`, `260708-wryx`, `260717-6end`
+> Source changes: `260516-dkg7`, `260705-3wr8`, `260708-wryx`, `260717-6end`, `260722-0is3`
 > (each contract below carries its citation).
 
-This file documents the contract that `ShowMenu` honors. Future changes touching `src/internal/worktree/menu.go` should preserve these invariants unless an explicit spec amendment supersedes them. The contract covers every interactive prompt invoked by `wt` (most prominently the `wt open` / `wt delete` worktree pickers) via the shared `ShowMenu` entry point. One `cmd/` call site is deliberately session-threaded: `wt create`'s `RunE` threads one `MenuSession` through its whole interactive flow, sitting on the `MenuSession` single-reader invariant this file carries and extending it from menu→menu to menu→line-prompt (260708-wryx; see § The menu→line-prompt seam and § `wt create` joins the session-threading pattern).
+This file documents the contract that `ShowMenu` honors. Future changes touching `src/internal/worktree/menu.go` should preserve these invariants unless an explicit spec amendment supersedes them. The contract covers every interactive prompt invoked by `wt` (most prominently the `wt go` worktree picker and the `wt delete` worktree picker) via the shared `ShowMenu` entry point. One `cmd/` call site is deliberately session-threaded: `wt create`'s `RunE` threads one `MenuSession` through its whole interactive flow, sitting on the `MenuSession` single-reader invariant this file carries and extending it from menu→menu to menu→line-prompt (260708-wryx; see § The menu→line-prompt seam and § `wt create` joins the session-threading pattern).
 
 ## Requirements
 
@@ -21,7 +21,7 @@ This file documents the contract that `ShowMenu` honors. Future changes touching
 ### `ShowMenu`'s public signature is preserved
 
 - The exported entry point remains `ShowMenu(prompt string, options []string, defaultIdx int) (int, error)`. Return semantics are unchanged: `0` = Cancel, `1..N` = the corresponding option, `error` is non-nil only for I/O failures.
-- All ~11 call sites in `src/cmd/wt/{create,delete,open}.go` continue to compile without edits. Their existing `if choice == 0 { return }` Cancel-handling branches continue to function unchanged.
+- All ~11 call sites in `src/cmd/wt/{create,delete,open,go}.go` continue to compile without edits. Their existing `if choice == 0 { return }` Cancel-handling branches continue to function unchanged.
 
 ### Default highlight seeding rule
 
@@ -110,11 +110,36 @@ The renderer windows its region to the terminal height (fzf/gum-style windowing)
 - `reader.ReadString('\n')` returns any bytes read so far **alongside** the `io.EOF` error, so a valid choice typed **without a trailing newline** before EOF is accepted rather than discarded (260717-6end). The guard is `if err != nil && (!errors.Is(err, io.EOF) || strings.TrimSpace(line) == "")` — the error path fires only when EOF arrives with genuinely no pending input; otherwise the accumulated line falls through to the normal choice-parsing logic.
   - A piped `"0"` (no newline) selects Cancel; a piped `"2"` (no newline) selects option 2 — deliberately matching what a newline-terminated line would do.
 
-### `wt go` and `wt open --select` are `ShowMenu`/`MenuSession` callers
+### `wt go` (and its deprecated `wt open --select` alias) are the `ShowMenu`/`MenuSession` worktree-selection callers
 
-- `wt go` and `wt open --select` (deprecated alias `--go` — 260717-59u8) render their worktree-selection menu through the **shared** `selectWorktree` helper (`src/cmd/wt/open.go`) — which calls `session.Show(...)` → `ShowMenu` (260620-3pp5). There is no separate menu primitive; `wt go`'s picker inherits this contract wholesale (arrow keys, digit-submit, Cancel→`0`, wrap-around, the `(default)` marker, and the in-place redraw) with no `menu.go` specialization. (The helper pins the main worktree to row 1; signature `(session, prompt)` (260718-daqj) — that is menu *content*, not menu *navigation*: this `ShowMenu`/`MenuSession` contract is independent of it. See `/wt-cli/go-command-contract.md`.)
+- `wt go` renders its worktree-selection menu through the **shared**
+  `selectWorktree` helper (relocated to `src/cmd/wt/go.go` by `260722-0is3`) —
+  which calls `session.Show(...)` → `ShowMenu` (260620-3pp5). The deprecated
+  `wt open --select` (alias `--go`) path (`openGo`) is the other caller. There is
+  no separate menu primitive; the picker inherits this contract wholesale (arrow
+  keys, digit-submit, Cancel→`0`, wrap-around, the `(default)` marker, and the
+  in-place redraw) with no `menu.go` specialization. (The helper pins the main
+  worktree to row 1; signature `(session, prompt)` (260718-daqj) — that is menu
+  *content*, not menu *navigation*: this `ShowMenu`/`MenuSession` contract is
+  independent of it. See `/wt-cli/go-command-contract.md`.)
+- **`wt open` no longer renders a worktree-selection menu.** `260722-0is3`
+  purified `wt open` into a pure launcher: `selectAndOpen` (the former main-repo
+  no-arg worktree picker) is **removed** — `wt open` no-arg now opens the current
+  context (worktree root / repo root / cwd) directly, so the only menu `wt open`
+  itself renders is the "Open in:" app menu (`handleAppMenu` /
+  `handleAppMenuWithSession`). The which-worktree menu lives in exactly one verb,
+  `wt go` (the two-menu ownership model — see `/wt-cli/go-command-contract.md`).
 - **Non-TTY fallback**: `wt go`'s no-arg menu degrades through the same numbered-prompt fallback as every other caller — `isInteractiveTTY()` gates it, and piped/CI invocations land on the numbered prompt automatically. `wt go` adds a separate, earlier guard for the **`--non-interactive` no-arg** case: it refuses with `ExitGeneralError` *before* reaching `selectWorktree` at all (a no-arg selection has no non-interactive default — see `/wt-cli/go-command-contract.md`), so that path never renders even the fallback prompt. `wt go <name>` and `wt go` interactive both reach the menu only when a menu is actually wanted.
-- **Shared `MenuSession` for the launch-chaining callers**: `selectAndOpen` and `wt open --select`'s `openGo` pass ONE `MenuSession` to both `selectWorktree` (the "Select worktree…" menu) and `handleAppMenuWithSession` (the "Open in:" menu), so the two consecutive menus share a single stdin reader — the documented byte-theft fix. `wt go` chains no second menu, so it uses a one-shot session. The single-reader requirement and why it matters are the `MenuSession` contract this file's navigation behavior sits on.
+- **Shared `MenuSession` for the launch-chaining callers**: the chained-menu flow
+  is now **`wt go --open prompt`** (`260722-0is3`) — its `RunE` passes ONE
+  `MenuSession` to both `selectWorktree` (the "Select worktree to open:" menu) and,
+  via `launchSelection` → `handleAppMenuWithSession`, the "Open in:" menu, so the
+  two consecutive menus share a single stdin reader — the documented byte-theft
+  fix. The deprecated `wt open --select`'s `openGo` does the same chaining. Plain
+  `wt go` (navigating) and `wt go <name> --open prompt` (by-name, app menu on a
+  fresh one-shot session) chain no two worktree→app menus on the same reader. The
+  single-reader requirement and why it matters are the `MenuSession` contract this
+  file's navigation behavior sits on.
 
 ### The menu→line-prompt seam: session-aware line prompts
 
@@ -132,7 +157,7 @@ The `MenuSession` single-reader guarantee covers line prompts (`PromptWithDefaul
 ### `wt create` joins the session-threading pattern
 
 - `wt create`'s `RunE` (`src/cmd/wt/create.go`) creates ONE `session := wt.NewMenuSession()` with `defer session.Close()` near the top (before the dirty-state check — the first interactive consumer), and routes **all five** interactive stdin consumers through it: the dirty-state menu (`session.Show`), the "Worktree name" prompt (`session.PromptWithDefault`), the "Initialize worktree?" confirm (`session.ConfirmYesNo`), the "Continue and open the worktree anyway?" confirm (`session.ConfirmYesNo`), and the "Open in:" app menu (`session.Show`) (260708-wryx). There are no one-shot `wt.ShowMenu` calls in `create.go`.
-- This guards **two** seams at once: the menu→line-prompt theft (dirty-state menu → name prompt) AND the menu→menu theft (the dirty-state menu's orphaned pump stealing from the later "Open in:" menu — the exact class `MenuSession` guards for `wt open`). `wt create` matches the `wt open` / `wt delete` / `wt go` session-threading pattern.
+- This guards **two** seams at once: the menu→line-prompt theft (dirty-state menu → name prompt) AND the menu→menu theft (the dirty-state menu's orphaned pump stealing from the later "Open in:" menu — the exact menu→menu class `MenuSession` guards for the `wt go --open prompt` selection→app-menu chain). `wt create` matches the `wt go` / `wt delete` session-threading pattern.
 - **`cmd/` stays orchestration-only** (Constitution Principle V): the line-reading logic lives entirely in `internal/worktree/menu.go`; `create.go`'s edits are limited to constructing the session, swapping call sites to session methods, and the warning-string edit — no new business logic in `cmd/`.
 - **Dirty-state warning copy** is `wt.Warn("current worktree has uncommitted changes")`. The `HasUncommittedChanges()` / `HasUntrackedFiles()` checks run in the process CWD — whatever worktree (linked or main) the user is standing in — so the copy must describe the *current worktree/checkout*, never "main repo". The warning exists because uncommitted work doesn't carry over to the new worktree, and the "Stash changes first" option remains valid (the git stash is repo-global). The stream is unchanged (`wt.Warn` → stderr, per the stdout=machine / stderr=human convention — see `/wt-cli/create-output-phases.md`, the canonical stream-discipline file that owns the `wt.Warn` emitter).
 
@@ -173,7 +198,7 @@ The `MenuSession` single-reader guarantee covers line prompts (`PromptWithDefaul
 
 ### Cancel returns `(0, nil)` over `ErrUserAbort`
 
-An `ErrUserAbort` typed error would force every one of the ~11 `ShowMenu` call sites in `src/cmd/wt/{create,delete,open}.go` to add a new branch — for zero observable UX gain over the existing `if choice == 0 { return }` pattern. Preserving the integer-return contract was the lowest-risk path with the largest backward-compatibility win. (Source: intake Q3 + spec Design Decisions #2.)
+An `ErrUserAbort` typed error would force every one of the ~11 `ShowMenu` call sites in `src/cmd/wt/{create,delete,open,go}.go` to add a new branch — for zero observable UX gain over the existing `if choice == 0 { return }` pattern. Preserving the integer-return contract was the lowest-risk path with the largest backward-compatibility win. (Source: intake Q3 + spec Design Decisions #2.)
 
 ### Digit keys submit immediately (no Enter)
 
@@ -230,7 +255,7 @@ The line-read helper lives on `blockingByteReader` (`readLine`), accumulating vi
 - Tests: `src/internal/worktree/menu_test.go` — `nextMenuState` table-driven coverage (every keybinding, wrap-around, digit boundaries, seeding), `parseKey` table-driven coverage (arrow sequences, bare-Esc-vs-arrow timeout via fake clock, unknown sequences), fallback-path byte-equality tests, `TestRunInteractiveMenuCore_PanicRestore` (defer-restore guarantee), `TestPaintAndRedrawShareCore` (first-paint / redraw byte-equality). Windowing (`260705-3wr8`): `TestMenuLayout`, `TestMenuLayout_FootprintSweep` (exhaustive `rowsRendered ≤ height−1` sweep, heights 1–12 × options 1–25), `TestMenuLayout_WrapJumpFromTopToBottom`, `TestTerminalHeightFallback` (24-row `GetSize`-failure fallback), `TestRenderRows_WindowedSlicing`, `TestRenderRows_NoIndicatorsAtEdges`, `TestRenderRows_SmallMenuByteIdenticalToUnwindowed`, `TestRedrawMenu_ClearsExtraLinesOnShrink`. Line-prompt seam (`260708-wryx`) in `src/internal/worktree/menu_session_test.go`: `TestUnderlyingReadAhead_MenuToLinePromptTheft` (characterizes the two-reader theft), `TestMenuSession_LinePromptAfterMenuNoTheft` (regression guard — `session.Show` then `session.PromptWithDefault` on one `sharedStream` delivers the typed line intact), `TestBlockingByteReader_ReadLine` (multi-byte / empty / CRLF-strip / EOF-before-newline), `TestMenuSession_PromptWithDefault_Semantics` and `TestMenuSession_ConfirmYesNo_Semantics` (default-on-empty, y/n parsing, EOF paths — via the injected-`sharedStream` seam, no PTY). The corrected warning string is asserted in `src/cmd/wt/create_test.go` `TestCreate_DirtyStateWarningCopy` (dirty repo, piped-stdin fallback menu, `3\n` Abort so no worktree leaks). Non-TTY EOF refusal (`260717-6end`): `TestShowMenu_FallbackPath_EOFNoInputActionableError` (EOF-no-input → non-nil `Error:`/`Why:`/`Fix:` refusal naming the escape, not `reading input: EOF`) and `TestShowMenu_FallbackPath_PartialLineNoNewlineAtEOF` (a choice typed without a trailing newline before EOF is still honored) in `menu_test.go`; the integration guard `TestIntegration_NonTTYMenuActionableRefusal` in `src/cmd/wt/integration_test.go` pins `wt open` / `wt go` / `wt delete` with empty stdin to exit 1 with the refusal on stderr and no `reading input: EOF`.
 - Constitution: Principle I (Single-Binary CLI — motivated rejecting third-party TUI deps; `260708-wryx` rejected a global singleton reader on the same no-hidden-state grounds), Principle IV (Test What the User Sees — motivated the pure state-machine seam and the PTY-free `sharedStream`/`readLine` tests), Principle V (Internal Package Boundary — `260708-wryx` kept all line-reading logic in `internal/worktree`, `create.go` stays orchestration-only), Principle VI (Interactive by Default, Scriptable on Demand — motivated the byte-identical non-TTY fallback, preserved by the fallback-delegation of the session methods).
 - Sibling memory: `wt-cli/init-failure-contract.md` (different `wt` subcommand, same post-change invariant-capture pattern), `wt-cli/list-status-contract.md` (different subcommand, same pattern).
-- Sibling memory: `wt-cli/go-command-contract.md` — the `wt go` selector / `wt open --select` composition (flag formerly `--go`, now a deprecated alias) whose worktree-selection menu is a new caller of this contract (via the shared `selectWorktree` → `ShowMenu`/`MenuSession`).
+- Sibling memory: `wt-cli/go-command-contract.md` — the `wt go` selector (which owns the which-worktree menu) and its `--open` launch composition; the chained selection→app-menu flow is `wt go --open prompt` (with the deprecated `wt open --select`/`--go` alias behaving identically), both rendering the worktree-selection menu via the shared `selectWorktree` → `ShowMenu`/`MenuSession`. `selectAndOpen` (the former `wt open` main-repo worktree picker) was removed by `260722-0is3`, so `wt open` itself renders only the "Open in:" app menu.
 - Sibling memory: [toolkit-standards-conformance](/wt-cli/toolkit-standards-conformance.md) — the conformance baseline (shll v0.0.23); the non-TTY EOF refusal above is the principle №1/№4 fix that change landed at this choke point.
 - Sibling memory: `wt-cli/create-output-phases.md` — the canonical stdout/stderr stream-discipline file that owns the single `wt.Warn` emitter; the `260708-wryx` dirty-state warning-copy correction (`"current worktree has uncommitted changes"`) flows through that `wt.Warn` → stderr path (this file documents the *copy* change on the menu-scoped `wt create` flow; the stream discipline itself lives there).
-- Call sites (informational): `src/cmd/wt/open.go` (the shared `selectWorktree` → `session.Show`, plus the "Open in:" menu, plus `wt open --select`'s `openGo`), `src/cmd/wt/go.go` (`wt go`'s no-arg selection menu, via `selectWorktree`; added by `260620-3pp5`), `src/cmd/wt/delete.go` (7 calls), `src/cmd/wt/create.go` (`260708-wryx`: one `MenuSession` threaded through `RunE` across all five interactive consumers — 2 `session.Show` menus + 3 session line prompts; both former one-shot `wt.ShowMenu` calls removed).
+- Call sites (informational): `src/cmd/wt/go.go` (the shared `selectWorktree` → `session.Show` worktree-selection menu — relocated here from `open.go` by `260722-0is3`; the `wt go --open prompt` chained selection→app-menu flow via `launchSelection`), `src/cmd/wt/open.go` (the "Open in:" app menu `handleAppMenu` / `handleAppMenuWithSession`, plus the deprecated `wt open --select`'s `openGo` chained flow; the former `selectAndOpen` worktree picker was removed by `260722-0is3`), `src/cmd/wt/delete.go` (7 calls), `src/cmd/wt/create.go` (`260708-wryx`: one `MenuSession` threaded through `RunE` across all five interactive consumers — 2 `session.Show` menus + 3 session line prompts; both former one-shot `wt.ShowMenu` calls removed).

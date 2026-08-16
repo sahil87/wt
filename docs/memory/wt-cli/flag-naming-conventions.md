@@ -8,7 +8,7 @@ description: "The `wt` CLI flag-surface conventions — no command-noun prefixes
 
 > Post-implementation behavior capture for the cross-command flag-surface
 > conventions the `wt` CLI follows.
-> Source change: `260717-59u8-intuitive-flag-names`.
+> Source changes: `260717-59u8-intuitive-flag-names`, `260722-0is3-go-open-orthogonality`.
 
 ## Overview
 
@@ -83,7 +83,10 @@ or rare flags stay long-form-only (Principle II).
   `wt delete`, so `--all` takes `-a`.
 - **`-a` reused across commands is fine** — `wt delete --all` and `wt open --app`
   are different commands, no collision.
-- **Deliberately NO short** for: `--select` on `wt open` (not frequent enough);
+- **Deliberately NO short** for: `--select` on `wt open` (now a deprecated alias
+  — `260722-0is3`; it never carried a short, and neither does its replacement
+  `wt go --open`, which also takes no `-o`); `--open` on `wt go` (the composition
+  flow is the same one short-less `--select` covered — `260722-0is3`);
   `--base` on `wt create` (a `-b` would collide with `git worktree add -b`, which
   there NAMES the new branch — actively misleading to git users);
   `--non-interactive` (script-facing everywhere; explicitness beats brevity, and
@@ -94,10 +97,14 @@ or rare flags stay long-form-only (Principle II).
   [`delete-dry-run-contract`](/wt-cli/delete-dry-run-contract.md).
 
 ### `--open` requires an explicit value — no `NoOptDefVal`
-`wt create --open` SHALL NOT be given a `NoOptDefVal`. Because `wt create` takes a
-positional `[branch]`, a bare `--open code` would parse `code` as the positional
-branch argument — a silent footgun. `--open` always requires an explicit value
-(`prompt` / `default` / `skip` / an app name). (Contrast `wt delete --stale`,
+`wt create --open` and `wt go --open` SHALL NOT be given a `NoOptDefVal`. Both
+commands take an optional positional (`wt create [branch]`, `wt go [name]`), so a
+bare `--open code` would parse `code` as that positional — a silent footgun.
+`--open` always requires an explicit value (`prompt` / `default` / `skip` / an app
+name). `wt go --open` reuses `wt create --open`'s grammar and explicit-value rule
+verbatim (`260722-0is3`; the two-verb composition model — see
+[`go-command-contract`](/wt-cli/go-command-contract.md)). (Contrast
+`wt delete --stale`,
 which intentionally DOES carry a `NoOptDefVal` of `"7d"` — see
 [`idle-staleness-contract`](/wt-cli/idle-staleness-contract.md); that is a
 value-optional flag by design, `--open` is not.)
@@ -117,13 +124,26 @@ old flag is ever removed. Precedent: `src/cmd/wt/delete.go`'s pre-existing
      stderr=human convention, see
      [`create-output-phases`](/wt-cli/create-output-phases.md));
   3. passing the **new** name prints no warning.
-- **Deprecation message wording** is the consistent `"use --<new> instead"` form.
+- **Deprecation message wording** is the consistent `"use --<new> instead"` form
+  — **except when the replacement is a command, not a flag**: `wt open`'s
+  `--select` and `--go` are both deprecated toward the `wt go --open` *command*
+  composition, so both carry the message `use "wt go --open" instead`
+  (`260722-0is3`). This is the one place the target is a sibling command rather
+  than a renamed flag on the same command — the selection menu lives in the
+  `wt go` verb (the two-menu ownership model — see
+  [`go-command-contract`](/wt-cli/go-command-contract.md)). Both stay functional
+  (the internal `openGo` path is retained until a later removal change) and both
+  are auto-hidden from `wt open --help`.
 - **Same-type renames share one variable.** For `--name`/`--worktree-name`,
   `--open`/`--worktree-open`, `--all`/`--delete-all`, `--branch`/`--delete-branch`,
-  `--select`/`--go`, both flags bind the SAME pointer (pflag permits this) — the
-  internal variable name and any downstream signature are unchanged, so the rename
-  is purely `cmd/`-layer flag surface. (`--skip-brew-update`/`--no-brew-update` also
-  share one pointer, but that pair is NOT a `MarkDeprecated` rename — see the
+  both flags bind the SAME pointer (pflag permits this) — the internal variable
+  name and any downstream signature are unchanged, so the rename is purely
+  `cmd/`-layer flag surface. **`--select` and `--go` on `wt open` are a special
+  case of this**: both bind one bool (`goFlag`), but as of `260722-0is3` **both**
+  are deprecated (see the deprecation-target note below), so there is no
+  "primary visible name" among them — they are two hidden aliases for the same
+  retained-but-deprecated composition path. (`--skip-brew-update`/`--no-brew-update`
+  also share one pointer, but that pair is NOT a `MarkDeprecated` rename — see the
   frozen-contract-flag carve-out below.)
 - **String→bool conversions use two variables reconciled via `Changed()`.** For
   `--no-init` (vs. old string `--worktree-init`) and `--no-remote` (vs. old string
@@ -217,10 +237,12 @@ stays a string).
 *Introduced by*: `260717-59u8-intuitive-flag-names`.
 
 ### `--open` gets no `NoOptDefVal` (positional footgun)
-**Decision**: `wt create --open` requires an explicit value.
-**Why**: `wt create` takes a positional `[branch]`. A `NoOptDefVal` would let bare
-`--open code` silently parse `code` as the branch positional instead of the open
-mode — a silent, hard-to-debug footgun.
+**Decision**: `wt create --open` and `wt go --open` require an explicit value.
+**Why**: both commands take an optional positional (`wt create [branch]`,
+`wt go [name]`). A `NoOptDefVal` would let bare `--open code` silently parse
+`code` as that positional instead of the open mode — a silent, hard-to-debug
+footgun. `wt go --open` (`260722-0is3`) copies the rule verbatim from
+`wt create --open` because it has the identical optional-positional ambiguity.
 **Rejected**: a `NoOptDefVal` of `prompt` (the positional-swallow footgun).
 *Introduced by*: `260717-59u8-intuitive-flag-names`.
 
@@ -237,8 +259,10 @@ mode — a silent, hard-to-debug footgun.
   — the shll `update` standard that freezes `--skip-brew-update` as a `--help`
   substring, the authority behind the carve-out above.
 - Sibling memory: [`go-command-contract`](/wt-cli/go-command-contract.md) — the
-  `wt open --select` composition flag (formerly `--go`, now a deprecated alias)
-  and the `--app` `-a` short.
+  `wt go --open` composition flag (the primary select-then-launch surface, with
+  its no-`NoOptDefVal` / no-short rules), and the `wt open --select`/`--go`
+  aliases (both deprecated toward `wt go --open` as of `260722-0is3`) plus the
+  `--app` `-a` short.
 - Sibling memory: [`create-branch-semantics`](/wt-cli/create-branch-semantics.md)
   — the `--name`/`-n`, `--open`/`-o`, `--no-init` renames and the `wt new` alias
   on `wt create`; the `--reuse requires --name` message.
@@ -256,7 +280,10 @@ mode — a silent, hard-to-debug footgun.
   ["new"]`), `src/cmd/wt/delete.go` (`--all`/`-a`, `--branch`, `--no-remote` +
   deprecated `--delete-all`/`--delete-branch`/`--delete-remote`, `Aliases:
   ["rm"]`; `--dry-run` long-only, added by `260717-p5m9`),
-  `src/cmd/wt/open.go` (`--select` + deprecated `--go`, `--app`/`-a`),
+  `src/cmd/wt/open.go` (`--select` and `--go` both deprecated toward `wt go --open`
+  via `MarkDeprecated`, sharing `goFlag`, per `260722-0is3`; `--app`/`-a`),
+  `src/cmd/wt/go.go` (`--open` composition flag: string, no `NoOptDefVal`, no
+  short — `260722-0is3`),
   `src/cmd/wt/list.go` (`Aliases: ["ls"]`), `src/cmd/wt/update.go`
   (both `--skip-brew-update` contract flag and `--no-brew-update` alias visible on
   one bool, no `MarkDeprecated` — the carve-out instance), `src/cmd/wt/init.go`

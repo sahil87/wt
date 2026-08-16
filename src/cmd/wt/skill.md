@@ -27,10 +27,13 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   dirty/unpushed indicators; `--json` emits machine records; `--path <name>`
   prints one absolute path.
 - `open [name|path]` — launch a worktree/dir in a detected app (editor, terminal,
-  file manager) via a menu. `-a/--app <name>` skips the menu; `default` picks the
-  auto-detected app. `--select` picks a worktree first, then launches.
-- `go [name]` — **select** a worktree and navigate (cd) there; launches nothing.
-  No arg → selection menu; a name → cd directly. Requires a git repo.
+  file manager) via the app menu. No arg opens the current context (worktree root /
+  repo root / cwd). `-a/--app <name>` skips the menu; `default` picks the
+  auto-detected app. `--list [--json]` prints the app registry instead.
+- `go [name]` — **select** a worktree: no arg → selection menu; a name → direct.
+  By default navigates (cd) there; `--open <prompt|default|skip|app>` launches the
+  selection instead (go owns the worktree menu, open owns the app menu; this flag
+  composes them). Requires a git repo.
 - `delete [names...]` (alias `rm`) — remove worktrees with optional branch cleanup.
   `--all/-a` removes every worktree; `-s/--stash` stashes uncommitted changes first;
   `--branch <true|false|auto>` and `--no-remote` control branch deletion.
@@ -48,9 +51,11 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   fall back to printing a path for the caller to `cd`.
 - **Launcher contract (`WT_CD_FILE` / `WT_WRAPPER`).** `wt open` is the toolkit's
   canonical directory launcher — external callers (e.g. `hop`) delegate to it as a
-  subprocess. When `WT_CD_FILE` is set, "Open here" and `wt go` write the resolved
-  directory path there (mode 0600, truncate-on-write) instead of printing a
-  `cd` line; the caller applies the `cd` itself. Set `WT_WRAPPER=1` to signal you
+  subprocess. "Open here" and `wt go` share one shell-cd contract: when
+  `WT_CD_FILE` is set they write the resolved directory path there (mode 0600,
+  truncate-on-write), and they always print the bare path as the last stdout
+  line (`cd "$(command wt …)"` works without the wrapper); the caller applies
+  the `cd` itself. Set `WT_WRAPPER=1` to signal you
   handle the `cd` and suppress the "wrapper not loaded" hint. A non-zero exit means
   do **not** trust `WT_CD_FILE`'s contents. See `docs/specs/launcher-contract.md`.
 - **Init protocol (`WORKTREE_INIT_SCRIPT`).** Each new worktree runs an init script

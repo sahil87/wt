@@ -147,3 +147,25 @@ func TestDescribeHead_Detached(t *testing.T) {
 		t.Errorf("DescribeHead() = %q, want %q", got, shortSHA)
 	}
 }
+
+// TestBranchForPath_GitDir verifies BranchForPath returns the checked-out
+// branch of the git checkout at the given path — without changing the test
+// process's cwd (the path is passed, not entered).
+func TestBranchForPath_GitDir(t *testing.T) {
+	dir := setupGitRepo(t)
+
+	if got := BranchForPath(dir); got != "main" {
+		t.Errorf("BranchForPath(%q) = %q, want %q", dir, got, "main")
+	}
+}
+
+// TestBranchForPath_NonGitDir verifies the best-effort fallback: a non-git
+// directory yields "unknown" rather than an error — a display label must never
+// fail the caller.
+func TestBranchForPath_NonGitDir(t *testing.T) {
+	dir := t.TempDir()
+
+	if got := BranchForPath(dir); got != "unknown" {
+		t.Errorf("BranchForPath(%q) = %q, want %q", dir, got, "unknown")
+	}
+}

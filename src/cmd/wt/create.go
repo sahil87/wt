@@ -492,7 +492,6 @@ branch argument or with --base.`,
 			// actually run — never for the skip case (incl. --non-interactive
 			// defaulting to skip), since a separator must not precede a phase
 			// that emits nothing.
-			var suppressPath bool
 			if worktreeOpen != "skip" {
 				fmt.Fprintln(os.Stderr, wt.PhaseSeparator("Open"))
 			}
@@ -511,9 +510,6 @@ branch argument or with --base.`,
 						if openErr := wt.OpenInApp(selected.Cmd, wtPath, ctx.RepoName, finalName); openErr != nil {
 							wt.Warn("could not open in %s: %s", selected.Name, openErr)
 						}
-						if selected.Cmd == "open_here" {
-							suppressPath = true
-						}
 					}
 				}
 			} else if worktreeOpen == "default" {
@@ -526,9 +522,6 @@ branch argument or with --base.`,
 					if openErr := wt.OpenInApp(resolved.Cmd, wtPath, ctx.RepoName, finalName); openErr != nil {
 						wt.Warn("could not open in %s: %s", resolved.Name, openErr)
 					}
-					if resolved.Cmd == "open_here" {
-						suppressPath = true
-					}
 				}
 			} else if worktreeOpen != "skip" {
 				apps := wt.BuildAvailableApps()
@@ -539,9 +532,6 @@ branch argument or with --base.`,
 					wt.SaveLastApp(resolved.Cmd)
 					if openErr := wt.OpenInApp(resolved.Cmd, wtPath, ctx.RepoName, finalName); openErr != nil {
 						wt.Warn("could not open in %s: %s", resolved.Name, openErr)
-					}
-					if resolved.Cmd == "open_here" {
-						suppressPath = true
 					}
 				}
 			}
@@ -561,10 +551,13 @@ branch argument or with --base.`,
 				os.Exit(wt.ExitInitFailed)
 			}
 
-			// Output the worktree path as the last line
-			if !suppressPath {
-				fmt.Println(wtPath)
-			}
+			// Output the worktree path as the last line. This runs on every
+			// success path — including an open_here launch, whose unified
+			// NavigateTo emission already printed the same path (the stdout
+			// contract is "the worktree path is always the last line", not
+			// "exactly one line"). The former open_here suppression special
+			// case is retired with the unified shell-cd contract.
+			fmt.Println(wtPath)
 			return nil
 		},
 	}

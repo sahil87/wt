@@ -754,29 +754,43 @@ func TestCreate_InitFailureNonInteractive_NoPrompt(t *testing.T) {
 	assertWorktreeExists(t, repo, "noprompt-test")
 }
 
-func TestCreate_OpenHereSuppressesPath(t *testing.T) {
+// TestCreate_OpenHerePathIsLastLine pins the simplified stdout contract after
+// the unified shell-cd change: the open_here suppression special case is
+// retired, so the worktree path is ALWAYS the last stdout line, the retired
+// `cd -- '<path>'` form never appears, and WT_CD_FILE receives the path when
+// set. (The unified helper's own path print precedes create's final print, so
+// the path may appear twice — the contract is "last line", not "one line".)
+func TestCreate_OpenHerePathIsLastLine(t *testing.T) {
 	repo := createTestRepo(t)
 
-	r := runWtSuccess(t, repo, []string{"HOME=" + t.TempDir()}, "create", "--non-interactive",
+	cdFile := filepath.Join(repo, "wt-cd")
+	r := runWtSuccess(t, repo, []string{"HOME=" + t.TempDir(), "WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"},
+		"create", "--non-interactive",
 		"--worktree-name", "open-here-test",
 		"--worktree-init", "false",
 		"--worktree-open", "open_here")
 
-	// stdout should contain the cd line
-	assertContains(t, r.Stdout, `cd -- '`)
+	wtPath := worktreePath(repo, "open-here-test")
 
-	// stdout should NOT contain a trailing bare path line (the suppressed fmt.Println)
-	lines := strings.Split(strings.TrimSpace(r.Stdout), "\n")
-	if len(lines) != 1 {
-		t.Errorf("expected exactly 1 stdout line (the cd command), got %d: %q", len(lines), r.Stdout)
+	// The retired eval form must be gone.
+	assertNotContains(t, r.Stdout, "cd -- '")
+
+	// The worktree path is the last stdout line.
+	lines := strings.Split(strings.TrimRight(r.Stdout, "\n"), "\n")
+	if last := lines[len(lines)-1]; last != wtPath {
+		t.Errorf("expected stdout last line %q, got %q (full stdout: %q)", wtPath, last, r.Stdout)
 	}
 
-	// The single line should start with "cd -- "
-	if !strings.HasPrefix(lines[0], "cd -- ") {
-		t.Errorf("expected stdout line to start with 'cd -- ', got %q", lines[0])
+	// open_here consumed the navigation target via WT_CD_FILE.
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != wtPath {
+		t.Errorf("expected cd file to contain %q, got %q", wtPath, string(data))
 	}
 
-	// stderr should still contain the creation message
+	// stderr still carries the creation summary.
 	assertContains(t, r.Stderr, "Created worktree:")
 }
 

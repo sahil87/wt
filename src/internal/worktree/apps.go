@@ -12,7 +12,19 @@ import (
 type AppInfo struct {
 	Name string // Display name (e.g., "VSCode")
 	Cmd  string // Command key (e.g., "code")
+	Kind string // Launchable-app kind (AppKind* constant); empty for action rows
 }
+
+// AppKind* classify launchable host applications for `wt open --list`.
+// Action rows (open_here, copy_*, byobu/tmux) carry an empty Kind — they are
+// not host applications an external consumer can launch, so they are excluded
+// from the listing while remaining in the interactive menu and valid as
+// `-a` values.
+const (
+	AppKindEditor      = "editor"
+	AppKindTerminal    = "terminal"
+	AppKindFileManager = "file-manager"
+)
 
 // BuildAvailableApps detects which apps are available on the current system.
 func BuildAvailableApps() []AppInfo {
@@ -20,88 +32,105 @@ func BuildAvailableApps() []AppInfo {
 	var apps []AppInfo
 
 	// Open here — always available, no detection needed
-	apps = append(apps, AppInfo{"Open here", "open_here"})
+	apps = append(apps, AppInfo{Name: "Open here", Cmd: "open_here"})
 
 	// VSCode
 	if appAvailable("code", "com.microsoft.VSCode", "code.desktop", osType) {
-		apps = append(apps, AppInfo{"VSCode", "code"})
+		apps = append(apps, AppInfo{Name: "VSCode", Cmd: "code", Kind: AppKindEditor})
 	}
 
 	// Cursor
 	if appAvailable("cursor", "com.todesktop.230313mzl4w4u92", "cursor.desktop", osType) {
-		apps = append(apps, AppInfo{"Cursor", "cursor"})
+		apps = append(apps, AppInfo{Name: "Cursor", Cmd: "cursor", Kind: AppKindEditor})
 	}
 
 	// Ghostty
 	if osType == "macos" {
 		if appAvailable("ghostty", "com.mitchellh.ghostty", "", osType) {
-			apps = append(apps, AppInfo{"Ghostty", "ghostty_macos"})
+			apps = append(apps, AppInfo{Name: "Ghostty", Cmd: "ghostty_macos", Kind: AppKindTerminal})
 		}
 	} else if osType == "linux" {
 		if appAvailable("ghostty", "", "com.mitchellh.ghostty.desktop", osType) {
-			apps = append(apps, AppInfo{"Ghostty", "ghostty_linux"})
+			apps = append(apps, AppInfo{Name: "Ghostty", Cmd: "ghostty_linux", Kind: AppKindTerminal})
 		}
 	}
 
 	// macOS-only terminals
 	if osType == "macos" {
 		if appAvailable("", "com.googlecode.iterm2", "", osType) {
-			apps = append(apps, AppInfo{"iTerm2", "iterm"})
+			apps = append(apps, AppInfo{Name: "iTerm2", Cmd: "iterm", Kind: AppKindTerminal})
 		}
 		if appAvailable("", "com.apple.Terminal", "", osType) {
-			apps = append(apps, AppInfo{"Terminal.app", "terminal_app"})
+			apps = append(apps, AppInfo{Name: "Terminal.app", Cmd: "terminal_app", Kind: AppKindTerminal})
 		}
 	}
 
 	// Linux-only terminals
 	if osType == "linux" {
 		if appAvailable("gnome-terminal", "", "org.gnome.Terminal.desktop", osType) {
-			apps = append(apps, AppInfo{"GNOME Terminal", "gnome_terminal"})
+			apps = append(apps, AppInfo{Name: "GNOME Terminal", Cmd: "gnome_terminal", Kind: AppKindTerminal})
 		}
 		if appAvailable("konsole", "", "org.kde.konsole.desktop", osType) {
-			apps = append(apps, AppInfo{"Konsole", "konsole"})
+			apps = append(apps, AppInfo{Name: "Konsole", Cmd: "konsole", Kind: AppKindTerminal})
 		}
 	}
 
 	// File managers
 	if osType == "macos" {
-		apps = append(apps, AppInfo{"Finder", "finder"})
+		apps = append(apps, AppInfo{Name: "Finder", Cmd: "finder", Kind: AppKindFileManager})
 	} else if osType == "linux" {
 		if appAvailable("nautilus", "", "org.gnome.Nautilus.desktop", osType) {
-			apps = append(apps, AppInfo{"Nautilus", "nautilus"})
+			apps = append(apps, AppInfo{Name: "Nautilus", Cmd: "nautilus", Kind: AppKindFileManager})
 		}
 		if appAvailable("dolphin", "", "org.kde.dolphin.desktop", osType) {
-			apps = append(apps, AppInfo{"Dolphin", "dolphin"})
+			apps = append(apps, AppInfo{Name: "Dolphin", Cmd: "dolphin", Kind: AppKindFileManager})
 		}
 	}
 
 	// Copy path
 	if osType == "macos" {
 		if _, err := exec.LookPath("pbcopy"); err == nil {
-			apps = append(apps, AppInfo{"Copy path", "copy_macos"})
+			apps = append(apps, AppInfo{Name: "Copy path", Cmd: "copy_macos"})
 		}
 	} else if osType == "linux" {
 		if _, err := exec.LookPath("xclip"); err == nil {
-			apps = append(apps, AppInfo{"Copy path", "copy_linux"})
+			apps = append(apps, AppInfo{Name: "Copy path", Cmd: "copy_linux"})
 		}
 	}
 
 	// Byobu tab (only in byobu session)
 	if IsByobuSession() {
-		apps = append(apps, AppInfo{"Byobu tab", "byobu_tab"})
+		apps = append(apps, AppInfo{Name: "Byobu tab", Cmd: "byobu_tab"})
 	}
 
 	// tmux window (only in plain tmux session)
 	if IsTmuxSession() {
-		apps = append(apps, AppInfo{"tmux window", "tmux_window"})
+		apps = append(apps, AppInfo{Name: "tmux window", Cmd: "tmux_window"})
 	}
 
 	// tmux session (only in plain tmux session)
 	if IsTmuxSession() {
-		apps = append(apps, AppInfo{"tmux session", "tmux_session"})
+		apps = append(apps, AppInfo{Name: "tmux session", Cmd: "tmux_session"})
 	}
 
 	return apps
+}
+
+// ListableApps filters apps to launchable host applications — entries with a
+// non-empty Kind — preserving detection order. Action rows (open_here,
+// copy_macos/copy_linux, byobu_tab, tmux_window, tmux_session) are excluded:
+// they depend on wt's own process environment (shell wrapper, clipboard,
+// multiplexer session) and are wrong signals for an external consumer. They
+// remain in the interactive menu and remain valid `-a` values, unchanged.
+// The returned slice is always non-nil so JSON consumers get `[]`, not `null`.
+func ListableApps(apps []AppInfo) []AppInfo {
+	listable := make([]AppInfo, 0, len(apps))
+	for _, a := range apps {
+		if a.Kind != "" {
+			listable = append(listable, a)
+		}
+	}
+	return listable
 }
 
 // ResolveApp resolves a user-provided app name to an AppInfo.
@@ -195,8 +224,8 @@ func tabName(repoName, wtName string) string {
 // stderr and returns nil instead of exec'ing a GUI/terminal/clipboard binary.
 // Defaulted ON in cmd/wt's runWt test helper so `go test ./...` cannot leak
 // real VSCode/iTerm/etc. windows onto the developer's host. The "open_here"
-// case is exempt because it is cooperative (writes to WT_CD_FILE or stdout)
-// and has no host side effect.
+// case is exempt because it is cooperative (writes to WT_CD_FILE / stdout via
+// the unified NavigateTo helper) and has no host side effect.
 func OpenInApp(appCmd, path, repoName, wtName string) error {
 	if appCmd != "open_here" && os.Getenv("WT_TEST_NO_LAUNCH") == "1" {
 		fmt.Fprintf(os.Stderr, "[wt-test-no-launch] would open %q in %q (repo=%q wt=%q)\n",
@@ -205,16 +234,12 @@ func OpenInApp(appCmd, path, repoName, wtName string) error {
 	}
 	switch appCmd {
 	case "open_here":
-		cdFile := os.Getenv("WT_CD_FILE")
-		if cdFile != "" {
-			return os.WriteFile(cdFile, []byte(path), 0600)
-		}
-		if os.Getenv("WT_WRAPPER") != "1" {
-			fmt.Fprintln(os.Stderr, `hint: "Open here" requires the shell wrapper to cd. Run: eval "$(wt shell-init zsh)" (or bash)`)
-			fmt.Fprintln(os.Stderr, `      Add it to your ~/.zshrc or ~/.bashrc to make it permanent.`)
-		}
-		fmt.Printf("cd -- '%s'\n", shellQuoteSingle(path))
-		return nil
+		// "Open here" routes through the single unified shell-cd
+		// implementation shared with `wt go` (launcher-contract.md §3, v2):
+		// WT_CD_FILE write when set AND bare path always on stdout AND stderr
+		// confirmation. The former `cd -- '<path>'` stdout fallback is
+		// retired; stdout consumers use cd "$(command wt …)".
+		return NavigateTo(path, repoName, BranchForPath(path))
 	case "code":
 		return runCommand("code", path)
 	case "cursor":

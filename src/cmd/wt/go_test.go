@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestGo_NameArg_NavigatesToWorktree verifies the happy path: `wt go <name>`
@@ -253,4 +254,171 @@ func TestGo_NoArg_NonInteractive_ExitsGeneralError(t *testing.T) {
 	assertContains(t, r.Stderr, "No worktree specified")
 	// Must not have prompted (no menu rendered).
 	assertNotContains(t, r.Stdout, "Select worktree")
+}
+
+// ---------- wt go --open (change 0is3) ----------
+
+// TestGo_OpenSkip_EqualsBareNavigate verifies the grammar-parity value: `wt go
+// <name> --open skip` navigates exactly as bare `wt go <name>` does — WT_CD_FILE
+// written, bare path on stdout, no app launch.
+func TestGo_OpenSkip_EqualsBareNavigate(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "skip-nav")
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1"}
+
+	r := runWtSuccess(t, repo, env, "go", "skip-nav", "--open", "skip")
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != wtPath {
+		t.Errorf("expected cd file to contain %q, got %q", wtPath, string(data))
+	}
+	if got := strings.TrimRight(r.Stdout, "\n"); got != wtPath {
+		t.Errorf("expected stdout to be the bare path %q, got %q", wtPath, got)
+	}
+	if strings.Contains(r.Stderr, "[wt-test-no-launch]") {
+		t.Errorf("--open skip must not launch an app, got stderr: %q", r.Stderr)
+	}
+}
+
+// TestGo_OpenOpenHere_UnifiedNavigation verifies `wt go <name> --open open_here`
+// routes through the unified shell-cd contract: WT_CD_FILE written, bare path as
+// the last stdout line, stderr confirmation present — navigation in effect, so
+// bare `wt go` ≡ `wt go --open open_here`.
+func TestGo_OpenOpenHere_UnifiedNavigation(t *testing.T) {
+	repo := createTestRepo(t)
+	wtPath := createWorktreeViaWt(t, repo, "open-here-nav")
+
+	cdFile := filepath.Join(repo, "wt-cd")
+	// HOME is overridden so SaveLastApp (the launcher path) cannot touch the
+	// real user cache.
+	env := []string{"WT_CD_FILE=" + cdFile, "WT_WRAPPER=1", "HOME=" + t.TempDir()}
+
+	r := runWtSuccess(t, repo, env, "go", "open-here-nav", "--open", "open_here")
+
+	data, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(data) != wtPath {
+		t.Errorf("expected cd file to contain %q, got %q", wtPath, string(data))
+	}
+	lines := strings.Split(strings.TrimRight(r.Stdout, "\n"), "\n")
+	if last := lines[len(lines)-1]; last != wtPath {
+		t.Errorf("expected stdout last line %q, got %q", wtPath, last)
+	}
+	assertContains(t, r.Stderr, "→")
+	assertContains(t, r.Stderr, wtPath)
+}
+
+// TestGo_OpenUnknownApp_ExitsGeneralError verifies `go --open` carries the
+// launcher's unknown-app mapping: ExitGeneralError (1), not a menu and not a
+// silent navigation.
+func TestGo_OpenUnknownApp_ExitsGeneralError(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "app-err-go")
+
+	r := runWt(t, repo, []string{"HOME=" + t.TempDir()}, "go", "app-err-go", "--open", "nonexistent-app")
+	if r.ExitCode != 1 {
+		t.Fatalf("expected exit 1 (ExitGeneralError), got %d\nstderr: %s", r.ExitCode, r.Stderr)
+	}
+	assertContains(t, r.Stderr, "Unknown app")
+}
+
+// TestGo_NameArg_OpenPrompt_RendersAppMenu verifies the composition `wt go
+// <name> --open prompt`: no worktree menu (a name was given), the "Open in:"
+// app menu renders. Empty stdin drives the non-TTY fallback to its EOF refusal
+// (exit 1), which is fine — the menu having rendered is what this asserts.
+func TestGo_NameArg_OpenPrompt_RendersAppMenu(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "prompt-target")
+
+	r := runWt(t, repo, []string{"HOME=" + t.TempDir()}, "go", "prompt-target", "--open", "prompt")
+
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stdout, "Open in:")
+	assertNotContains(t, r.Stdout, "Select worktree")
+}
+
+// TestGo_NoArg_OpenPrompt_ChainsBothMenus verifies the two-menu chain on one
+// session: no-arg `wt go --open prompt` renders the worktree-selection menu
+// (with the launch-mode prompt wording) and — after a piped selection — the
+// "Open in:" app menu on the same stdin.
+func TestGo_NoArg_OpenPrompt_ChainsBothMenus(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "chain-a")
+
+	// Piped stdin: choose row 2 (newest non-main worktree) in the selection
+	// menu; then EOF lands the app menu on its refusal after rendering.
+	r := runWtStdin(t, repo, []string{"HOME=" + t.TempDir()}, "2\n", "go", "--open", "prompt")
+
+	assertContains(t, r.Stdout, "Select worktree to open:")
+	assertContains(t, r.Stdout, "Open in:")
+}
+
+// TestGo_NoArg_NonInteractive_WithOpen_StillRefuses verifies the selection
+// precondition beats the launch flag: no-name + --non-interactive refuses
+// deterministically regardless of --open.
+func TestGo_NoArg_NonInteractive_WithOpen_StillRefuses(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "alpha-ni")
+
+	r := runWt(t, repo, nil, "go", "--non-interactive", "--open", "code")
+	if r.ExitCode != 1 {
+		t.Fatalf("expected exit 1 (ExitGeneralError), got %d\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+	assertContains(t, r.Stderr, "No worktree specified")
+	assertNotContains(t, r.Stdout, "Select worktree")
+	assertNotContains(t, r.Stdout, "Open in:")
+}
+
+// TestGo_OpenPrompt_MenuOrdersNewestFirst pins the selection-menu content on
+// the composition flow (the menu now lives only in `wt go`): main pinned to
+// row 1, non-main newest-first, newest non-main as the marked default. Adopted
+// from the retired TestOpen_MenuOrdersNewestFirst.
+func TestGo_OpenPrompt_MenuOrdersNewestFirst(t *testing.T) {
+	repo := createTestRepo(t)
+	createWorktreeViaWt(t, repo, "alpha")
+	createWorktreeViaWt(t, repo, "bravo")
+	createWorktreeViaWt(t, repo, "charlie")
+
+	base := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	chtimesWorktree(t, repo, "alpha", base)
+	chtimesWorktree(t, repo, "bravo", base.Add(time.Hour))
+	chtimesWorktree(t, repo, "charlie", base.Add(2*time.Hour))
+
+	r := runWt(t, repo, []string{"HOME=" + t.TempDir()}, "go", "--open", "prompt")
+
+	got := menuOrder(r.Stdout, []string{"main", "alpha", "bravo", "charlie"})
+	want := []string{"main", "charlie", "bravo", "alpha"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %v in menu, got %v\nstdout:\n%s", want, got, r.Stdout)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("go --open prompt menu order = %v, want %v", got, want)
+			break
+		}
+	}
+	assertContains(t, r.Stdout, "charlie (charlie) (default)")
+	assertNotContains(t, r.Stdout, "main (main) (default)")
+	assertContains(t, r.Stdout, "Select worktree to open:")
+}
+
+// TestGo_HelpShowsOpen pins --open into the visible help surface with no -o
+// short (the composition flag is long-form-only, unlike wt create's -o).
+func TestGo_HelpShowsOpen(t *testing.T) {
+	dir := t.TempDir()
+
+	r := runWt(t, dir, nil, "go", "--help")
+	if r.ExitCode != 0 {
+		t.Fatalf("wt go --help failed (exit %d)\nstderr: %s", r.ExitCode, r.Stderr)
+	}
+	assertContains(t, r.Stdout, "--open")
+	assertNotContains(t, r.Stdout, "-o, --open")
 }
