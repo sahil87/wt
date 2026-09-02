@@ -39,18 +39,6 @@ dist/
 # Local build artifact when `go build` is run directly inside src/
 /src/wt
 
-/.agents
-
-/.claude
-
-/.cursor
-
-/.opencode
-
-/.codex
-
-/.gemini
-
 # fab
 .fab-status.yaml
 .uploads/
@@ -58,7 +46,5 @@ dist/
 .status.yaml.lock
 
 !fab/.fab-version
-
-/.kimi
 
 /.claude/settings.local.json
