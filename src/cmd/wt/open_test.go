@@ -408,6 +408,7 @@ func captureOpenListStdout(t *testing.T, emit func() error) string {
 		t.Fatalf("os.Pipe: %v", err)
 	}
 	os.Stdout = wp
+	defer func() { os.Stdout = old }() // restore even if emit panics or a Fatalf fires
 	emitErr := emit()
 	_ = wp.Close()
 	os.Stdout = old
