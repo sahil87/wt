@@ -26,7 +26,8 @@ One line per subcommand (run `wt <cmd> --help` for flags):
 - `list` (alias `ls`) — table of worktrees (name, branch, path). `--status` adds
   dirty/unpushed indicators; `--json` emits machine records; `--path <name>`
   prints one absolute path.
-- `open [name|path]` — launch a worktree in a detected target. `--list` prints
+- `open [name|path]` — launch a worktree (or any directory path, no git repo
+  needed) in a detected target. `--list` prints
   the host-app table; `--list --json` prints the FULL registry: every emitted
   `id` is a valid `-a` value here and now (`kind` = what it is, `locus` = where
   the effect lands: gui / session / caller / host). Inside tmux/byobu the
