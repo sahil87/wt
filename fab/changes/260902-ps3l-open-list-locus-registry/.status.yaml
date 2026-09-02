@@ -9,8 +9,8 @@ progress:
     apply: done
     review: done
     hydrate: done
-    ship: active
-    review-pr: pending
+    ship: done
+    review-pr: active
 plan:
     generated: true
     task_count: 7
@@ -33,22 +33,24 @@ stage_metrics:
     apply: {started_at: "2026-09-02T17:34:32Z", driver: fab-fff, iterations: 1, completed_at: "2026-09-02T17:54:36Z"}
     review: {started_at: "2026-09-02T17:54:36Z", driver: fab-fff, iterations: 1, completed_at: "2026-09-02T17:59:46Z"}
     hydrate: {started_at: "2026-09-02T17:59:46Z", driver: fab-fff, iterations: 1, completed_at: "2026-09-02T18:06:17Z"}
-    ship: {started_at: "2026-09-02T18:06:17Z", driver: fab-fff, iterations: 1}
-prs: []
+    ship: {started_at: "2026-09-02T18:06:17Z", driver: fab-fff, iterations: 1, completed_at: "2026-09-02T18:09:10Z"}
+    review-pr: {started_at: "2026-09-02T18:09:10Z", driver: git-pr, iterations: 1}
+prs:
+    - https://github.com/sahil87/wt/pull/56
 true_impact:
-    added: 0
-    deleted: 0
-    net: 0
+    added: 1051
+    deleted: 340
+    net: 711
     excluding:
-        added: 0
-        deleted: 0
-        net: 0
+        added: 303
+        deleted: 146
+        net: 157
     tests:
-        added: 0
-        deleted: 0
-        net: 0
-    computed_at: "2026-09-02T18:06:17Z"
-    computed_at_stage: hydrate
+        added: 227
+        deleted: 88
+        net: 139
+    computed_at: "2026-09-02T18:09:10Z"
+    computed_at_stage: ship
 summary: open --list --json is now the complete locus-aware app registry ({id,label,kind,locus} + omitempty default marker, -a round-trip invariant); human --list stays the locus==gui table with new empty-case copy
 # true_impact: lazily created on first stage-finish that computes it (no placeholder here).
-last_updated: 2026-09-02T18:06:17Z
+last_updated: 2026-09-02T18:09:10Z
