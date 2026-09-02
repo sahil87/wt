@@ -38,7 +38,18 @@ wt open --list [--json]
 | `<path>` | Treated as a literal path when `os.Stat(<path>)` succeeds and the entry is a directory. Works regardless of git context — the path may be unrelated to any repo. |
 | `<name>` | Resolved as a worktree name (case-insensitive). The name `main` resolves to the main worktree (the repo root); an exact-basename match takes precedence, so a worktree directory literally named `main` still resolves to that worktree. **Requires** a git repository in the current working directory. From a non-git cwd, exits `ExitGeneralError` with a "name resolution requires a git repository" message; the message suggests passing a path and does NOT suggest cd'ing into a repo. |
 | `--app <app>` | Opens directly in the named app, bypassing the app menu. Orthogonal to every target form above, including all three no-arg current-context forms. The literal name `default` resolves to the auto-detected default app. *(v2: the former `ExitInvalidArgs` incompatibility with the main-repo no-arg form is retired — there is no selection menu on that path.)* |
-| `--list [--json]` | **Query form** — lists the detected launchable host apps and exits without launching anything. Requires no git repository and no target. `--json` emits a JSON array of `{id, label, kind}` records (`kind` ∈ `editor` / `terminal` / `file-manager`); every emitted `id` is guaranteed accepted by `wt open <path> -a <id>` (the listing derives from the same `BuildAvailableApps()` catalog `-a` resolution uses), making the output a validation source for consumer launch paths. Action rows (`open_here`, `copy_*`, `byobu_tab`, `tmux_window`, `tmux_session`) are excluded from the listing (they signal `wt`'s own process environment, not the consumer's) but remain valid `-a` values. Zero detected apps emit `[]`, not `null`, and exit 0. Ordering is `BuildAvailableApps()` detection order. Mutually exclusive with a positional arg, `--app`, and the deprecated `--select`/`--go` (`ExitInvalidArgs`); `--json` without `--list` also exits `ExitInvalidArgs`. Added under §6's "adding new internal flags to `wt open`" non-breaking evolution clause. |
+| `--list [--json]` | **Query form** — exits without launching anything and requires neither a git repository nor a target. Plain `--list` keeps the human Id / Label / Kind table limited to detected host GUI applications; non-GUI targets remain available through the interactive menu and `--app`. `--list --json` emits the full unfiltered `BuildAvailableApps()` catalog in detection order, including shell, clipboard, and tmux/byobu targets. Mutually exclusive with a positional arg, `--app`, and the deprecated `--select`/`--go` (`ExitInvalidArgs`); `--json` without `--list` also exits `ExitInvalidArgs`. |
+
+Each machine record has the always-present shape `{id, label, kind, locus}`.
+`kind` is what the target is (`editor`, `terminal`, `file-manager`,
+`multiplexer`, `shell`, or `clipboard`); `locus` is where its effect lands
+(`gui`, `session`, `caller`, or `host`). The row selected by
+`DetectDefaultApp()` additionally carries `"default": true`; every other row
+omits that key, and all rows omit it when no default exists. The machine
+registry and `--app` resolution share the same catalog, so every emitted `id`
+is accepted by `wt open <path> -a <id>`, and every detected concrete id that
+`--app` accepts is emitted. The encoder preserves array semantics (`[]`, never
+`null`, for an empty input) and appends a trailing newline.
 
 The deprecated `--select` / `--go` flags (hidden from `--help`, stderr warning
 `use "wt go --open" instead`) still perform the former select-then-launch

@@ -483,51 +483,57 @@ func TestOpenInApp_TestNoLaunchSeam(t *testing.T) {
 	// in TestOpenInApp_OpenHere_Stdout.)
 }
 
-// appKindByCmd is the closed classification table for the wt open --list
-// contract: every Cmd key BuildAvailableApps can emit, mapped to its Kind.
-// Action rows map to "" (excluded from --list, retained in the menu / -a).
-var appKindByCmd = map[string]string{
-	"code":           AppKindEditor,
-	"cursor":         AppKindEditor,
-	"ghostty_macos":  AppKindTerminal,
-	"ghostty_linux":  AppKindTerminal,
-	"iterm":          AppKindTerminal,
-	"terminal_app":   AppKindTerminal,
-	"gnome_terminal": AppKindTerminal,
-	"konsole":        AppKindTerminal,
-	"finder":         AppKindFileManager,
-	"nautilus":       AppKindFileManager,
-	"dolphin":        AppKindFileManager,
-	"open_here":      "",
-	"copy_macos":     "",
-	"copy_linux":     "",
-	"byobu_tab":      "",
-	"tmux_window":    "",
-	"tmux_session":   "",
+// appClassificationByCmd is the closed classification table for the wt open
+// registry contract: every Cmd key BuildAvailableApps can emit has both a Kind
+// and a Locus.
+var appClassificationByCmd = map[string]struct {
+	Kind  string
+	Locus string
+}{
+	"code":           {Kind: AppKindEditor, Locus: LocusGUI},
+	"cursor":         {Kind: AppKindEditor, Locus: LocusGUI},
+	"ghostty_macos":  {Kind: AppKindTerminal, Locus: LocusGUI},
+	"ghostty_linux":  {Kind: AppKindTerminal, Locus: LocusGUI},
+	"iterm":          {Kind: AppKindTerminal, Locus: LocusGUI},
+	"terminal_app":   {Kind: AppKindTerminal, Locus: LocusGUI},
+	"gnome_terminal": {Kind: AppKindTerminal, Locus: LocusGUI},
+	"konsole":        {Kind: AppKindTerminal, Locus: LocusGUI},
+	"finder":         {Kind: AppKindFileManager, Locus: LocusGUI},
+	"nautilus":       {Kind: AppKindFileManager, Locus: LocusGUI},
+	"dolphin":        {Kind: AppKindFileManager, Locus: LocusGUI},
+	"open_here":      {Kind: AppKindShell, Locus: LocusCaller},
+	"copy_macos":     {Kind: AppKindClipboard, Locus: LocusHost},
+	"copy_linux":     {Kind: AppKindClipboard, Locus: LocusHost},
+	"byobu_tab":      {Kind: AppKindMultiplexer, Locus: LocusSession},
+	"tmux_window":    {Kind: AppKindMultiplexer, Locus: LocusSession},
+	"tmux_session":   {Kind: AppKindMultiplexer, Locus: LocusSession},
 }
 
 func TestBuildAvailableApps_KindClassification(t *testing.T) {
 	for _, app := range BuildAvailableApps() {
-		want, known := appKindByCmd[app.Cmd]
+		want, known := appClassificationByCmd[app.Cmd]
 		if !known {
-			t.Errorf("BuildAvailableApps emitted unclassified Cmd %q — add it to the Kind mapping", app.Cmd)
+			t.Errorf("BuildAvailableApps emitted unclassified Cmd %q — add it to the classification mapping", app.Cmd)
 			continue
 		}
-		if app.Kind != want {
-			t.Errorf("Cmd %q: Kind = %q, want %q", app.Cmd, app.Kind, want)
+		if app.Kind != want.Kind {
+			t.Errorf("Cmd %q: Kind = %q, want %q", app.Cmd, app.Kind, want.Kind)
+		}
+		if app.Locus != want.Locus {
+			t.Errorf("Cmd %q: Locus = %q, want %q", app.Cmd, app.Locus, want.Locus)
 		}
 	}
 }
 
 func TestListableApps_FiltersActionRowsPreservingOrder(t *testing.T) {
 	apps := []AppInfo{
-		{Name: "Open here", Cmd: "open_here"},
-		{Name: "VSCode", Cmd: "code", Kind: AppKindEditor},
-		{Name: "Copy path", Cmd: "copy_macos"},
-		{Name: "iTerm2", Cmd: "iterm", Kind: AppKindTerminal},
-		{Name: "tmux window", Cmd: "tmux_window"},
-		{Name: "Finder", Cmd: "finder", Kind: AppKindFileManager},
-		{Name: "tmux session", Cmd: "tmux_session"},
+		{Name: "Open here", Cmd: "open_here", Kind: AppKindShell, Locus: LocusCaller},
+		{Name: "VSCode", Cmd: "code", Kind: AppKindEditor, Locus: LocusGUI},
+		{Name: "Copy path", Cmd: "copy_macos", Kind: AppKindClipboard, Locus: LocusHost},
+		{Name: "iTerm2", Cmd: "iterm", Kind: AppKindTerminal, Locus: LocusGUI},
+		{Name: "tmux window", Cmd: "tmux_window", Kind: AppKindMultiplexer, Locus: LocusSession},
+		{Name: "Finder", Cmd: "finder", Kind: AppKindFileManager, Locus: LocusGUI},
+		{Name: "tmux session", Cmd: "tmux_session", Kind: AppKindMultiplexer, Locus: LocusSession},
 	}
 
 	got := ListableApps(apps)
@@ -540,17 +546,17 @@ func TestListableApps_FiltersActionRowsPreservingOrder(t *testing.T) {
 		if got[i].Cmd != cmd {
 			t.Errorf("ListableApps[%d].Cmd = %q, want %q (order must match detection order)", i, got[i].Cmd, cmd)
 		}
-		if got[i].Kind == "" {
-			t.Errorf("ListableApps[%d] (%q) has empty Kind — filter must keep only classified apps", i, got[i].Cmd)
+		if got[i].Locus != LocusGUI {
+			t.Errorf("ListableApps[%d] (%q) has Locus %q, want %q", i, got[i].Cmd, got[i].Locus, LocusGUI)
 		}
 	}
 }
 
 func TestListableApps_EmptyInputReturnsNonNil(t *testing.T) {
 	if got := ListableApps(nil); got == nil {
-		t.Error("ListableApps(nil) returned a nil slice; want non-nil empty slice (JSON [] contract)")
+		t.Error("ListableApps(nil) returned a nil slice; want non-nil empty slice")
 	}
-	if got := ListableApps([]AppInfo{{Name: "Open here", Cmd: "open_here"}}); got == nil || len(got) != 0 {
-		t.Errorf("ListableApps(action rows only) = %v; want non-nil empty slice", got)
+	if got := ListableApps([]AppInfo{{Name: "Open here", Cmd: "open_here", Kind: AppKindShell, Locus: LocusCaller}}); got == nil || len(got) != 0 {
+		t.Errorf("ListableApps(non-GUI targets only) = %v; want non-nil empty slice", got)
 	}
 }

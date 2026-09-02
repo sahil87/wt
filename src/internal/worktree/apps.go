@@ -10,20 +10,25 @@ import (
 
 // AppInfo describes an application that can open a worktree.
 type AppInfo struct {
-	Name string // Display name (e.g., "VSCode")
-	Cmd  string // Command key (e.g., "code")
-	Kind string // Launchable-app kind (AppKind* constant); empty for action rows
+	Name  string // Display name (e.g., "VSCode")
+	Cmd   string // Command key (e.g., "code")
+	Kind  string // Target kind (AppKind* constant)
+	Locus string // Where the target's effect lands (Locus* constant)
 }
 
-// AppKind* classify launchable host applications for `wt open --list`.
-// Action rows (open_here, copy_*, byobu/tmux) carry an empty Kind — they are
-// not host applications an external consumer can launch, so they are excluded
-// from the listing while remaining in the interactive menu and valid as
-// `-a` values.
+// AppKind* and Locus* classify every target in the detected app catalog.
 const (
 	AppKindEditor      = "editor"
 	AppKindTerminal    = "terminal"
 	AppKindFileManager = "file-manager"
+	AppKindMultiplexer = "multiplexer"
+	AppKindShell       = "shell"
+	AppKindClipboard   = "clipboard"
+
+	LocusGUI     = "gui"
+	LocusSession = "session"
+	LocusCaller  = "caller"
+	LocusHost    = "host"
 )
 
 // BuildAvailableApps detects which apps are available on the current system.
@@ -32,101 +37,99 @@ func BuildAvailableApps() []AppInfo {
 	var apps []AppInfo
 
 	// Open here — always available, no detection needed
-	apps = append(apps, AppInfo{Name: "Open here", Cmd: "open_here"})
+	apps = append(apps, AppInfo{Name: "Open here", Cmd: "open_here", Kind: AppKindShell, Locus: LocusCaller})
 
 	// VSCode
 	if appAvailable("code", "com.microsoft.VSCode", "code.desktop", osType) {
-		apps = append(apps, AppInfo{Name: "VSCode", Cmd: "code", Kind: AppKindEditor})
+		apps = append(apps, AppInfo{Name: "VSCode", Cmd: "code", Kind: AppKindEditor, Locus: LocusGUI})
 	}
 
 	// Cursor
 	if appAvailable("cursor", "com.todesktop.230313mzl4w4u92", "cursor.desktop", osType) {
-		apps = append(apps, AppInfo{Name: "Cursor", Cmd: "cursor", Kind: AppKindEditor})
+		apps = append(apps, AppInfo{Name: "Cursor", Cmd: "cursor", Kind: AppKindEditor, Locus: LocusGUI})
 	}
 
 	// Ghostty
 	if osType == "macos" {
 		if appAvailable("ghostty", "com.mitchellh.ghostty", "", osType) {
-			apps = append(apps, AppInfo{Name: "Ghostty", Cmd: "ghostty_macos", Kind: AppKindTerminal})
+			apps = append(apps, AppInfo{Name: "Ghostty", Cmd: "ghostty_macos", Kind: AppKindTerminal, Locus: LocusGUI})
 		}
 	} else if osType == "linux" {
 		if appAvailable("ghostty", "", "com.mitchellh.ghostty.desktop", osType) {
-			apps = append(apps, AppInfo{Name: "Ghostty", Cmd: "ghostty_linux", Kind: AppKindTerminal})
+			apps = append(apps, AppInfo{Name: "Ghostty", Cmd: "ghostty_linux", Kind: AppKindTerminal, Locus: LocusGUI})
 		}
 	}
 
 	// macOS-only terminals
 	if osType == "macos" {
 		if appAvailable("", "com.googlecode.iterm2", "", osType) {
-			apps = append(apps, AppInfo{Name: "iTerm2", Cmd: "iterm", Kind: AppKindTerminal})
+			apps = append(apps, AppInfo{Name: "iTerm2", Cmd: "iterm", Kind: AppKindTerminal, Locus: LocusGUI})
 		}
 		if appAvailable("", "com.apple.Terminal", "", osType) {
-			apps = append(apps, AppInfo{Name: "Terminal.app", Cmd: "terminal_app", Kind: AppKindTerminal})
+			apps = append(apps, AppInfo{Name: "Terminal.app", Cmd: "terminal_app", Kind: AppKindTerminal, Locus: LocusGUI})
 		}
 	}
 
 	// Linux-only terminals
 	if osType == "linux" {
 		if appAvailable("gnome-terminal", "", "org.gnome.Terminal.desktop", osType) {
-			apps = append(apps, AppInfo{Name: "GNOME Terminal", Cmd: "gnome_terminal", Kind: AppKindTerminal})
+			apps = append(apps, AppInfo{Name: "GNOME Terminal", Cmd: "gnome_terminal", Kind: AppKindTerminal, Locus: LocusGUI})
 		}
 		if appAvailable("konsole", "", "org.kde.konsole.desktop", osType) {
-			apps = append(apps, AppInfo{Name: "Konsole", Cmd: "konsole", Kind: AppKindTerminal})
+			apps = append(apps, AppInfo{Name: "Konsole", Cmd: "konsole", Kind: AppKindTerminal, Locus: LocusGUI})
 		}
 	}
 
 	// File managers
 	if osType == "macos" {
-		apps = append(apps, AppInfo{Name: "Finder", Cmd: "finder", Kind: AppKindFileManager})
+		apps = append(apps, AppInfo{Name: "Finder", Cmd: "finder", Kind: AppKindFileManager, Locus: LocusGUI})
 	} else if osType == "linux" {
 		if appAvailable("nautilus", "", "org.gnome.Nautilus.desktop", osType) {
-			apps = append(apps, AppInfo{Name: "Nautilus", Cmd: "nautilus", Kind: AppKindFileManager})
+			apps = append(apps, AppInfo{Name: "Nautilus", Cmd: "nautilus", Kind: AppKindFileManager, Locus: LocusGUI})
 		}
 		if appAvailable("dolphin", "", "org.kde.dolphin.desktop", osType) {
-			apps = append(apps, AppInfo{Name: "Dolphin", Cmd: "dolphin", Kind: AppKindFileManager})
+			apps = append(apps, AppInfo{Name: "Dolphin", Cmd: "dolphin", Kind: AppKindFileManager, Locus: LocusGUI})
 		}
 	}
 
 	// Copy path
 	if osType == "macos" {
 		if _, err := exec.LookPath("pbcopy"); err == nil {
-			apps = append(apps, AppInfo{Name: "Copy path", Cmd: "copy_macos"})
+			apps = append(apps, AppInfo{Name: "Copy path", Cmd: "copy_macos", Kind: AppKindClipboard, Locus: LocusHost})
 		}
 	} else if osType == "linux" {
 		if _, err := exec.LookPath("xclip"); err == nil {
-			apps = append(apps, AppInfo{Name: "Copy path", Cmd: "copy_linux"})
+			apps = append(apps, AppInfo{Name: "Copy path", Cmd: "copy_linux", Kind: AppKindClipboard, Locus: LocusHost})
 		}
 	}
 
 	// Byobu tab (only in byobu session)
 	if IsByobuSession() {
-		apps = append(apps, AppInfo{Name: "Byobu tab", Cmd: "byobu_tab"})
+		apps = append(apps, AppInfo{Name: "Byobu tab", Cmd: "byobu_tab", Kind: AppKindMultiplexer, Locus: LocusSession})
 	}
 
 	// tmux window (only in plain tmux session)
 	if IsTmuxSession() {
-		apps = append(apps, AppInfo{Name: "tmux window", Cmd: "tmux_window"})
+		apps = append(apps, AppInfo{Name: "tmux window", Cmd: "tmux_window", Kind: AppKindMultiplexer, Locus: LocusSession})
 	}
 
 	// tmux session (only in plain tmux session)
 	if IsTmuxSession() {
-		apps = append(apps, AppInfo{Name: "tmux session", Cmd: "tmux_session"})
+		apps = append(apps, AppInfo{Name: "tmux session", Cmd: "tmux_session", Kind: AppKindMultiplexer, Locus: LocusSession})
 	}
 
 	return apps
 }
 
-// ListableApps filters apps to launchable host applications — entries with a
-// non-empty Kind — preserving detection order. Action rows (open_here,
-// copy_macos/copy_linux, byobu_tab, tmux_window, tmux_session) are excluded:
-// they depend on wt's own process environment (shell wrapper, clipboard,
-// multiplexer session) and are wrong signals for an external consumer. They
-// remain in the interactive menu and remain valid `-a` values, unchanged.
-// The returned slice is always non-nil so JSON consumers get `[]`, not `null`.
+// ListableApps filters apps to host GUI applications, preserving detection
+// order. Non-GUI targets remain in the interactive menu and remain valid `-a`
+// values, but the human `wt open --list` table deliberately stays focused on
+// applications whose effect lands on the host display. The returned slice is
+// always non-nil.
 func ListableApps(apps []AppInfo) []AppInfo {
 	listable := make([]AppInfo, 0, len(apps))
 	for _, a := range apps {
-		if a.Kind != "" {
+		if a.Locus == LocusGUI {
 			listable = append(listable, a)
 		}
 	}

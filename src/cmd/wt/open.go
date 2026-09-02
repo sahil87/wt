@@ -37,7 +37,9 @@ requires a git repository. --app works with every form and skips the app menu.
 With --list, "wt open" prints the detected launchable host applications
 (editors, terminals, file managers) and exits — no menu, no launch, no git
 repository required. Add --json for a machine-readable JSON array of
-{id, label, kind} records; each id is accepted by "wt open <path> -a <id>".`,
+{id, label, kind, locus} records covering every detected target; each id is
+accepted by "wt open <path> -a <id>". The detected default is marked with
+"default": true.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var target string
@@ -212,27 +214,27 @@ repository required. Add --json for a machine-readable JSON array of
 }
 
 // openAppRecord is the machine-readable record `wt open --list --json` emits
-// per detected app. All three keys are always present: id is the internal
-// command key (AppInfo.Cmd — the exact token `wt open <path> -a <id>`
-// accepts), label the display name (AppInfo.Name), kind the closed enum
-// editor|terminal|file-manager (AppInfo.Kind).
+// per detected target. ID, Label, Kind, and Locus are always present; Default
+// is emitted only on the row DetectDefaultApp selects.
 type openAppRecord struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	Kind  string `json:"kind"`
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Kind    string `json:"kind"`
+	Locus   string `json:"locus"`
+	Default bool   `json:"default,omitempty"`
 }
 
-// handleOpenList implements `wt open --list [--json]`: it lists the launchable
-// host applications from the same BuildAvailableApps() catalog the interactive
-// menu and -a resolution use (filtered to non-empty Kind via ListableApps,
-// detection order preserved) and exits without launching anything. No git
-// repository is required — app detection is host-only.
+// handleOpenList implements `wt open --list [--json]` from the same single
+// BuildAvailableApps() catalog the interactive menu and -a resolution use.
+// JSON emits the full catalog; the human table keeps the LocusGUI subset. No
+// git repository is required — target detection is host-only.
 func handleOpenList(jsonOut bool) error {
-	apps := wt.ListableApps(wt.BuildAvailableApps())
+	apps := wt.BuildAvailableApps()
 	if jsonOut {
 		return printOpenListJSON(apps)
 	}
-	return printOpenListTable(apps)
+	listable := wt.ListableApps(apps)
+	return printOpenListTable(listable, len(apps)-len(listable))
 }
 
 // printOpenListJSON emits the app registry as a JSON array, mirroring
@@ -241,8 +243,15 @@ func handleOpenList(jsonOut bool) error {
 // emit `[]`, never `null` (a nil Go slice marshals to null).
 func printOpenListJSON(apps []wt.AppInfo) error {
 	records := make([]openAppRecord, 0, len(apps))
-	for _, a := range apps {
-		records = append(records, openAppRecord{ID: a.Cmd, Label: a.Name, Kind: a.Kind})
+	defaultIdx := wt.DetectDefaultApp(apps)
+	for i, a := range apps {
+		records = append(records, openAppRecord{
+			ID:      a.Cmd,
+			Label:   a.Name,
+			Kind:    a.Kind,
+			Locus:   a.Locus,
+			Default: i+1 == defaultIdx,
+		})
 	}
 	data, err := json.MarshalIndent(records, "", "  ")
 	if err != nil {
@@ -252,11 +261,14 @@ func printOpenListJSON(apps []wt.AppInfo) error {
 	return nil
 }
 
-// printOpenListTable renders the human-mode aligned Id / Label / Kind table,
-// mirroring `wt list`'s human-default/--json-opt-in split.
-func printOpenListTable(apps []wt.AppInfo) error {
+// printOpenListTable renders the human-mode aligned Id / Label / Kind table
+// over the host-app (locus gui) rows, mirroring `wt list`'s
+// human-default/--json-opt-in split. When no host apps are detected it points
+// at the full registry instead, naming the otherTargets count — the remaining
+// catalog rows that only `--list --json` (or the interactive menu) surfaces.
+func printOpenListTable(apps []wt.AppInfo, otherTargets int) error {
 	if len(apps) == 0 {
-		fmt.Println("No launchable applications detected.")
+		fmt.Printf("No host applications detected. %d other target(s) available — see 'wt open --list --json' or the interactive menu.\n", otherTargets)
 		return nil
 	}
 

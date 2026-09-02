@@ -379,6 +379,50 @@ func TestOpen_SelectDeprecationWarning(t *testing.T) {
 
 // ---------- wt open --list ----------
 
+// setOpenListTestEnv keeps the test process and runWt's child process on the
+// same launcher-detection inputs. A non-empty tmux value simulates a plain
+// tmux session while still clearing every byobu/editor signal.
+func setOpenListTestEnv(t *testing.T, tmux string) []string {
+	t.Helper()
+	env := []string{
+		"TMUX=" + tmux,
+		"BYOBU_BACKEND=",
+		"BYOBU_TTY=",
+		"BYOBU_SESSION=",
+		"BYOBU_CONFIG_DIR=",
+		"TERM_PROGRAM=",
+		"HOME=" + t.TempDir(),
+	}
+	for _, pair := range env {
+		key, value, _ := strings.Cut(pair, "=")
+		t.Setenv(key, value)
+	}
+	return env
+}
+
+func captureOpenListStdout(t *testing.T, emit func() error) string {
+	t.Helper()
+	old := os.Stdout
+	rp, wp, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = wp
+	emitErr := emit()
+	_ = wp.Close()
+	os.Stdout = old
+
+	out, err := io.ReadAll(rp)
+	_ = rp.Close()
+	if err != nil {
+		t.Fatalf("io.ReadAll: %v", err)
+	}
+	if emitErr != nil {
+		t.Fatalf("open-list emitter returned error: %v", emitErr)
+	}
+	return string(out)
+}
+
 // TestOpen_List_HumanTable verifies the human-mode listing: an aligned
 // Id/Label/Kind table of launchable host apps with action rows excluded.
 func TestOpen_List_HumanTable(t *testing.T) {
@@ -391,9 +435,13 @@ func TestOpen_List_HumanTable(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("expected at least a header line")
 	}
+	if strings.HasPrefix(r.Stdout, "No host applications detected.") {
+		assertNotContains(t, r.Stdout, "No launchable applications detected.")
+		return
+	}
 	header := lines[0]
 	for _, col := range []string{"Id", "Label", "Kind"} {
-		if !strings.Contains(header, col) && !strings.Contains(r.Stdout, "No launchable applications detected.") {
+		if !strings.Contains(header, col) {
 			t.Errorf("expected header column %q in %q", col, header)
 		}
 	}
@@ -416,19 +464,20 @@ func TestOpen_List_NoGitRequired(t *testing.T) {
 
 	rj := runWt(t, dir, nil, "open", "--list", "--json")
 	assertExitCode(t, rj, 0)
-	var records []map[string]string
+	var records []map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(rj.Stdout), &records); err != nil {
 		t.Fatalf("cannot parse --list --json output from non-git cwd: %v\n%s", err, rj.Stdout)
 	}
 }
 
 // TestOpen_ListJSON_ShapeAndOrder verifies the machine-readable registry:
-// a JSON array of {id, label, kind} records — all three keys always present,
-// kind in the closed enum, no action rows, detection order preserved.
+// the full catalog in detection order, with four core keys always present and
+// the optional default marker emitted only as true.
 func TestOpen_ListJSON_ShapeAndOrder(t *testing.T) {
 	repo := createTestRepo(t)
+	env := setOpenListTestEnv(t, "/tmp/tmux-test/default,12345,0")
 
-	r := runWt(t, repo, nil, "open", "--list", "--json")
+	r := runWt(t, repo, env, "open", "--list", "--json")
 	assertExitCode(t, r, 0)
 
 	var records []map[string]json.RawMessage
@@ -436,19 +485,29 @@ func TestOpen_ListJSON_ShapeAndOrder(t *testing.T) {
 		t.Fatalf("output is not a JSON array: %v\n%s", err, r.Stdout)
 	}
 
-	validKinds := map[string]bool{"editor": true, "terminal": true, "file-manager": true}
-	actionIDs := map[string]bool{
-		"open_here": true, "copy_macos": true, "copy_linux": true,
-		"byobu_tab": true, "tmux_window": true, "tmux_session": true,
+	validKinds := map[string]bool{
+		wt.AppKindEditor: true, wt.AppKindTerminal: true, wt.AppKindFileManager: true,
+		wt.AppKindMultiplexer: true, wt.AppKindShell: true, wt.AppKindClipboard: true,
+	}
+	validLoci := map[string]bool{
+		wt.LocusGUI: true, wt.LocusSession: true, wt.LocusCaller: true, wt.LocusHost: true,
 	}
 
-	var gotIDs []string
+	wantApps := wt.BuildAvailableApps()
+	if len(records) != len(wantApps) {
+		t.Fatalf("got %d records, want full %d-entry catalog: %v", len(records), len(wantApps), records)
+	}
+
 	for i, rec := range records {
-		if len(rec) != 3 {
-			t.Errorf("record %d has %d keys, want exactly 3 (id, label, kind): %v", i, len(rec), rec)
+		wantKeys := 4
+		if _, ok := rec["default"]; ok {
+			wantKeys++
 		}
-		var id, label, kind string
-		for key, dst := range map[string]*string{"id": &id, "label": &label, "kind": &kind} {
+		if len(rec) != wantKeys {
+			t.Errorf("record %d has %d keys, want %d (id, label, kind, locus, optional default): %v", i, len(rec), wantKeys, rec)
+		}
+		var id, label, kind, locus string
+		for key, dst := range map[string]*string{"id": &id, "label": &label, "kind": &kind, "locus": &locus} {
 			raw, ok := rec[key]
 			if !ok {
 				t.Fatalf("record %d missing key %q: %v", i, key, rec)
@@ -457,32 +516,55 @@ func TestOpen_ListJSON_ShapeAndOrder(t *testing.T) {
 				t.Fatalf("record %d key %q is not a string: %v", i, key, err)
 			}
 		}
-		if id == "" || label == "" {
-			t.Errorf("record %d has empty id/label: id=%q label=%q", i, id, label)
+		if id == "" || label == "" || kind == "" || locus == "" {
+			t.Errorf("record %d has an empty core field: id=%q label=%q kind=%q locus=%q", i, id, label, kind, locus)
 		}
 		if !validKinds[kind] {
-			t.Errorf("record %d kind %q not in editor|terminal|file-manager", i, kind)
+			t.Errorf("record %d kind %q is not a known AppKind", i, kind)
 		}
-		if actionIDs[id] {
-			t.Errorf("action row %q leaked into --list --json output", id)
+		if !validLoci[locus] {
+			t.Errorf("record %d locus %q is not a known Locus", i, locus)
 		}
-		gotIDs = append(gotIDs, id)
+		want := wantApps[i]
+		if id != want.Cmd || label != want.Name || kind != want.Kind || locus != want.Locus {
+			t.Errorf("record %d = {%q, %q, %q, %q}, want {%q, %q, %q, %q} (full catalog order must be preserved)",
+				i, id, label, kind, locus, want.Cmd, want.Name, want.Kind, want.Locus)
+		}
+		if raw, ok := rec["default"]; ok {
+			var marker bool
+			if err := json.Unmarshal(raw, &marker); err != nil || !marker {
+				t.Errorf("record %d default marker = %s, want true", i, raw)
+			}
+		}
 	}
 
-	// Order preserves BuildAvailableApps() detection order minus filtered
-	// rows. The test process and the child binary see the same host apps
-	// (tmux/byobu rows differ by env, but those carry empty Kind and are
-	// filtered either way).
-	wantIDs := []string{}
-	for _, a := range wt.ListableApps(wt.BuildAvailableApps()) {
-		wantIDs = append(wantIDs, a.Cmd)
+	for _, wantID := range []string{"open_here", "tmux_window", "tmux_session"} {
+		found := false
+		for _, app := range wantApps {
+			found = found || app.Cmd == wantID
+		}
+		if !found {
+			t.Errorf("full catalog is missing detected action target %q", wantID)
+		}
 	}
-	if len(gotIDs) != len(wantIDs) {
-		t.Fatalf("got %d records %v, want %d %v", len(gotIDs), gotIDs, len(wantIDs), wantIDs)
+}
+
+func TestOpen_ListJSON_OutsideTmuxOmitsSessionTargets(t *testing.T) {
+	dir := t.TempDir()
+	env := setOpenListTestEnv(t, "")
+
+	r := runWt(t, dir, env, "open", "--list", "--json")
+	assertExitCode(t, r, 0)
+
+	var records []struct {
+		ID string `json:"id"`
 	}
-	for i := range wantIDs {
-		if gotIDs[i] != wantIDs[i] {
-			t.Errorf("record %d id = %q, want %q (detection order must be preserved)", i, gotIDs[i], wantIDs[i])
+	if err := json.Unmarshal([]byte(r.Stdout), &records); err != nil {
+		t.Fatalf("cannot parse --list --json output: %v\n%s", err, r.Stdout)
+	}
+	for _, rec := range records {
+		if rec.ID == "tmux_window" || rec.ID == "tmux_session" {
+			t.Errorf("plain-tmux target %q present outside tmux", rec.ID)
 		}
 	}
 }
@@ -492,8 +574,9 @@ func TestOpen_ListJSON_ShapeAndOrder(t *testing.T) {
 // WT_TEST_NO_LAUNCH=1 (runWt default) short-circuits the actual launch.
 func TestOpen_ListJSON_IDsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
+	env := setOpenListTestEnv(t, "/tmp/tmux-test/default,12345,0")
 
-	r := runWt(t, dir, nil, "open", "--list", "--json")
+	r := runWt(t, dir, env, "open", "--list", "--json")
 	assertExitCode(t, r, 0)
 
 	var records []struct {
@@ -504,7 +587,7 @@ func TestOpen_ListJSON_IDsRoundTrip(t *testing.T) {
 	}
 
 	for _, rec := range records {
-		launch := runWt(t, dir, nil, "open", dir, "-a", rec.ID)
+		launch := runWt(t, dir, env, "open", dir, "-a", rec.ID)
 		if launch.ExitCode != 0 {
 			t.Errorf("id %q from --list --json was rejected by `wt open <dir> -a %s`: exit %d\nstderr: %s",
 				rec.ID, rec.ID, launch.ExitCode, launch.Stderr)
@@ -512,29 +595,79 @@ func TestOpen_ListJSON_IDsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestOpen_ListJSON_DefaultMarker verifies the same DetectDefaultApp result
+// used by -a default appears on exactly one JSON row in a plain tmux session.
+func TestOpen_ListJSON_DefaultMarker(t *testing.T) {
+	dir := t.TempDir()
+	env := setOpenListTestEnv(t, "/tmp/tmux-test/default,12345,0")
+
+	r := runWt(t, dir, env, "open", "--list", "--json")
+	assertExitCode(t, r, 0)
+
+	var records []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(r.Stdout), &records); err != nil {
+		t.Fatalf("cannot parse --list --json output: %v\n%s", err, r.Stdout)
+	}
+	marked := 0
+	for i, rec := range records {
+		raw, ok := rec["default"]
+		if !ok {
+			continue
+		}
+		marked++
+		var marker bool
+		if err := json.Unmarshal(raw, &marker); err != nil || !marker {
+			t.Errorf("record %d default marker = %s, want true", i, raw)
+		}
+		var id string
+		if err := json.Unmarshal(rec["id"], &id); err != nil {
+			t.Fatalf("record %d id is not a string: %v", i, err)
+		}
+		if id != "tmux_window" {
+			t.Errorf("default marker is on %q, want tmux_window", id)
+		}
+	}
+	if marked != 1 {
+		t.Errorf("got %d default markers, want exactly 1", marked)
+	}
+}
+
+// TestPrintOpenListJSON_NoDefaultMarker covers the -1 result from
+// DetectDefaultApp: with only open_here available, no row carries default.
+func TestPrintOpenListJSON_NoDefaultMarker(t *testing.T) {
+	setOpenListTestEnv(t, "")
+	apps := []wt.AppInfo{{
+		Name: "Open here", Cmd: "open_here", Kind: wt.AppKindShell, Locus: wt.LocusCaller,
+	}}
+	out := captureOpenListStdout(t, func() error { return printOpenListJSON(apps) })
+
+	var records []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &records); err != nil {
+		t.Fatalf("cannot parse JSON emitter output: %v\n%s", err, out)
+	}
+	if len(records) != 1 {
+		t.Fatalf("got %d records, want 1", len(records))
+	}
+	if _, ok := records[0]["default"]; ok {
+		t.Errorf("default marker present when DetectDefaultApp returns -1: %v", records[0])
+	}
+}
+
 // TestPrintOpenListJSON_EmptyEmitsArray verifies the zero-apps machine output
 // is `[]` (a non-nil empty array), never `null` — direct unit test of the
 // emitter since a host with zero detected apps cannot be forced end-to-end.
 func TestPrintOpenListJSON_EmptyEmitsArray(t *testing.T) {
-	old := os.Stdout
-	rp, wp, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	os.Stdout = wp
-	emitErr := printOpenListJSON(wt.ListableApps(nil))
-	wp.Close()
-	os.Stdout = old
-
-	out, err := io.ReadAll(rp)
-	if err != nil {
-		t.Fatalf("io.ReadAll: %v", err)
-	}
-	if emitErr != nil {
-		t.Fatalf("printOpenListJSON returned error: %v", emitErr)
-	}
-	if got := strings.TrimSpace(string(out)); got != "[]" {
+	out := captureOpenListStdout(t, func() error { return printOpenListJSON(nil) })
+	if got := strings.TrimSpace(out); got != "[]" {
 		t.Errorf("empty registry emitted %q, want %q (null would break machine consumers)", got, "[]")
+	}
+}
+
+func TestPrintOpenListTable_EmptyMessage(t *testing.T) {
+	out := captureOpenListStdout(t, func() error { return printOpenListTable(nil, 3) })
+	want := "No host applications detected. 3 other target(s) available — see 'wt open --list --json' or the interactive menu.\n"
+	if out != want {
+		t.Errorf("empty host-app table output = %q, want %q", out, want)
 	}
 }
 
