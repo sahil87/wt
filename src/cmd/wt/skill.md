@@ -26,10 +26,13 @@ One line per subcommand (run `wt <cmd> --help` for flags):
 - `list` (alias `ls`) — table of worktrees (name, branch, path). `--status` adds
   dirty/unpushed indicators; `--json` emits machine records; `--path <name>`
   prints one absolute path.
-- `open [name|path]` — launch a worktree/dir in a detected app (editor, terminal,
-  file manager) via the app menu. No arg opens the current context (worktree root /
-  repo root / cwd). `-a/--app <name>` skips the menu; `default` picks the
-  auto-detected app. `--list [--json]` prints the app registry instead.
+- `open [name|path]` — launch a worktree in a detected target. `--list` prints
+  the host-app table; `--list --json` prints the FULL registry: every emitted
+  `id` is a valid `-a` value here and now (`kind` = what it is, `locus` = where
+  the effect lands: gui / session / caller / host). Inside tmux/byobu the
+  multiplexer targets (`tmux_window`, `tmux_session`, `byobu_tab`) are the
+  usual choice on a headless host: `wt open <wt> -a tmux_window`. The row
+  marked `default: true` is what `-a default` resolves to.
 - `go [name]` — **select** a worktree: no arg → selection menu; a name → direct.
   By default navigates (cd) there; `--open <prompt|default|skip|app>` launches the
   selection instead (go owns the worktree menu, open owns the app menu; this flag
