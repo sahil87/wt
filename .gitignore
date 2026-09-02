@@ -60,3 +60,5 @@ dist/
 !fab/.fab-version
 
 /.kimi
+
+/.claude/settings.local.json
