@@ -41,10 +41,10 @@ The change's diff against `main` MUST touch only `README.md` (one line), `fab/ch
 
 ### Design Decisions
 
-#### Revised standard text sourced from the C1 PR branch, not the installed `shll`
-**Decision**: The mandated blockquote is taken verbatim from shll PR #98's diff to `docs/site/standards/readme-extraction.md` (shll change `ttoa`), because the installed `shll standards readme-extraction` still prints the pre-C1 line until that PR merges and ships.
-**Why**: The rebrand plan gates C7 on C1 being *up and reviewed*, not released; the blockquote text has no pipeline coupling (the consuming site's extractor matches any leading blockquote), so ordering against the shll release buys nothing and would block Phase 2's X1.
-**Rejected**: Waiting for a shll release carrying the revised standard before editing satellite READMEs — delays X1 for no correctness gain; the conformance receipt records the change/PR as the audited revision instead of a release version.
+#### Revised standard text sourced from the C1 PR branch at apply time; receipt cites the release
+**Decision**: At apply time (intake-time snapshot) the mandated blockquote was taken verbatim from shll PR #98's diff to `docs/site/standards/readme-extraction.md` (shll change `ttoa`), because the installed `shll standards readme-extraction` (v0.1.30) printed the pre-C1 line and #98 was unreleased. By review-pr time #98 had merged and shipped as **shll v0.1.31**; the conformance receipt therefore cites v0.1.31 and the tagged standard text (identical line), and notes that a local binary older than the latest release is not the standard.
+**Why**: The rebrand plan gates C7 on C1 being *up and reviewed*, not released; the blockquote text has no pipeline coupling (the consuming site's extractor matches any leading blockquote), so starting before the release was safe — and the release then landed within the same day.
+**Rejected**: Waiting for a shll release before editing satellite READMEs (would have delayed X1 for no correctness gain); recording the PR as the audited revision once a release exists (a release version is the durable citation the receipt's version-record requirement asks for).
 *Introduced by*: 260911-2qsh-hexokit-banner-sweep
 
 ## Tasks
@@ -95,7 +95,7 @@ The change's diff against `main` MUST touch only `README.md` (one line), `fab/ch
 - **T001** — `README.md:3` now reads `> Part of [HexoKit](https://hexokit.com) — see all projects there.`; `git diff --stat -- README.md` = 1 insertion, 1 deletion.
 - **T002 checklist** — head order H1 → blockquote → badges → tagline ✓; relative link targets: `README.md:52` → `docs/site/install.md`, `README.md:88` → `docs/site/workflows.md` (both into `docs/site/`) ✓; relative images: none ✓; `#gh-*-mode-only`: none in README or `docs/site/` ✓; mermaid fences: none ✓; reserved `docs/site/` names (`overview`/`readme`/`commands`): none ✓; cross-links present: `docs/site/install.md`, `docs/site/workflows.md`, `https://shll.ai/wt/commands/` ✓; em-dash line count 1 ✓; pre-C1 banner occurrences 0 ✓.
 - **T002 test baseline** — `go test ./...` (from `src/`): `internal/update` ok, `internal/worktree` ok, `cmd/wt` FAIL on `TestCreate_InitFailureInteractive_OpenAnyway` only (`create_init_failure_pty_test.go:111`, expected output to contain "cd needs the shell wrapper"). **Pre-existing and unrelated**: the identical failure reproduces on the `main` checkout with no README change; the test exercises a PTY "open anyway" hint path, which reads nothing from `README.md`. Not addressed by this change (out of scope — a docs-only row); flagged for the user.
-- **T003 scope fence** — repo-wide grep: the only `hexokit` hit outside this change folder is `README.md:3`; `run-kit` hit count excluding this change folder is unchanged at 38 (all `docs/memory/`, `fab/`, and the `skill_test.go:97` comment); `git diff --name-only main -- . ':!fab/changes'` = `README.md` only.
+- **T003 scope fence (apply-time tree, before hydrate)** — repo-wide grep: the only `hexokit` hit outside this change folder is `README.md:3`; `run-kit` hit count excluding this change folder is unchanged at 38 (all `docs/memory/`, `fab/`, and the `skill_test.go:97` comment); `git diff --name-only main -- . ':!fab/changes'` = `README.md` only. **Post-hydrate**: the receipt in `docs/memory/wt-cli/toolkit-standards-conformance.md` intentionally adds `HexoKit` (the audited blockquote text) and one `sahil87/run-kit` repository reference (the rebrand plan's home — a repo link, which R2 of that plan keeps as-is); no pre-existing `run-kit` mention was altered. R3's fence covers content edits to existing mentions, not the receipt's own citations.
 
 ## Assumptions
 
