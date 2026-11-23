@@ -30,6 +30,8 @@ func createCmd() *cobra.Command {
 		base           string
 		checkout       string
 		pr             string
+		temp           string
+		initFlag       bool
 	)
 
 	cmd := &cobra.Command{
@@ -55,7 +57,13 @@ branch, so a start-point has nothing to apply to.
 --pr <n> creates the worktree on pull request <n>'s head branch, resolved
 with the GitHub CLI (gh pr view), then checked out exactly like --checkout.
 Only same-repository PRs are supported; a PR from a fork exits 2. --pr cannot
-be combined with a positional branch argument, --base, --checkout, or --reuse.`,
+be combined with a positional branch argument, --base, --checkout, --reuse,
+or --temp.
+
+--temp <ref> creates a DETACHED throwaway worktree at <ref> (branch, tag, or
+commit SHA): no branch, no git config, name prefixed tmp-. The init script is
+skipped unless --init is given. --temp cannot be combined with a positional
+branch argument, --checkout, --reuse, --base, or --pr.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var branchArg string
@@ -86,6 +94,9 @@ be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 					worktreeOpen = "prompt"
 				}
 			}
+
+			tempMode := cmd.Flags().Changed("temp")
+			checkModeConflicts(tempMode, branchArg, checkout, reuse, base, cmd.Flags().Changed("pr"), initFlag, noInit)
 
 			// Validate --reuse requires --name
 			if reuse && worktreeName == "" {
@@ -198,6 +209,19 @@ be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 				checkout = head.Branch
 			}
 
+			// --temp: resolve the ref to a commit once, up front (before any
+			// prompt or mutation). tempSHA also feeds the "From:" summary label.
+			var tempSHA string
+			if tempMode {
+				tempSHA, err = wt.ResolveCommit(temp)
+				if err != nil {
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						fmt.Sprintf("Invalid --temp ref: %s", temp),
+						fmt.Sprintf("'%s' does not resolve to a commit", temp),
+						"Provide a valid branch name, tag, or commit SHA")
+				}
+			}
+
 			// Set up rollback and signal handling
 			rb := wt.NewRollback()
 			sigCh := make(chan os.Signal, 1)
@@ -283,6 +307,14 @@ be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 			// → derived from the branch name.
 			var suggestedName string
 			switch {
+			case tempMode:
+				suggestedName, err = wt.GenerateUniqueNameWithPrefix(ctx.WorktreesDir, wt.TempNamePrefix, 10)
+				if err != nil {
+					wt.ExitWithError(wt.ExitRetryExhausted,
+						"Could not find unique worktree name",
+						"All 10 random name attempts collided with existing worktrees",
+						fmt.Sprintf("Remove some worktrees from %s or increase retries", ctx.WorktreesDir))
+				}
 			case checkout != "":
 				suggestedName = wt.DeriveWorktreeName(checkout)
 			case branchArg != "":
@@ -297,14 +329,19 @@ be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 				}
 			}
 
-			// Resolve final name
+			// Resolve final name. A temp worktree needs no naming ceremony: the
+			// prompt is skipped and the tmp- prefix is always applied (an
+			// explicit --name included, without doubling an existing prefix).
 			var finalName string
 			if worktreeName != "" {
 				finalName = worktreeName
-			} else if nonInteractive {
+			} else if nonInteractive || tempMode {
 				finalName = suggestedName
 			} else {
 				finalName = session.PromptWithDefault("Worktree name", suggestedName)
+			}
+			if tempMode {
+				finalName = wt.TempName(finalName)
 			}
 
 			// Check collision
@@ -356,11 +393,14 @@ be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 			// HEAD here equals HEAD at summary time — resolving pre-dispatch is
 			// equivalent.
 			//   --pr       → fixed copy naming the PR and its head (no query)
+			//   --temp     → the ref as typed plus the resolved short SHA (no query)
 			//   --checkout → fixed copy naming the existing-branch path (no query)
 			//   --base     → the ref verbatim as typed (no query)
 			//   else       → the resolved HEAD label (one query, best-effort)
 			var createdSummaryFrom string
 			switch {
+			case tempMode:
+				createdSummaryFrom = fmt.Sprintf("%s @ %s", temp, wt.ShortSHA(tempSHA))
 			case pr != "":
 				createdSummaryFrom = fmt.Sprintf("PR #%s (existing branch '%s')", pr, checkout)
 			case checkout != "":
@@ -372,6 +412,13 @@ be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 			}
 
 			switch {
+			case tempMode:
+				wtPath, err = wt.CreateTempWorktree(tempSHA, finalName, ctx, rb)
+				if err != nil {
+					wt.ExitWithError(wt.ExitGitError, "Failed to create worktree", err.Error(),
+						"Check that the commit is reachable and the worktrees directory is writable")
+				}
+				createdSummaryBranch = wt.DetachedBranchLabel
 			case checkout != "":
 				wtPath, err = wt.CheckoutBranchWorktree(checkout, finalName, ctx, rb)
 				if err != nil {
@@ -429,8 +476,12 @@ be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 			//      inside the runner).
 			// The confirm fires whenever a branch was explicitly named —
 			// positional (new branch) or --checkout / --pr (existing branch) —
-			// and is skipped for the bare exploratory create.
+			// and is skipped for the bare exploratory create (and for --temp,
+			// whose init is opt-in via --init — that flag is the consent, no confirm).
 			runInit := worktreeInit == "true"
+			if tempMode {
+				runInit = initFlag
+			}
 			if runInit && !(nonInteractive || (branchArg == "" && checkout == "")) {
 				runInit = session.ConfirmYesNo("Initialize worktree?")
 			}
@@ -673,9 +724,54 @@ be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 	cmd.Flags().MarkDeprecated("worktree-init", "use --no-init instead")
 	cmd.Flags().BoolVar(&reuse, "reuse", false, "Reuse existing worktree if name collides (requires --name; not with --base)")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts; use defaults and skip menus")
-	cmd.Flags().StringVar(&base, "base", "", "Git ref (branch, tag, SHA) to use as start-point for new branch (not with --checkout or --reuse)")
+	cmd.Flags().StringVar(&base, "base", "", "Git ref (branch, tag, SHA) to use as start-point for new branch (not with --checkout, --reuse, or --temp)")
+	cmd.Flags().StringVar(&temp, "temp", "", "Create a detached throwaway worktree at <ref> (no branch; name prefixed tmp-; init skipped unless --init)")
+	cmd.Flags().BoolVar(&initFlag, "init", false, "Run the worktree init script for --temp (skipped by default for temp worktrees)")
 	cmd.Flags().StringVar(&checkout, "checkout", "", "Check out an EXISTING branch (local or remote) into the worktree instead of creating a new one")
 	cmd.Flags().StringVar(&pr, "pr", "", "Create the worktree on pull request <n>'s head branch (resolved via gh; same-repository PRs only)")
 
 	return cmd
+}
+
+// checkModeConflicts exits ExitInvalidArgs when --temp is combined with a flag
+// or argument that selects a different creation mode, or when --init and
+// --no-init contradict each other. It runs before any git work so a rejected
+// invocation creates nothing.
+func checkModeConflicts(tempMode bool, branchArg, checkout string, reuse bool, base string, prSet, initFlag, noInit bool) {
+	if initFlag && noInit {
+		wt.ExitWithError(wt.ExitInvalidArgs,
+			"--init cannot be combined with --no-init",
+			"--init opts in to the init script for --temp; --no-init skips it",
+			"Pass one of --init or --no-init")
+	}
+	if !tempMode {
+		return
+	}
+	switch {
+	case branchArg != "":
+		wt.ExitWithError(wt.ExitInvalidArgs,
+			"--temp cannot be combined with a positional branch argument",
+			"--temp creates a detached worktree with no branch; the positional names a new branch",
+			"Use one of: wt create <new-branch> | wt create --temp <ref>")
+	case checkout != "":
+		wt.ExitWithError(wt.ExitInvalidArgs,
+			"--temp cannot be combined with --checkout",
+			"--temp creates a detached worktree; --checkout puts a worktree on an existing branch",
+			"Use one of: wt create --checkout <branch> | wt create --temp <ref>")
+	case reuse:
+		wt.ExitWithError(wt.ExitInvalidArgs,
+			"--temp cannot be combined with --reuse",
+			"A temp worktree is always freshly created; --reuse returns an existing one",
+			"Drop --reuse, or reuse by name without --temp: wt create --reuse --name <name>")
+	case base != "":
+		wt.ExitWithError(wt.ExitInvalidArgs,
+			"--temp cannot be combined with --base",
+			"--temp's <ref> is already the commit to detach at; --base is the start-point for a NEW branch",
+			"Pass the commit to --temp directly: wt create --temp <ref>")
+	case prSet:
+		wt.ExitWithError(wt.ExitInvalidArgs,
+			"--temp cannot be combined with --pr",
+			"--pr checks out the PR's head branch; --temp detaches at a commit",
+			"For a detached worktree at a PR head, pass its SHA: wt create --temp <sha>")
+	}
 }

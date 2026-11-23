@@ -78,6 +78,24 @@ additionally frames its git and open phases with `── Git ──…` and `─
 separators on stderr; the stdout final-path line is never touched. The
 separator helper (`PhaseSeparator`) lives in `internal/worktree/errors.go`.
 
+## Temp worktrees: init skipped by default
+
+`wt create --temp <ref>` creates a short-lived, detached worktree for PR
+surgery. Such a worktree never wants init: `fab sync` would write files into the
+very tree being rebased or inspected, and init is the slowest create phase. So
+under `--temp` the init script **does not run by default** — no Init phase
+separator, no `Running worktree init...`, and no skip warning (skipping is the
+documented default, not a degradation).
+
+The long-only bool `--init` opts in. `wt create --temp <ref> --init` runs init
+through the normal runner — same Init separator, signal handling, and
+`ExitInitFailed` (7) with the worktree kept on a non-zero exit — and prints **no**
+`Initialize worktree?` confirm (the explicit flag is the consent).
+`--init` without `--temp` is accepted and is a no-op (init already runs by
+default); `--init` together with `--no-init` is a usage error (`ExitInvalidArgs`).
+`--no-init` remains the negation of the default-ON behavior; `--init` is the
+positive opt-in for the one mode whose default is OFF.
+
 ## Graceful skip behavior
 
 The init step is non-blocking when the script cannot be located, or when the

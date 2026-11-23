@@ -821,3 +821,60 @@ func TestIntegration_CreatePR_RemoteOnlyHead(t *testing.T) {
 	}
 	assertFileExists(t, filepath.Join(wtPath, "pr.txt"))
 }
+
+// TestIntegration_TempWorktreeLifecycle drives a temp worktree end to end:
+// create --temp <sha> → list --json marks it → delete removes it, with no
+// branch created or deleted along the way and mode conflicts exiting 2.
+func TestIntegration_TempWorktreeLifecycle(t *testing.T) {
+	repo := createTestRepo(t)
+	first := gitRun(t, repo, "rev-parse", "HEAD")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "second")
+	gitRun(t, repo, "branch", "bystander")
+	branchesBefore := branchList(t, repo)
+
+	// Create at an older commit.
+	r := runWtSuccess(t, repo, nil, "create", "--temp", first, "--name", "surgery", "--non-interactive")
+	path := strings.TrimSpace(r.Stdout)
+	assertDetachedAt(t, path, first)
+	assertContains(t, r.Stderr, "Branch: (detached)")
+	assertContains(t, r.Stderr, "From: "+first+" @ "+first[:7])
+	if got := branchList(t, repo); got != branchesBefore {
+		t.Errorf("create --temp changed branches: before %q, after %q", branchesBefore, got)
+	}
+
+	// List marks it.
+	r = runWtSuccess(t, repo, nil, "list", "--json")
+	e := entryByName(t, parseJSONList(t, r.Stdout), "tmp-surgery")
+	if e["temp"] != true || e["branch"] != nil || e["path"] != path {
+		t.Errorf("list entry = %v, want temp=true branch=null path=%s", e, path)
+	}
+	r = runWtSuccess(t, repo, nil, "list", "--status")
+	assertContains(t, r.Stdout, "(detached)")
+
+	// Conflicts exit 2 without touching anything.
+	for _, args := range [][]string{
+		{"create", "--temp", "HEAD", "x"},
+		{"create", "--temp", "HEAD", "--checkout", "main"},
+		{"create", "--temp", "HEAD", "--reuse", "--name", "surgery"},
+		{"create", "--temp", "HEAD", "--base", "main"},
+		{"create", "--temp", "no-such-ref"},
+	} {
+		r = runWt(t, repo, nil, append(args, "--non-interactive")...)
+		assertExitCode(t, r, 2)
+	}
+	assertWorktreeNotExists(t, repo, "tmp-x")
+
+	// Delete removes it with no branch handling.
+	r = runWtSuccess(t, repo, nil, "delete", "--non-interactive", "tmp-surgery")
+	combined := r.Stdout + r.Stderr
+	assertContains(t, combined, "Deleted worktree")
+	assertNotContains(t, combined, "branch deletion")
+	assertNotContains(t, combined, "Deleted branch")
+	assertWorktreeNotExists(t, repo, "tmp-surgery")
+	if got := branchList(t, repo); got != branchesBefore {
+		t.Errorf("delete changed branches: before %q, after %q", branchesBefore, got)
+	}
+	r = runWtSuccess(t, repo, nil, "list")
+	assertNotContains(t, r.Stdout, "tmp-surgery")
+	assertGitStateClean(t, repo)
+}

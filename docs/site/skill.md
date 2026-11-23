@@ -24,6 +24,7 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   puts it on pull request `n`'s head branch (via `gh`); `--base <ref>`
   sets a new branch's start-point; `-n/--name` overrides the random name;
   `--reuse` reuses an existing named worktree; `--no-init` skips the init script.
+  `--temp <ref>` makes a detached throwaway worktree (see Gotchas).
 - `list` (alias `ls`) — table of worktrees (name, branch, path). `--status` adds
   dirty/unpushed indicators; `--json` emits machine records; `--path <name>`
   prints one absolute path.
@@ -104,6 +105,11 @@ One line per subcommand (run `wt <cmd> --help` for flags):
 - **`--pr` needs `gh` and a same-repository PR.** Without `gh` it exits `1`; a
   PR from a fork exits `2` — add the fork as a remote and use `--checkout`. It
   assumes gh's repo is `origin`; in a fork clone, use `--checkout` instead.
+- **`--temp <ref>` = disposable detached worktree.** `wt create --temp <sha|branch|tag>`
+  detaches at that commit (no branch, no git config), names it `tmp-<name>`, and skips
+  init unless `--init`. `wt list --json` marks it `"temp": true, "branch": null`;
+  `wt delete <tmp-name>` removes it with no branch handling. It is exclusive with the
+  positional, `--checkout`, `--reuse`, `--base` and `--pr` (exit 2).
 - **Init failure keeps the worktree.** If the init script exits non-zero, `wt`
   exits `7` (not `1`) and leaves the worktree in place with a retry hint
   (`cd <path> && wt init`) — the git operations already succeeded. It does not roll

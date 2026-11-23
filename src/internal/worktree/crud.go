@@ -160,6 +160,26 @@ func CreateExploratoryWorktree(name string, ctx *RepoContext, rb *Rollback, star
 	return wtPath, nil
 }
 
+// CreateTempWorktree creates a DETACHED worktree at sha — no branch, no git
+// config. sha is the already-resolved commit (see ResolveCommit). The rollback
+// registers only the worktree removal (there is no branch to delete). Returns
+// the worktree path.
+func CreateTempWorktree(sha, name string, ctx *RepoContext, rb *Rollback) (string, error) {
+	if err := EnsureWorktreesDir(ctx.WorktreesDir); err != nil {
+		return "", err
+	}
+
+	wtPath := filepath.Join(ctx.WorktreesDir, name)
+
+	if out, err := exec.Command("git", "worktree", "add", "--detach", wtPath, sha).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git worktree add --detach failed at '%s' for commit '%s': %s",
+			wtPath, sha, strings.TrimSpace(string(out)))
+	}
+	rb.Register("git", "worktree", "remove", "--force", wtPath)
+
+	return wtPath, nil
+}
+
 // RunWorktreeSetup resolves the init script via ResolveInitInvocation and
 // runs it in the worktree directory.
 //   - On structured not-found, prints the unified warning to stderr and

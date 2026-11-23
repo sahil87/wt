@@ -216,6 +216,11 @@ func handleDeleteCurrent(session *wt.MenuSession, nonInteractive bool, deleteBra
 	if err != nil {
 		wt.ExitWithError(wt.ExitGeneralError, "Cannot determine current branch", err.Error(), "")
 	}
+	// A detached worktree reports the literal "HEAD" here; normalize it to the
+	// same "(detached)" label the porcelain paths and `wt list` use.
+	if wt.IsDetachedBranch(branch) {
+		branch = wt.DetachedBranchLabel
+	}
 
 	fmt.Fprintf(os.Stderr, "Worktree: %s%s%s\n", wt.ColorBold, wtName, wt.ColorReset)
 	fmt.Fprintf(os.Stderr, "Branch: %s\n", branch)
@@ -230,8 +235,8 @@ func handleDeleteCurrent(session *wt.MenuSession, nonInteractive bool, deleteBra
 		}
 	}
 
-	// Check for unpushed commits
-	if wt.HasUnpushedCommits(branch) {
+	// Check for unpushed commits (a detached worktree has no branch to push)
+	if !wt.IsDetachedBranch(branch) && wt.HasUnpushedCommits(branch) {
 		if err := handleUnpushedCommits(session, branch, nonInteractive, dryRun); err != nil {
 			return err
 		}
@@ -863,7 +868,9 @@ func handleUnpushedCommits(session *wt.MenuSession, branch string, nonInteractiv
 }
 
 func handleBranchCleanup(branch, wtName, deleteBranch, deleteRemote string, dryRun bool) {
-	if branch == "" {
+	// A detached worktree (e.g. a `wt create --temp` one) has no branch: no
+	// cleanup, no orphan wt/ cleanup, --branch true is a no-op.
+	if branch == "" || wt.IsDetachedBranch(branch) {
 		return
 	}
 

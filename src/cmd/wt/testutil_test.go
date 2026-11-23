@@ -449,3 +449,21 @@ func writeGhStub(t *testing.T, stdout, stderr string, code int) (env []string, a
 func prHeadJSON(branch string, crossRepository bool) string {
 	return fmt.Sprintf(`{"headRefName":%q,"isCrossRepository":%t}`, branch, crossRepository)
 }
+
+// createTempViaWt creates a `wt create --temp HEAD` worktree with the given
+// --name (so the directory is tmp-<name>) and returns its path.
+func createTempViaWt(t *testing.T, repoPath, name string) string {
+	t.Helper()
+	r := runWtSuccess(t, repoPath, nil, "create", "--temp", "HEAD", "--name", name, "--non-interactive")
+	path := strings.TrimSpace(r.Stdout)
+	if path == "" {
+		t.Fatalf("wt create --temp returned empty path; stderr: %s", r.Stderr)
+	}
+	return path
+}
+
+// branchList returns `git branch --list` output (sorted, stable) for repoPath.
+func branchList(t *testing.T, repoPath string) string {
+	t.Helper()
+	return gitRun(t, repoPath, "branch", "--list")
+}

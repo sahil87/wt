@@ -5,7 +5,13 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// TempNamePrefix is the name prefix of every `wt create --temp` worktree. It is
+// what makes a throwaway worktree visibly disposable in listings and lets
+// IsTempWorktree classify one without any extra git subprocess.
+const TempNamePrefix = "tmp-"
 
 // Adjectives for random worktree naming (~200 adjectives).
 var adjectives = []string{
@@ -107,12 +113,38 @@ func GenerateRandomName() string {
 // GenerateUniqueName generates a random name that doesn't collide with existing
 // directories in worktreesDir. It retries up to maxRetries times.
 func GenerateUniqueName(worktreesDir string, maxRetries int) (string, error) {
+	return GenerateUniqueNameWithPrefix(worktreesDir, "", maxRetries)
+}
+
+// GenerateUniqueNameWithPrefix is GenerateUniqueName with prefix prepended to
+// the random adjective-noun. The collision check runs against the prefixed
+// name (the directory that would actually be created).
+func GenerateUniqueNameWithPrefix(worktreesDir, prefix string, maxRetries int) (string, error) {
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		name := GenerateRandomName()
+		name := prefix + GenerateRandomName()
 		path := filepath.Join(worktreesDir, name)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			return name, nil
 		}
 	}
 	return "", fmt.Errorf("could not find unique worktree name after %d attempts", maxRetries)
+}
+
+// TempName returns name with TempNamePrefix applied, without doubling it when
+// name already carries the prefix (`foo` → `tmp-foo`, `tmp-foo` → `tmp-foo`).
+func TempName(name string) string {
+	if strings.HasPrefix(name, TempNamePrefix) {
+		return name
+	}
+	return TempNamePrefix + name
+}
+
+// IsTempWorktree reports whether a worktree is a `wt create --temp` worktree:
+// detached AND named with TempNamePrefix. Pure — callers pass the worktree's
+// basename and the porcelain `detached` flag (and must exclude the main
+// worktree themselves), so classifying costs no git subprocess. A detached
+// worktree without the prefix (raw `git worktree add --detach`) and a
+// `tmp-*` worktree on a branch are both not temp.
+func IsTempWorktree(name string, detached bool) bool {
+	return detached && strings.HasPrefix(name, TempNamePrefix)
 }
