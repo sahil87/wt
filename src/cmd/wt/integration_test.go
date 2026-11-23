@@ -792,3 +792,32 @@ func TestIntegration_SkillRejectsArgs(t *testing.T) {
 			r.Stdout, r.Stderr)
 	}
 }
+
+// TestIntegration_CreatePR_RemoteOnlyHead drives the built binary end to end
+// with a stub gh: the PR's head branch exists only on the bare origin, so
+// --pr must fetch it, check it out, and print the path as stdout's last line.
+func TestIntegration_CreatePR_RemoteOnlyHead(t *testing.T) {
+	repo := createTestRepo(t)
+	pushMainToRemote(t, repo)
+	gitRun(t, repo, "checkout", "-b", "feature/remote-pr")
+	os.WriteFile(filepath.Join(repo, "pr.txt"), []byte("pr"), 0644)
+	gitRun(t, repo, "add", "pr.txt")
+	gitRun(t, repo, "commit", "-q", "-m", "pr work")
+	gitRun(t, repo, "push", "-q", "origin", "feature/remote-pr")
+	gitRun(t, repo, "checkout", "main")
+	gitRun(t, repo, "branch", "-D", "feature/remote-pr")
+	env, _ := writeGhStub(t, prHeadJSON("feature/remote-pr", false), "", 0)
+
+	r := runWtSuccess(t, repo, env, "create", "--non-interactive", "--name", "pr-wt", "--pr", "7")
+
+	wtPath := worktreePath(repo, "pr-wt")
+	lines := strings.Split(strings.TrimSpace(r.Stdout), "\n")
+	if got := lines[len(lines)-1]; got != wtPath {
+		t.Errorf("stdout last line = %q, want %q", got, wtPath)
+	}
+	assertContains(t, r.Stderr, "From: PR #7 (existing branch 'feature/remote-pr')")
+	if got := strings.TrimSpace(gitRun(t, wtPath, "rev-parse", "--abbrev-ref", "HEAD")); got != "feature/remote-pr" {
+		t.Errorf("worktree HEAD = %q, want feature/remote-pr", got)
+	}
+	assertFileExists(t, filepath.Join(wtPath, "pr.txt"))
+}

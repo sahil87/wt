@@ -20,7 +20,8 @@ session — gets its own checkout.
 One line per subcommand (run `wt <cmd> --help` for flags):
 
 - `create [branch]` (alias `new`) — new-branch worktree with a random name.
-  `--checkout <branch>` puts it on an **existing** branch instead; `--base <ref>`
+  `--checkout <branch>` puts it on an **existing** branch instead; `--pr <n>`
+  puts it on pull request `n`'s head branch (via `gh`); `--base <ref>`
   sets a new branch's start-point; `-n/--name` overrides the random name;
   `--reuse` reuses an existing named worktree; `--no-init` skips the init script.
 - `list` (alias `ls`) — table of worktrees (name, branch, path). `--status` adds
@@ -100,6 +101,8 @@ One line per subcommand (run `wt <cmd> --help` for flags):
 - **`--reuse` and `--base` don't mix.** Passing both is an error (exit 2), even
   when no worktree by that name exists yet — a reused worktree keeps its existing
   branch. To cut from a ref, create a new worktree (drop `--reuse`).
+- **`--pr` needs `gh` and a same-repository PR.** Without `gh` it exits `1`; a
+  PR from a fork exits `2` — add the fork as a remote and use `--checkout`.
 - **Init failure keeps the worktree.** If the init script exits non-zero, `wt`
   exits `7` (not `1`) and leaves the worktree in place with a retry hint
   (`cd <path> && wt init`) — the git operations already succeeded. It does not roll

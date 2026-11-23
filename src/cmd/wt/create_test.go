@@ -1020,3 +1020,139 @@ func TestCreate_HelpHidesDeprecatedShowsNew(t *testing.T) {
 		assertNotContains(t, r.Stdout, hidden)
 	}
 }
+
+// TestCreate_PRLocalHead asserts --pr checks out a PR's head branch that
+// exists locally, and that the From: line names the PR.
+func TestCreate_PRLocalHead(t *testing.T) {
+	repo := createTestRepo(t)
+	gitRun(t, repo, "checkout", "-b", "feature/pr-head")
+	gitRun(t, repo, "checkout", "main")
+	env, argsFile := writeGhStub(t, prHeadJSON("feature/pr-head", false), "", 0)
+
+	r := runWtSuccess(t, repo, env, "create", "--non-interactive", "--pr", "42")
+
+	assertContains(t, r.Stderr, "Branch: feature/pr-head")
+	assertContains(t, r.Stderr, "From: PR #42 (existing branch 'feature/pr-head')")
+	// Suggested name derives from the head branch, as with --checkout.
+	assertWorktreeExists(t, repo, "pr-head")
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("gh stub was not invoked: %v", err)
+	}
+	if got, want := string(args), "pr\nview\n42\n--json\nheadRefName,isCrossRepository\n"; got != want {
+		t.Errorf("gh argv = %q, want %q", got, want)
+	}
+}
+
+// TestCreate_PRInvalidValue asserts a non-numeric --pr exits 2 before gh runs.
+func TestCreate_PRInvalidValue(t *testing.T) {
+	repo := createTestRepo(t)
+	env, argsFile := writeGhStub(t, prHeadJSON("x", false), "", 0)
+
+	for _, v := range []string{"abc", "0", "#42", "-1"} {
+		r := runWt(t, repo, env, "create", "--non-interactive", "--pr="+v)
+		assertExitCode(t, r, 2)
+		assertContains(t, r.Stderr, "Invalid --pr value: "+v)
+	}
+	assertFileNotExists(t, argsFile)
+}
+
+// TestCreate_PRConflicts asserts --pr is exclusive with the positional,
+// --base, --checkout and --reuse, failing before gh runs or anything is made.
+func TestCreate_PRConflicts(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"positional", []string{"new-branch"}, "--pr cannot be combined with a positional branch argument"},
+		{"base", []string{"--base", "main"}, "--base cannot be combined with --pr"},
+		{"checkout", []string{"--checkout", "main"}, "--pr cannot be combined with --checkout"},
+		{"reuse", []string{"--reuse"}, "--pr cannot be combined with --reuse"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := createTestRepo(t)
+			env, argsFile := writeGhStub(t, prHeadJSON("x", false), "", 0)
+
+			args := append([]string{"create", "--non-interactive", "--name", "conflict-wt", "--pr", "7"}, tc.args...)
+			r := runWt(t, repo, env, args...)
+
+			assertExitCode(t, r, 2)
+			assertContains(t, r.Stderr, tc.want)
+			assertWorktreeNotExists(t, repo, "conflict-wt")
+			assertFileNotExists(t, argsFile)
+		})
+	}
+}
+
+// TestCreate_PRForkRejected asserts a cross-repository PR exits 2 and leaves
+// no worktree or branch behind, even when a same-named branch exists on origin.
+func TestCreate_PRForkRejected(t *testing.T) {
+	repo := createTestRepo(t)
+	gitRun(t, repo, "checkout", "-b", "patch-1")
+	gitRun(t, repo, "push", "-q", "origin", "patch-1")
+	gitRun(t, repo, "checkout", "main")
+	gitRun(t, repo, "branch", "-D", "patch-1")
+	env, _ := writeGhStub(t, prHeadJSON("patch-1", true), "", 0)
+
+	r := runWt(t, repo, env, "create", "--non-interactive", "--name", "fork-wt", "--pr", "7")
+
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "PR #7 is from a fork (head branch 'patch-1')")
+	assertContains(t, r.Stderr, "Add the fork as a remote and use --checkout")
+	assertWorktreeNotExists(t, repo, "fork-wt")
+	assertBranchNotExists(t, repo, "patch-1")
+}
+
+// TestCreate_PRGhMissing asserts --pr without gh on PATH exits 1 with the
+// install hint. PATH holds only a git symlink, so wt still finds git.
+func TestCreate_PRGhMissing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinked PATH fixture is POSIX-only")
+	}
+	repo := createTestRepo(t)
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("LookPath git: %v", err)
+	}
+	binDir := t.TempDir()
+	if err := os.Symlink(gitPath, filepath.Join(binDir, "git")); err != nil {
+		t.Fatalf("Symlink git: %v", err)
+	}
+
+	r := runWt(t, repo, []string{"PATH=" + binDir}, "create", "--non-interactive", "--name", "nogh-wt", "--pr", "7")
+
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stderr, "GitHub CLI (gh) not found")
+	assertContains(t, r.Stderr, "https://cli.github.com")
+	assertWorktreeNotExists(t, repo, "nogh-wt")
+}
+
+// TestCreate_PRGhFailure asserts a failing gh exits 1 showing gh's first
+// error line, with nothing created.
+func TestCreate_PRGhFailure(t *testing.T) {
+	repo := createTestRepo(t)
+	env, _ := writeGhStub(t, "", "no pull requests found for branch \"99\"\nsecond line\n", 1)
+
+	r := runWt(t, repo, env, "create", "--non-interactive", "--name", "ghfail-wt", "--pr", "99")
+
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stderr, "Could not resolve PR #99")
+	assertContains(t, r.Stderr, `no pull requests found for branch "99"`)
+	assertNotContains(t, r.Stderr, "second line")
+	assertWorktreeNotExists(t, repo, "ghfail-wt")
+}
+
+// TestCreate_PRHeadNotFound asserts a same-repository PR whose head branch is
+// neither local nor on origin exits 2 with PR-specific copy.
+func TestCreate_PRHeadNotFound(t *testing.T) {
+	repo := createTestRepo(t)
+	env, _ := writeGhStub(t, prHeadJSON("gone-branch", false), "", 0)
+
+	r := runWt(t, repo, env, "create", "--non-interactive", "--name", "gone-wt", "--pr", "7")
+
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "PR #7 head branch 'gone-branch' not found")
+	assertWorktreeNotExists(t, repo, "gone-wt")
+}

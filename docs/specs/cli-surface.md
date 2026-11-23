@@ -38,6 +38,7 @@ Create a git worktree as a sibling of the main repo (`<repo>.worktrees/<name>/`)
 | `--non-interactive` | `false` | No prompts; fail or use defaults rather than prompting. |
 | `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for the NEW branch. Validated via `git rev-parse --verify`. Cannot be combined with `--checkout` or `--reuse`. |
 | `--checkout <branch>` | (none) | Check out an EXISTING branch (local as-is, or remote-only fetched then checked out) into the worktree, instead of creating a new one. Cannot be combined with a positional branch argument or with `--base`. |
+| `--pr <n>` | (none) | Create the worktree on pull request `<n>`'s head branch, resolved via `gh pr view <n> --json headRefName,isCrossRepository` (15 s timeout), then checked out exactly like `--checkout`. Same-repository PRs only. Cannot be combined with a positional branch argument, `--base`, `--checkout`, or `--reuse`. |
 
 **Deprecated aliases** (still accepted; hidden from `--help`; print a stderr deprecation warning): `--worktree-name` → `--name`, `--worktree-open` → `--open`, `--worktree-init true|false` → `--no-init` (`--worktree-init false` ≡ `--no-init`).
 
@@ -59,6 +60,15 @@ and a branch that exists neither locally nor remotely fails with
 [--base <ref>]`). The worktree name is suggested from the branch name via
 `DeriveWorktreeName`.
 
+To put a worktree on a pull request's head branch, use `--pr <n>` (a positive
+PR number). `wt` asks the GitHub CLI for the head (`gh pr view <n> --json
+headRefName,isCrossRepository`, argv exec, 15 s timeout) before any prompt or
+mutation, then runs the `--checkout <head>` path unchanged; the summary's
+`From:` line reads `PR #<n> (existing branch '<head>')`. `gh` is needed only
+for this flag. A PR whose head is in a fork (`isCrossRepository: true`) is
+refused with `ExitInvalidArgs` — add the fork as a remote and use
+`--checkout`; `wt` does not manage remotes.
+
 On success, the worktree path is always written as the last line of stdout.
 (When the chosen app was `open_here`, the unified shell-cd contract's own
 path emission precedes it — the contract is "the path is the last line", not
@@ -66,8 +76,12 @@ path emission precedes it — the contract is "the path is the last line", not
 
 Exit codes: `ExitInvalidArgs` for flag misuse (including `--checkout` combined
 with a positional argument or with `--base`), invalid `--base`/branch name, a
-positional naming an already-existing branch, or `--checkout` on a branch that
-does not exist; `ExitGitError` for `git worktree add` failures;
+positional naming an already-existing branch, `--checkout` on a branch that
+does not exist, a non-numeric `--pr`, `--pr` combined with a positional /
+`--base` / `--checkout` / `--reuse`, a fork PR, or a PR head branch that exists
+neither locally nor on origin; `ExitGeneralError` when `gh` is missing or
+`gh pr view` fails (unauthenticated, PR not found, timeout — the message carries
+gh's first error line); `ExitGitError` for `git worktree add` failures;
 `ExitRetryExhausted` for name generation; `ExitInitFailed` (7) when the init
 script runs but exits non-zero
 (the worktree is kept; the code holds on every init-failure path, including a

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -262,6 +263,13 @@ func assertFileExists(t *testing.T, path string) {
 	}
 }
 
+func assertFileNotExists(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err == nil {
+		t.Errorf("expected file NOT to exist: %s", path)
+	}
+}
+
 // ---------- Worktree Helpers ----------
 
 // worktreesDir returns the .worktrees directory for a given repo path.
@@ -410,4 +418,34 @@ func parseJSONList(t *testing.T, jsonStr string) []map[string]interface{} {
 		t.Fatalf("invalid JSON: %v\n%s", err, jsonStr)
 	}
 	return entries
+}
+
+// writeGhStub writes a fake `gh` that prints stdout / stderr, exits with
+// code, and records its argv (one per line) to argsFile. It returns the env
+// entry that puts the stub first on PATH (pass it to runWt) and argsFile,
+// which does not exist until the stub has been invoked.
+func writeGhStub(t *testing.T, stdout, stderr string, code int) (env []string, argsFile string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("gh stub is a POSIX shell script")
+	}
+	dir := t.TempDir()
+	for name, content := range map[string]string{"stdout": stdout, "stderr": stderr} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatalf("WriteFile %s: %v", name, err)
+		}
+	}
+	argsFile = filepath.Join(dir, "args")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > '%s'\ncat '%s'\ncat '%s' >&2\nexit %d\n",
+		argsFile, filepath.Join(dir, "stdout"), filepath.Join(dir, "stderr"), code)
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0755); err != nil {
+		t.Fatalf("WriteFile gh: %v", err)
+	}
+	return []string{"PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH")}, argsFile
+}
+
+// prHeadJSON is the `gh pr view --json headRefName,isCrossRepository` output
+// for a PR whose head is branch.
+func prHeadJSON(branch string, crossRepository bool) string {
+	return fmt.Sprintf(`{"headRefName":%q,"isCrossRepository":%t}`, branch, crossRepository)
 }
