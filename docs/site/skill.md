@@ -22,7 +22,11 @@ One line per subcommand (run `wt <cmd> --help` for flags):
 - `create [branch]` (alias `new`) — new-branch worktree with a random name.
   `--checkout <branch>` puts it on an **existing** branch instead; `--pr <n>`
   puts it on pull request `n`'s head branch (via `gh`); `--base <ref>`
-  sets a new branch's start-point; `-n/--name` overrides the random name;
+  sets a new branch's start-point (pinned to its resolved SHA); `--fetch` fetches
+  the base's (or `--temp` ref's) remote first so the worktree starts from fresh refs;
+  `--json` prints one receipt document
+  `{ok,result:{path,name,branch,base_ref,base_sha,mode,init}}` on stdout instead
+  of the path; `-n/--name` overrides the random name;
   `--reuse` reuses an existing named worktree; `--no-init` skips the init script.
   `--temp <ref>` makes a detached throwaway worktree (see Gotchas).
 - `list` (alias `ls`) — table of worktrees (name, branch, path). `--status` adds
@@ -70,7 +74,8 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   file path resolved from the repo root and run via `bash`. It runs with the new
   worktree as its working directory; its output goes to stderr. See `docs/specs/init-protocol.md`.
 - **Machine surface.** `wt list --json` is the structured composition surface (e.g.
-  what `hop` reads); `wt create` prints the worktree path as its last stdout line.
+  what `hop` reads); `wt create` prints the worktree path as its last stdout line, or —
+  with `--json` — one receipt document (`{"ok":true,"result":{…}}` / `{"ok":false,"error":{code,message}}`).
 
 ## Output & exit-code contracts
 

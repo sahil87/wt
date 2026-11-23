@@ -878,3 +878,111 @@ func TestIntegration_TempWorktreeLifecycle(t *testing.T) {
 	assertNotContains(t, r.Stdout, "tmp-surgery")
 	assertGitStateClean(t, repo)
 }
+
+// ---------- --fetch fixture: bare origin + clone + a second pusher ----------
+
+// fetchFixture returns a clone of a bare origin (main pushed, tracking set)
+// and a function that pushes one new commit to origin/main from a second
+// clone WITHOUT touching the first clone's refs. It returns that commit's SHA.
+func fetchFixture(t *testing.T) (clone string, pushNew func() string) {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare := filepath.Join(root, "origin.git")
+	gitRun(t, root, "init", "-q", "--bare", "--initial-branch=main", bare)
+
+	seed := filepath.Join(root, "seed")
+	gitRun(t, root, "clone", "-q", bare, seed)
+	gitRun(t, seed, "checkout", "-q", "-B", "main")
+	gitRun(t, seed, "commit", "-q", "--allow-empty", "-m", "seed")
+	gitRun(t, seed, "push", "-q", "origin", "main")
+
+	clone = filepath.Join(root, "clone")
+	gitRun(t, root, "clone", "-q", bare, clone)
+
+	pushNew = func() string {
+		gitRun(t, seed, "commit", "-q", "--allow-empty", "-m", "newer")
+		gitRun(t, seed, "push", "-q", "origin", "main")
+		return gitRun(t, seed, "rev-parse", "HEAD")
+	}
+	return clone, pushNew
+}
+
+func TestIntegration_CreateFetch_FreshBase(t *testing.T) {
+	clone, pushNew := fetchFixture(t)
+	stale := gitRun(t, clone, "rev-parse", "origin/main")
+	fresh := pushNew()
+	if fresh == stale {
+		t.Fatal("fixture did not advance origin")
+	}
+
+	r := runWtSuccess(t, clone, nil, "create", "--json", "--fetch", "--name", "fetched", "--base", "origin/main", "fetched-br")
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Result.BaseSHA == nil || *doc.Result.BaseSHA != fresh {
+		t.Errorf("base_sha = %v, want fresh %s", doc.Result.BaseSHA, fresh)
+	}
+	if got := gitRun(t, doc.Result.Path, "rev-parse", "HEAD"); got != fresh {
+		t.Errorf("worktree HEAD = %s, want %s", got, fresh)
+	}
+	// Fetch chatter must not reach stdout.
+	assertNotContains(t, r.Stdout, "From ")
+}
+
+func TestIntegration_CreateWithoutFetch_StaleBase(t *testing.T) {
+	clone, pushNew := fetchFixture(t)
+	stale := gitRun(t, clone, "rev-parse", "origin/main")
+	pushNew()
+
+	r := runWtSuccess(t, clone, nil, "create", "--json", "--name", "stale", "--base", "origin/main", "stale-br")
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Result.BaseSHA == nil || *doc.Result.BaseSHA != stale {
+		t.Errorf("base_sha = %v, want stale %s", doc.Result.BaseSHA, stale)
+	}
+}
+
+func TestIntegration_CreateFetch_FailureIsGitError(t *testing.T) {
+	clone, _ := fetchFixture(t)
+	gitRun(t, clone, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "does-not-exist.git"))
+
+	r := runWt(t, clone, nil, "create", "--json", "--fetch", "--name", "x", "newbr")
+	assertExitCode(t, r, 3)
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Error == nil || doc.Error.Code != 3 || !strings.Contains(doc.Error.Message, "origin") {
+		t.Errorf("unexpected doc: %s", r.Stdout)
+	}
+	assertContains(t, r.Stderr, "origin")
+	assertWorktreeNotExists(t, clone, "x")
+	assertBranchNotExists(t, clone, "newbr")
+}
+
+func TestIntegration_CreateFetch_CheckoutIsNoOp(t *testing.T) {
+	// A broken origin would fail any fetch; --checkout of a local branch must
+	// not run one.
+	clone, _ := fetchFixture(t)
+	gitRun(t, clone, "branch", "local-br")
+	gitRun(t, clone, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "does-not-exist.git"))
+
+	r := runWtSuccess(t, clone, nil, "create", "--json", "--fetch", "--checkout", "local-br")
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Result.Mode != "checkout" {
+		t.Errorf("unexpected result: %s", r.Stdout)
+	}
+}
+
+// TestIntegration_CreateTempFetch_FreshRef asserts --fetch is honoured for
+// --temp: the remote is fetched before the --temp ref is resolved.
+func TestIntegration_CreateTempFetch_FreshRef(t *testing.T) {
+	clone, pushNew := fetchFixture(t)
+	fresh := pushNew()
+
+	r := runWtSuccess(t, clone, nil, "create", "--json", "--fetch", "--temp", "origin/main", "--name", "surgery")
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Result.BaseSHA == nil || *doc.Result.BaseSHA != fresh {
+		t.Errorf("base_sha = %v, want fresh %s", doc.Result.BaseSHA, fresh)
+	}
+	if got := gitRun(t, doc.Result.Path, "rev-parse", "HEAD"); got != fresh {
+		t.Errorf("temp worktree HEAD = %s, want %s", got, fresh)
+	}
+}

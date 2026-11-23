@@ -8,7 +8,7 @@ description: "The `wt` CLI flag-surface conventions — no command-noun prefixes
 
 > Post-implementation behavior capture for the cross-command flag-surface
 > conventions the `wt` CLI follows.
-> Source changes: `260717-59u8-intuitive-flag-names`, `260722-0is3-go-open-orthogonality`, `261123-gcos-create-temp-detached-worktree`.
+> Source changes: `260717-59u8-intuitive-flag-names`, `260722-0is3-go-open-orthogonality`, `261123-gcos-create-temp-detached-worktree`, `261123-xhgg-create-fetch-json-receipt`.
 
 ## Overview
 
@@ -99,7 +99,11 @@ or rare flags stay long-form-only (Principle II).
   `--base` on `wt create` (a `-b` would collide with `git worktree add -b`, which
   there NAMES the new branch — actively misleading to git users);
   `--non-interactive` (script-facing everywhere; explicitness beats brevity, and
-  it is named in constitution Principle VI); `--dry-run` on `wt delete` (a
+  it is named in constitution Principle VI); `--fetch` and `--json` on `wt create`
+  (long-only, script-facing flags — `--json` is the machine-surface switch, and a
+  `-f`/`-j` would add no interactive value; see
+  [`create-output-phases`](/wt-cli/create-output-phases.md) for `--json` and
+  [`create-branch-semantics`](/wt-cli/create-branch-semantics.md) for `--fetch`); `--dry-run` on `wt delete` (a
   preview/automation flag, not common interactive use — same rationale as
   `--non-interactive`; a `-d` would also risk a delete-adjacent misfire on the
   most destructive command). See
@@ -267,6 +271,12 @@ footgun. `wt go --open` (`260722-0is3`) copies the rule verbatim from
 `wt create --open` because it has the identical optional-positional ambiguity.
 **Rejected**: a `NoOptDefVal` of `prompt` (the positional-swallow footgun).
 *Introduced by*: `260717-59u8-intuitive-flag-names`.
+
+### `--fetch` / `--json` are long-only bools with no deprecated aliases
+**Decision**: `wt create --fetch` and `wt create --json` are new long-only real booleans — no short, no `NoOptDefVal` question (they take no value), and no deprecated alias because they replace nothing. `--json` follows `wt list --json`'s name; it implies `--non-interactive` and an `--open skip` default, and conflicts with an explicit non-`skip` `--open`.
+**Why**: both are script-facing (fresh-base and machine-receipt switches), the case Principle II reserves for long-form-only flags; reusing the toolkit's existing `--json` spelling keeps the machine surface uniform.
+**Rejected**: shorts `-f` / `-j` (no common interactive use; `-f` conventionally means `--force`); a `--format json` value flag (diverges from `wt list --json`).
+*Introduced by*: `261123-xhgg-create-fetch-json-receipt` (plan `fab/plans/sahil/26-11-23-worktree-base-receipts.md`, step W1).
 
 ## Cross-references
 

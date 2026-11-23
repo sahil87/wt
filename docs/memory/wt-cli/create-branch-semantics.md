@@ -1,11 +1,11 @@
 ---
 type: memory
-description: "The `wt create` branch-selection contract — positional = new-branch-only, `--checkout` = existing-branch opt-in, `--pr <n>` = a same-repo PR's head via gh, `--base` = new-branch start-point, `--temp <ref>` = detached throwaway worktree, the conflict/exit-code matrix, and the internal seam (CreateNewBranchWorktree / CheckoutBranchWorktree / CreateTempWorktree / ResolvePRHead + sentinel errors)."
+description: "The `wt create` branch-selection contract — positional = new-branch-only, `--checkout` = existing-branch opt-in, `--pr <n>` = a same-repo PR's head via gh, `--base` = new-branch start-point pinned to a SHA with upstream restored (conflicts with `--checkout` and `--reuse`), `--fetch` for a fresh base, `--temp <ref>` = detached throwaway worktree, the conflict/exit-code matrix, and the internal seam (sentinel errors, LIFO rollback)."
 ---
 # wt-cli: Create Branch-Selection Contract
 
 > Post-implementation behavior capture for `wt create`'s branch-selection surface.
-> Source changes: `260717-2af2-explicit-base-checkout-flags`, `261123-gcos-create-temp-detached-worktree`.
+> Source changes: `260717-2af2-explicit-base-checkout-flags`, `261123-gcos-create-temp-detached-worktree`, `261123-xhgg`.
 
 This file documents how `wt create` decides which branch a new worktree lands on: the
 new-branch-only positional, the `--checkout` existing-branch opt-in, the `--pr <n>`
@@ -121,15 +121,10 @@ short and fails closed on an existing name (260717-2af2).
 
 ### `--base <ref>` is the NEW-branch start-point; it always applies to the positional
 
-- `--base` is the git start-point (branch / tag / SHA) for the **new** branch, validated via
-  `git rev-parse --verify` whenever it is set. Because the positional is *always* a new branch,
-  `--base` always applies to it — there is no warn-and-ignore path.
-- Validation is a single guard: `if base != "" { git rev-parse --verify <base> }`. Both
-  combinations that would leave `--base` with no new branch to apply to (`--checkout` + `--base`,
-  `--reuse` + `--base`) are rejected earlier as argument conflicts, so any `--base` reaching the
-  guard applies to a new branch (positional or bare).
+- `--base` is the git start-point (branch / tag / SHA) for the **new** branch. Because the positional is *always* a new branch, `--base` always applies to it — there is no warn-and-ignore path.
+- `--base` is validated by resolving it (see the pinning section below). A `--base` that does not resolve to a commit is `ExitInvalidArgs` (2) with `Invalid --base ref: <ref>`, before any mutation. Both combinations that would leave `--base` with no new branch to apply to (`--checkout` + `--base`, `--reuse` + `--base`) are rejected earlier as argument conflicts, so any `--base` reaching resolution applies to a new branch (positional or bare).
 
-- **GIVEN** `--base <bad-ref>` with a new positional branch and no `--reuse`
+- **GIVEN** `--base <bad-ref>` with a new positional branch and no `--reuse` hit
 - **WHEN** the user runs `wt create newbranch --base bad-ref`
 - **THEN** the command exits `ExitInvalidArgs` with `Invalid --base ref: bad-ref`, creating no
   worktree or branch.
@@ -169,6 +164,38 @@ short and fails closed on an existing name (260717-2af2).
 - **GIVEN** `--temp no-such-ref`
 - **WHEN** the user runs it
 - **THEN** the command exits `ExitInvalidArgs` (2) with the invalid-ref copy and creates nothing.
+
+### The new-branch start-point is resolved once and pinned to a SHA
+
+- For the positional and bare exploratory modes, `wt create` resolves the start-point **once** — `git rev-parse --verify <base>^{commit}` (`wt.ResolveCommit`) when `--base` is given, else the same for `HEAD` — **before** the create dispatch (outside the reinstall window), and passes that full 40-hex SHA as the `git worktree add -b` start-point. The branch therefore cannot move with the ref mid-command, and the `--json` receipt's `base_sha` is exactly what the branch was cut from.
+- Unresolvable `HEAD` (no commits) without `--base` is `ExitGitError` (3) `Failed to resolve HEAD` / `Fix: Make an initial commit first, or pass --base <ref>`, before any mutation.
+- The Git-phase summary `From:` line reports the pinned commit: `From: <ref-as-typed> @ <7-char sha>` (see [`create-output-phases`](/wt-cli/create-output-phases.md)).
+- **Upstream is restored explicitly.** Passing a SHA to `git worktree add -b` makes git skip its `branch.autoSetupMerge` tracking, which would silently disable `wt delete`'s unpushed-commits guard and `wt list --status` ↑N for a branch cut from a remote-tracking base. `wt.UpstreamForBase(base, branch)` (a pure lookup, resolved pre-dispatch) decides the upstream git would have set, and `wt.SetUpstream` (`git branch --set-upstream-to=<base> <branch>`) applies it after the add:
+  - **Remote-tracking base only if refspec-mapped**: a base resolving under `refs/remotes/` counts only when some configured remote's `remote.<r>.fetch` refspec destination (glob `*` on the dst side; `+` prefix and multiple values handled) maps onto the full ref — git neither auto-tracks nor accepts `--set-upstream-to` for a stray `refs/remotes/ghost/main` with no covering refspec, so such a base gets no upstream and the create still exits 0.
+  - **`branch.autoSetupMerge` arms**: unset / `true` → a refspec-mapped remote-tracking base is tracked; `always` → a local branch (`refs/heads/…`) base is tracked too; `simple` → a remote-tracking base only when its branch name equals the new branch's; `inherit` → a local base's own upstream is copied when it has one, else none; `false` (also `no`/`off`/`0`) → never.
+  - A SHA, tag, `HEAD`, or empty `--base` never tracks.
+  - **Rollback**: a set-upstream failure maps to `ExitGitError` (3) — `Failed to set upstream '<upstream>' for branch '<branch>'` / `Why:` git's first output line / `Fix: Check that .git/config is writable (no stale config.lock), then retry` — and rolls the new worktree and branch back (`trackUpstream` executes and disarms the rollback), leaving nothing behind.
+- **Known gap**: a create with no `--base` (or `HEAD`) does not replicate git's `always` / `inherit` upstream for a branch-valued HEAD — `UpstreamForBase` returns none for `HEAD`/empty. Default config (`autoSetupMerge` unset) is unaffected, since git never tracks from `HEAD` either.
+
+- **GIVEN** `wt create --non-interactive --name w nb --base origin/main` in a clone
+- **WHEN** it succeeds
+- **THEN** `git rev-parse --abbrev-ref nb@{upstream}` prints `origin/main` and the branch tip is the pinned SHA; with `--base main` (local) and default config `nb` has no upstream.
+
+### `--fetch` refreshes the base's remote before the base is resolved
+
+- `--fetch` is a long-only bool flag. On a new-branch create (positional or bare exploratory) or a `--temp` create, `wt create` runs `git fetch <remote>` after flag-mutex validation, the git-repo check and the `--pr` lookup, and **before** the `--base` (or `--temp`) ref is resolved, so the pinned SHA comes from fresh refs. The fetch is argv-exec'd (no shell) and its output never reaches stdout.
+- **Remote selection** (`wt.RemoteForRef`): the first `/`-separated segment of `--base` (or the `--temp` ref) iff it is a configured remote (`git remote` output), else `origin`. So `--base upstream/main` with an `upstream` remote fetches `upstream`; `--base feature/x` (no `feature` remote), a bare SHA, and no `--base` fetch `origin`. **Known gap**: a fully-qualified `--base refs/remotes/<r>/<branch>` takes `refs` as the first segment, which is not a remote, so it fetches `origin` rather than `<r>`.
+- **Failure**: a non-zero fetch is `ExitGitError` (3): `Error: Failed to fetch remote '<remote>'` / `Why:` the trimmed git output / `Fix:` naming `git remote -v` and dropping `--fetch`. Nothing is created — no worktree directory, no branch.
+- **No-ops**: `--fetch` with `--checkout` or `--pr` (which runs the checkout path) is accepted and runs no separate fetch (a remote-only checkout already fetches via `FetchRemoteBranch`; a local branch is checked out as-is). When `--reuse` takes the reuse path (a colliding `--name`), no fetch runs and the network is not touched. Without `--fetch`, `wt create` runs no `git fetch` of its own.
+- With no `--base`, `--fetch` fetches `origin` and the base stays `HEAD`.
+
+- **GIVEN** a clone whose `origin/main` is one commit behind the bare origin
+- **WHEN** `wt create --base origin/main --fetch` runs
+- **THEN** `git fetch origin` runs first and the new branch's tip is the origin's newest commit; without `--fetch` it is the stale commit.
+
+### `--json` forces non-interactive create and open skip
+
+`--json` (the stdout receipt document — see [`create-output-phases`](/wt-cli/create-output-phases.md)) implies `--non-interactive` and defaults the open phase to `skip`. An explicit `--open` / `--worktree-open` other than `skip` together with `--json` is `ExitInvalidArgs` (2) before any mutation. Under `--json` the `--reuse` hit path reports `mode:"reuse"` with `base_ref`/`base_sha` null and the existing worktree's current branch.
 
 ### Conflicting selectors are hard `ExitInvalidArgs` errors
 
@@ -272,6 +299,8 @@ The check order is `--init`×`--no-init` first, then (when `--temp` is set) posi
 | `wt create --reuse --name X --base Y` | conflict | `ExitInvalidArgs` (2), with or without an existing `X` |
 | `wt create --reuse --base Y` (no `--name`) | conflict | `ExitInvalidArgs` (2), `--reuse requires --name` (checked first) |
 | `wt create --reuse --name X …` (no `--base`) | reuse | reuse on collision; branch selectors NOT consulted |
+| `wt create --fetch …` (fetch fails) | positional / bare | `ExitGitError` (3), nothing created |
+| `wt create --json --open <non-skip>` | conflict | `ExitInvalidArgs` (2) |
 
 `ExitInvalidArgs` = 2, `ExitGitError` = 3 (`git worktree add` failure, including `--detach`), both from
 `src/internal/worktree/errors.go`.
@@ -287,7 +316,7 @@ mode dispatch is exactly as defined above:
 
 | This file's mode | `From:` summary value |
 |------------------|-----------------------|
-| positional new / bare, `--base` given | the `--base` ref verbatim as typed |
+| positional new / bare, `--base` given | `<ref as typed> @ <7-char sha>` (the pinned commit) |
 | positional new / bare, no `--base` | the resolved HEAD label (`DescribeHead()` — current branch, or short SHA when detached) |
 | `--checkout <branch>` (local or remote-only) | `existing branch '<branch>' (checked out directly)` |
 | `--pr <n>` | `PR #<n> (existing branch '<head>')` |
@@ -304,8 +333,8 @@ best-effort `DescribeHead()` helper) lives in [`create-output-phases`](/wt-cli/c
 also satisfies the requirement — see
 [flag-naming-conventions](/wt-cli/flag-naming-conventions.md)), and on
 name collision it reuses the existing worktree **without consulting any branch selector**
-(positional / `--checkout`). The reuse short-circuit sits *before* the branch-dispatch switch, so
-a reused worktree's branch is never re-derived. `--base` is not a selector `--reuse` can ignore —
+(positional / `--checkout` / `--fetch`). The reuse hit is computed up front (the final name is known because `--reuse` requires `--name`) and sits *before* the fetch, the base resolution, and the branch-dispatch
+switch, so a reused worktree's branch is never re-derived and no network call is made. `--base` is not a selector `--reuse` can ignore —
 the combination is a hard conflict (see "Conflicting selectors" above). (Init-on-reuse remains
 warn-but-continue — see `/wt-cli/init-failure-contract.md`.)
 
@@ -338,11 +367,11 @@ Mode-explicit functions in `src/internal/worktree/crud.go` own the existence dis
 the branch-existence business rule lives in `internal/` and `cmd/` only routes flags
 (Constitution V). There is deliberately no combined create-or-checkout entry point.
 
-- `CreateNewBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback, startPoint string) (string, error)`
+- `CreateNewBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback, startPoint, upstream string) (string, error)`
   — returns the sentinel `ErrBranchExists` and creates nothing when `BranchExistsLocally(branch)
   || BranchExistsRemotely(branch)`; otherwise runs the new-branch path (`git worktree add -b`
-  from `startPoint`, else HEAD) and registers **both** rollbacks: worktree removal AND
-  `git branch -D <branch>` (the branch is newly created, so it must be torn down on rollback).
+  from `startPoint` — a pinned SHA), applies `upstream` (when non-empty) via `trackUpstream`, and registers **both** rollbacks: worktree removal AND
+  `git branch -D <branch>` (the branch is newly created, so it must be torn down on rollback). Rollback runs **LIFO**, so `registerNewBranchRollback` registers `git branch -D` **before** `git worktree remove --force`: the worktree is removed first, then the branch (git refuses to delete a branch still checked out in a worktree). `CreateExploratoryWorktree` registers in the same order.
 - `CheckoutBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback) (string, error)`
   — takes **no** `startPoint` (a checkout of an existing branch has no start-point). Local branch
   → checkout as-is; remote-only → `FetchRemoteBranch` then checkout; neither → returns the
@@ -358,8 +387,7 @@ the branch-existence business rule lives in `internal/` and `cmd/` only routes f
   `git worktree add --detach <path> <sha>`, and registers **only** worktree removal on rollback.
   It writes no git config. Name helpers (`TempNamePrefix = "tmp-"`, `TempName`,
   `GenerateUniqueNameWithPrefix`, `IsTempWorktree`) live in `names.go`.
-- `CreateExploratoryWorktree` (the bare path) is untouched. The reused `git.go` helpers
-  (`BranchExistsLocally` / `BranchExistsRemotely` / `FetchRemoteBranch`) are unchanged.
+- `CreateExploratoryWorktree(name, ctx, rb, startPoint, upstream)` (the bare path) takes the same pinned `startPoint` and `upstream`. The `git.go` helpers `RemoteForRef`, `FetchRemote`, `ResolveCommit`, `ShortSHA`, `UpstreamForBase`, and `SetUpstream` (with its `*SetUpstreamError`) serve the base pipeline; `BranchExistsLocally` / `BranchExistsRemotely` / `FetchRemoteBranch` are reused unchanged. All of these git operations live in `internal/worktree` (Constitution V); `cmd/create.go` only orchestrates and maps errors.
 
 Because the existence check lives inside the internal function and the function creates no
 worktree on the error path, the "before any worktree mutation" guarantee holds without any
@@ -448,6 +476,20 @@ on a wrong assumption); reject only on collision (the outcome would depend on fi
 the caller cannot see from its own argv).
 *Introduced by*: `261123-udcv-reuse-base-usage-error`.
 
+### Pin the new-branch start-point to a resolved SHA, restoring upstream explicitly
+
+**Decision**: the start-point is always `rev-parse --verify <base|HEAD>^{commit}`, resolved once pre-dispatch and passed as a SHA to `git worktree add -b`; the upstream git would have auto-set from a ref name is computed pre-dispatch (`UpstreamForBase`) and written after the add (`SetUpstream`), inside the rollback scope.
+**Why**: the branch cannot move with the ref mid-command, and the receipt's `base_sha` is exactly the commit the branch was cut from. A SHA start-point loses git's `branch.autoSetupMerge` tracking, which silently disabled `wt delete`'s unpushed-commits guard and `wt list --status` ↑N, so the tracking is restored per the same config arms and refspec-mapping rule git applies — a data-safety requirement, not a nicety.
+**Rejected**: passing the ref name (racy; `base_sha` could disagree with the branch); dropping the upstream (a data-safety regression); setting upstream for any `refs/remotes/` ref (git rejects a ref no remote's refspec maps — would turn a git exit 0 into exit 3); resolving the upstream decision after the add (a lookup has no reason to sit inside the post-add window).
+*Introduced by*: `261123-xhgg-create-fetch-json-receipt` (plan `fab/plans/sahil/26-11-23-worktree-base-receipts.md`, step W1).
+
+### `--fetch` runs before base resolution and fails closed
+
+**Decision**: `--fetch` runs `git fetch <RemoteForRef(base)>` before the base is resolved, as a flag rather than default behavior; a failed fetch is `ExitGitError` with nothing created; it is a no-op for `--checkout` and a taken `--reuse`.
+**Why**: a branch cut from a stale `origin/main` is the failure the flag exists to prevent, so the fetch must precede the pin; failing closed keeps a user who asked for fresh refs from silently getting stale ones. Making it opt-in keeps `wt create` offline-capable and byte-compatible for existing callers (a default fetch would add a network dependency to every create).
+**Rejected**: fetching by default (network dependency on every create); falling back to the local ref when the fetch fails (silently stale); fetching after resolution (pins the stale SHA).
+*Introduced by*: `261123-xhgg-create-fetch-json-receipt` (plan `fab/plans/sahil/26-11-23-worktree-base-receipts.md`, step W1).
+
 ### Keep the positional (new-branch-only) rather than remove it
 **Decision**: the positional survives with exactly one meaning (name a NEW branch); an existing
 local/remote name is a hard error pointing at `--checkout`.
@@ -488,16 +530,16 @@ list names only the positional, `--checkout`, `--reuse`, and `--pr`.
   incl. `--checkout`, new-branch-only positional, exit-code notes) and
   [`docs/specs/worktree-layout.md`](../../specs/worktree-layout.md) § Branch ↔ worktree
   relationship (case 1 new-branch, case 2 keyed to `--checkout`).
-- Source: `src/cmd/wt/create.go` (`--checkout` flag, the three flag-mutex checks, the simplified
-  `--base` validation, `ValidateBranchName` on positional-or-`--checkout`, `DeriveWorktreeName`
+- Source: `src/cmd/wt/create.go` (`--checkout` / `--fetch` / `--json` flags, the three flag-mutex checks, the up-front reuse-hit computation, the `--fetch` step, the pre-dispatch base resolution to a pinned SHA + upstream lookup, `ValidateBranchName` on positional-or-`--checkout`, `DeriveWorktreeName`
   suggestion, the create-dispatch switch mapping the sentinels, the generalized init-confirm
   gate, the `Long` help text); `src/internal/worktree/crud.go`
   (`CreateNewBranchWorktree` / `CheckoutBranchWorktree` / `CreateTempWorktree`,
-  `ErrBranchExists` / `ErrBranchNotFound`, `CreateExploratoryWorktree` untouched);
-  `src/internal/worktree/names.go` (`TempNamePrefix`, `TempName`, `GenerateUniqueNameWithPrefix`,
-  `IsTempWorktree`); `src/internal/worktree/git.go`
-  (`BranchExistsLocally` / `BranchExistsRemotely` / `FetchRemoteBranch`, reused; `ResolveCommit` /
-  `ShortSHA` for `--temp`);
+  `ErrBranchExists` / `ErrBranchNotFound`, `CreateExploratoryWorktree`, `registerNewBranchRollback`,
+  `trackUpstream`); `src/internal/worktree/names.go` (`TempNamePrefix`, `TempName`,
+  `GenerateUniqueNameWithPrefix`, `IsTempWorktree`); `src/internal/worktree/git.go`
+  (`BranchExistsLocally` / `BranchExistsRemotely` / `FetchRemoteBranch` reused; `ResolveCommit` /
+  `ShortSHA` shared by `--temp` and the base pin; `RemoteForRef`, `FetchRemote`, `UpstreamForBase`,
+  `SetUpstream` — `261123-xhgg`);
   `src/internal/worktree/context.go` (`ValidateBranchName`, `DeriveWorktreeName`);
   `src/internal/worktree/errors.go` (`ExitInvalidArgs`, `ExitGitError`, `ExitWithError`).
 - `--pr` source and tests: `src/internal/worktree/pr.go` (`ResolvePRHead`, `PRHead`,
@@ -507,7 +549,7 @@ list names only the positional, `--checkout`, `--reuse`, and `--pr`.
   missing, gh failure, head not found) and `src/cmd/wt/integration_test.go`
   (`TestIntegration_CreatePR_RemoteOnlyHead`), via the `writeGhStub` helper in
   `src/cmd/wt/testutil_test.go`.
-- Tests: `src/cmd/wt/create_test.go` (positional-existing local/remote → exit 2, `--checkout`
+- Tests: `src/cmd/wt/integration_test.go` (`261123-xhgg`: bare-origin + clone fixture proving `--fetch` picks up a commit pushed after the clone's last fetch, the stale commit without it, fetch failure exit 3 with nothing created, `--fetch --checkout` no-op); `src/cmd/wt/create_test.go` (`261123-xhgg`: base pin, upstream restoration, `ghost/main` stray remote-tracking ref, set-upstream failure rollback, the `--reuse` + `--base` conflict as a `--json` failure document; positional-existing local/remote → exit 2, `--checkout`
   local/remote-only success, `--checkout` missing → exit 2, `--checkout`+`--base` → exit 2,
   `--checkout`+positional → exit 2, `--reuse`+`--base` → exit 2 with/without collision and with
   an invalid ref, `--reuse`+`--base` without `--name`; the removed `--base`-with-existing-branch

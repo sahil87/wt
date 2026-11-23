@@ -1,0 +1,58 @@
+id: xhgg
+name: 261123-xhgg-create-fetch-json-receipt
+created: 2026-11-23T15:04:49Z
+created_by: sahil-noon
+change_type: feat
+issues: []
+progress:
+    intake: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: done
+    review-pr: pending
+plan:
+    generated: true
+    task_count: 13
+    acceptance_count: 28
+    acceptance_completed: 28
+confidence:
+    certain: 2
+    confident: 11
+    tentative: 0
+    unresolved: 0
+    score: 3.0
+    fuzzy: true
+    dimensions:
+        signal: 66.9
+        reversibility: 79.6
+        competence: 73.8
+        disambiguation: 63.8
+stage_metrics:
+    intake: {started_at: "2026-11-23T15:04:49Z", driver: fab-new, iterations: 1, completed_at: "2026-11-23T15:12:41Z"}
+    apply: {started_at: "2026-11-23T15:48:25Z", driver: fab-fff, iterations: 4, completed_at: "2026-11-23T15:51:04Z"}
+    review: {started_at: "2026-11-23T15:51:04Z", driver: fab-fff, iterations: 4, completed_at: "2026-11-23T15:55:49Z"}
+    hydrate: {started_at: "2026-11-23T15:55:49Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T15:59:06Z"}
+    ship: {started_at: "2026-11-23T15:59:06Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T15:59:48Z"}
+prs:
+    - https://github.com/sahil87/wt/pull/64
+change_type_source: explicit
+base_branch: main
+true_impact:
+    added: 2052
+    deleted: 116
+    net: 1936
+    excluding:
+        added: 1364
+        deleted: 65
+        net: 1299
+    tests:
+        added: 808
+        deleted: 1
+        net: 807
+    computed_at: "2026-11-23T15:59:48Z"
+    computed_at_stage: ship
+summary: 'wt create --fetch and --json receipt: pinned base SHA with restored upstream, From: <ref> @ <sha>, exactly-once JSON document, init outcome variant'
+# base_branch: written by /git-branch or /fab-new when the change's branch is created (no placeholder here).
+# true_impact: lazily created on first stage-finish that computes it (no placeholder here).
+last_updated: 2026-11-23T15:59:48Z
