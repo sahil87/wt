@@ -8,8 +8,8 @@ progress:
     intake: done
     apply: done
     review: done
-    hydrate: active
-    ship: pending
+    hydrate: done
+    ship: active
     review-pr: pending
 plan:
     generated: true
@@ -32,23 +32,25 @@ stage_metrics:
     intake: {started_at: "2026-11-23T15:03:57Z", driver: fab-new, iterations: 1, completed_at: "2026-11-23T15:12:42Z"}
     apply: {started_at: "2026-11-23T15:12:42Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T15:17:45Z"}
     review: {started_at: "2026-11-23T15:17:45Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T15:20:14Z"}
-    hydrate: {started_at: "2026-11-23T15:20:14Z", driver: fab-fff, iterations: 1}
+    hydrate: {started_at: "2026-11-23T15:20:14Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T15:22:09Z"}
+    ship: {started_at: "2026-11-23T15:22:09Z", driver: fab-fff, iterations: 1}
 prs: []
 base_branch: main
 true_impact:
-    added: 0
-    deleted: 0
-    net: 0
+    added: 556
+    deleted: 45
+    net: 511
     excluding:
-        added: 0
-        deleted: 0
-        net: 0
+        added: 113
+        deleted: 38
+        net: 75
     tests:
-        added: 0
-        deleted: 0
-        net: 0
-    computed_at: "2026-11-23T15:17:45Z"
-    computed_at_stage: apply
+        added: 89
+        deleted: 24
+        net: 65
+    computed_at: "2026-11-23T15:22:10Z"
+    computed_at_stage: hydrate
+summary: 'wt create: --reuse + --base is now an ExitInvalidArgs conflict (unconditional on collision) instead of --reuse silently winning'
 # base_branch: written by /git-branch or /fab-new when the change's branch is created (no placeholder here).
 # true_impact: lazily created on first stage-finish that computes it (no placeholder here).
-last_updated: 2026-11-23T15:20:14Z
+last_updated: 2026-11-23T15:22:10Z

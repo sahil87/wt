@@ -1,6 +1,6 @@
 ---
 type: memory
-description: "The `wt create` branch-selection contract — positional = new-branch-only, `--checkout` = existing-branch opt-in, `--base` = new-branch start-point, the conflict/exit-code matrix, and the internal seam (CreateNewBranchWorktree / CheckoutBranchWorktree + sentinel errors)."
+description: "The `wt create` branch-selection contract — positional = new-branch-only, `--checkout` = existing-branch opt-in, `--base` = new-branch start-point (conflicts with `--checkout` and `--reuse`), the conflict/exit-code matrix, and the internal seam (CreateNewBranchWorktree / CheckoutBranchWorktree + sentinel errors)."
 ---
 # wt-cli: Create Branch-Selection Contract
 
@@ -82,11 +82,12 @@ short and fails closed on an existing name (260717-2af2).
 ### `--base <ref>` is the NEW-branch start-point; it always applies to the positional
 
 - `--base` is the git start-point (branch / tag / SHA) for the **new** branch, validated via
-  `git rev-parse --verify` whenever it is set and `--reuse` is not. Because the positional is
-  *always* a new branch, `--base` always applies to it — there is no warn-and-ignore path.
-- Validation is a single guard: `if base != "" && !reuse { git rev-parse --verify <base> }`.
-  `--reuse` short-circuits before `--base` is validated, so `wt create --reuse --name X --base
-  <bad-ref>` on an existing worktree reuses without failing on the ref.
+  `git rev-parse --verify` whenever it is set. Because the positional is *always* a new branch,
+  `--base` always applies to it — there is no warn-and-ignore path.
+- Validation is a single guard: `if base != "" { git rev-parse --verify <base> }`. Both
+  combinations that would leave `--base` with no new branch to apply to (`--checkout` + `--base`,
+  `--reuse` + `--base`) are rejected earlier as argument conflicts, so any `--base` reaching the
+  guard applies to a new branch (positional or bare).
 
 - **GIVEN** `--base <bad-ref>` with a new positional branch and no `--reuse`
 - **WHEN** the user runs `wt create newbranch --base bad-ref`
@@ -95,10 +96,11 @@ short and fails closed on an existing name (260717-2af2).
 
 ### Conflicting selectors are hard `ExitInvalidArgs` errors
 
-Two flag combinations select contradictory modes and each exits `ExitInvalidArgs` (2) — matching
-the documented exit-2 class "mutually exclusive flags". Both are pure argument-parsing checks
-(no git state), validated in `cmd/create.go` **before** any git work, alongside the existing
-`--reuse` mutex check:
+Three flag combinations select contradictory modes and each exits `ExitInvalidArgs` (2) —
+matching the documented exit-2 class "mutually exclusive flags". All are pure argument-parsing
+checks (no git state), validated in `cmd/create.go` **before** any git work (before
+`ValidateGitRepo`, rollback setup, branch-name and `--base` ref validation), after the
+`--reuse requires --name` check:
 
 - `--checkout` + a positional arg:
   - what: `--checkout cannot be combined with a positional branch argument`
@@ -108,6 +110,15 @@ the documented exit-2 class "mutually exclusive flags". Both are pure argument-p
   - what: `--base cannot be combined with --checkout`
   - why: `--base is the start-point for a NEW branch; --checkout targets an existing branch`
   - fix: `Drop --base, or create a new branch: wt create <name> --base <ref>`
+- `--reuse` + `--base`:
+  - what: `--reuse and --base cannot be combined`
+  - why: `--reuse keeps the existing worktree's branch, so a start-point has nothing to apply to`
+  - fix: `Drop --base, or drop --reuse to create a new worktree`
+
+  The `--reuse` + `--base` conflict is **unconditional on name collision**: it fires whether or
+  not a worktree named `--name` exists, so the outcome never depends on filesystem state the
+  caller cannot see in its own argv. A non-empty `--base` is the trigger (an explicit
+  `--base ""` reads as unset, like the `--checkout` + `--base` check).
 
 - **GIVEN** `--checkout` and a positional arg
 - **WHEN** the user runs `wt create --checkout foo bar`
@@ -116,6 +127,15 @@ the documented exit-2 class "mutually exclusive flags". Both are pure argument-p
 - **GIVEN** `--checkout` and `--base`
 - **WHEN** the user runs `wt create --checkout foo --base main`
 - **THEN** the command exits `ExitInvalidArgs` (2) with the combined-with-`--base` copy.
+
+- **GIVEN** `--reuse --name X --base <ref>`, whether or not worktree `X` exists
+- **WHEN** the user runs it
+- **THEN** the command exits `ExitInvalidArgs` (2) with the `--reuse and --base` copy, nothing on
+  stdout, no worktree or branch created, and an existing `X` untouched (no reuse, no init).
+
+- **GIVEN** `--reuse --name X --base <bad-ref>`
+- **WHEN** the user runs it
+- **THEN** it reports the conflict, not `Invalid --base ref` (the conflict check runs first).
 
 ### Exit-code / mode matrix
 
@@ -129,7 +149,9 @@ the documented exit-2 class "mutually exclusive flags". Both are pure argument-p
 | `wt create --checkout X <pos>` | conflict | `ExitInvalidArgs` (2) |
 | `wt create --checkout X --base Y` | conflict | `ExitInvalidArgs` (2) |
 | `wt create <new> --base <bad>` | positional, new | `ExitInvalidArgs` (2), invalid `--base` |
-| `wt create --reuse --name X …` | reuse | reuse on collision; branch selectors NOT consulted |
+| `wt create --reuse --name X --base Y` | conflict | `ExitInvalidArgs` (2), with or without an existing `X` |
+| `wt create --reuse --base Y` (no `--name`) | conflict | `ExitInvalidArgs` (2), `--reuse requires --name` (checked first) |
+| `wt create --reuse --name X …` (no `--base`) | reuse | reuse on collision; branch selectors NOT consulted |
 
 `ExitInvalidArgs` = 2, `ExitGitError` = 3 (`git worktree add` failure), both from
 `src/internal/worktree/errors.go`.
@@ -154,14 +176,15 @@ The line's full contract (stderr-only, pre-dispatch resolution outside the reins
 best-effort `DescribeHead()` helper) lives in [`create-output-phases`](/wt-cli/create-output-phases.md)
 "The Git-phase summary block carries a fourth `From:` line".
 
-### `--reuse` is unchanged
+### `--reuse` keeps the existing worktree as-is
 
 `--reuse` requires `--name` (the worktree-name flag; its deprecated alias `--worktree-name`
 also satisfies the requirement — see
 [flag-naming-conventions](/wt-cli/flag-naming-conventions.md)), and on
 name collision it reuses the existing worktree **without consulting any branch selector**
-(positional / `--checkout` / `--base`). The reuse short-circuit sits *before* the branch-dispatch
-switch, so a reused worktree's branch is never re-derived. (Init-on-reuse remains
+(positional / `--checkout`). The reuse short-circuit sits *before* the branch-dispatch switch, so
+a reused worktree's branch is never re-derived. `--base` is not a selector `--reuse` can ignore —
+the combination is a hard conflict (see "Conflicting selectors" above). (Init-on-reuse remains
 warn-but-continue — see `/wt-cli/init-failure-contract.md`.)
 
 - **GIVEN** `--reuse` without `--name` (or the deprecated `--worktree-name`)
@@ -251,15 +274,28 @@ sentinel is free — no second git query, no rule leaking into the thin layer.
 *Introduced by*: `260717-2af2-explicit-base-checkout-flags`.
 
 ### Flag-mutex validation in `cmd/`, existence rules in `internal/`
-**Decision**: the `--checkout`+positional and `--checkout`+`--base` conflicts are validated in
-`cmd/create.go` (next to the existing `--reuse` mutex check), while branch-existence checks live
-in `internal/`.
+**Decision**: the `--checkout`+positional, `--checkout`+`--base` and `--reuse`+`--base`
+conflicts are validated in `cmd/create.go` (next to the `--reuse requires --name` check), while
+branch-existence checks live in `internal/`.
 **Why**: the mutex conflicts are pure argument-parsing concerns with no git state; the existence
 checks are worktree business rules with git dependencies. Splitting them along that line keeps
 each concern where it belongs.
 **Rejected**: pushing the mutex checks into `internal/` (they have no git dependency, so they do
 not belong with the worktree logic).
 *Introduced by*: `260717-2af2-explicit-base-checkout-flags`.
+
+### `--reuse` + `--base` is a hard conflict, not silent precedence
+**Decision**: `wt create --reuse --base <ref>` exits `ExitInvalidArgs` (2) before any git work,
+unconditionally (not only on a name collision), mirroring the `--checkout` + `--base` conflict.
+**Why**: silent precedence let a caller believe it got a worktree cut from `<ref>` when it got an
+existing worktree on whatever base it had — and the `--json` receipt / recorded base planned
+alongside report no base for a reuse, so the mismatch would only surface downstream (a PR diff
+full of unrelated commits). `--base` now only ever pairs with creating a new branch. Plan
+`fab/plans/sahil/26-11-23-worktree-base-receipts.md`, step W3.
+**Rejected**: keep `--reuse` precedence (the documented gotcha); warn-and-ignore (scripts proceed
+on a wrong assumption); reject only on collision (the outcome would depend on filesystem state
+the caller cannot see from its own argv).
+*Introduced by*: `261123-udcv-reuse-base-usage-error`.
 
 ### Keep the positional (new-branch-only) rather than remove it
 **Decision**: the positional survives with exactly one meaning (name a NEW branch); an existing
@@ -278,7 +314,7 @@ author — hence the hard break above).
   incl. `--checkout`, new-branch-only positional, exit-code notes) and
   [`docs/specs/worktree-layout.md`](../../specs/worktree-layout.md) § Branch ↔ worktree
   relationship (case 1 new-branch, case 2 keyed to `--checkout`).
-- Source: `src/cmd/wt/create.go` (`--checkout` flag, the two flag-mutex checks, the simplified
+- Source: `src/cmd/wt/create.go` (`--checkout` flag, the three flag-mutex checks, the simplified
   `--base` validation, `ValidateBranchName` on positional-or-`--checkout`, `DeriveWorktreeName`
   suggestion, the create-dispatch switch mapping the sentinels, the generalized init-confirm
   gate, the `Long` help text); `src/internal/worktree/crud.go`
@@ -289,9 +325,10 @@ author — hence the hard break above).
   `src/internal/worktree/errors.go` (`ExitInvalidArgs`, `ExitGitError`, `ExitWithError`).
 - Tests: `src/cmd/wt/create_test.go` (positional-existing local/remote → exit 2, `--checkout`
   local/remote-only success, `--checkout` missing → exit 2, `--checkout`+`--base` → exit 2,
-  `--checkout`+positional → exit 2; the removed `--base`-with-existing-branch warn tests);
+  `--checkout`+positional → exit 2, `--reuse`+`--base` → exit 2 with/without collision and with
+  an invalid ref, `--reuse`+`--base` without `--name`; the removed `--base`-with-existing-branch warn tests);
   `src/cmd/wt/integration_test.go` (`TestIntegration_BranchDeletePreservesOthers` on an existing
-  branch via `--checkout`); `src/cmd/wt/edge_test.go` (`TestEdge_BranchWithSpecialChars` via
+  branch via `--checkout`; `TestIntegration_ReuseWithBaseConflict` end-to-end); `src/cmd/wt/edge_test.go` (`TestEdge_BranchWithSpecialChars` via
   `--checkout`; `TestEdge_BranchWithSlashes` stays a new-branch positional).
 - Constitution: Principle III (Typed Exit Codes — the conflict/existence errors map to
   `ExitInvalidArgs`, never ad-hoc integers), Principle V (Internal Package Boundary — existence
