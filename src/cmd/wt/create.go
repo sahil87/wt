@@ -549,6 +549,19 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 				}
 			}
 
+			// failIfRecordBase maps a post-add record-base failure (already
+			// rolled back by internal/worktree) to its own exit-3 copy.
+			failIfRecordBase := func(err error) {
+				var recErr *wt.RecordBaseError
+				if errors.As(err, &recErr) {
+					why, _, _ := strings.Cut(recErr.Output, "\n")
+					fail(wt.ExitGitError,
+						fmt.Sprintf("Failed to record base for branch '%s'", recErr.Branch),
+						why,
+						"Check that .git/config is writable (no stale config.lock), then retry")
+				}
+			}
+
 			// The upstream git would have auto-tracked had it been given the ref
 			// name rather than the pinned SHA: a pure lookup resolved here, before
 			// the dispatch, so only the write happens after the worktree add.
@@ -588,7 +601,7 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 				}
 				createdSummaryBranch = checkout
 			case branchArg != "":
-				wtPath, err = wt.CreateNewBranchWorktree(branchArg, finalName, ctx, rb, baseSHA, baseUpstream)
+				wtPath, err = wt.CreateNewBranchWorktree(branchArg, finalName, ctx, rb, baseRefLabel, baseSHA, baseUpstream)
 				if err != nil {
 					if errors.Is(err, wt.ErrBranchExists) {
 						fail(wt.ExitInvalidArgs,
@@ -597,14 +610,16 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 							fmt.Sprintf("To put a worktree on the existing branch: wt create --checkout %s", branchArg))
 					}
 					failIfSetUpstream(err)
+					failIfRecordBase(err)
 					fail(wt.ExitGitError, "Failed to create worktree", err.Error(),
 						"The branch may already be checked out in another worktree")
 				}
 				createdSummaryBranch = branchArg
 			default:
-				wtPath, err = wt.CreateExploratoryWorktree(finalName, ctx, rb, baseSHA, baseUpstream)
+				wtPath, err = wt.CreateExploratoryWorktree(finalName, ctx, rb, baseRefLabel, baseSHA, baseUpstream)
 				if err != nil {
 					failIfSetUpstream(err)
+					failIfRecordBase(err)
 					fail(wt.ExitGitError, "Failed to create worktree", err.Error(),
 						"Check if the branch already exists or if there are permission issues")
 				}

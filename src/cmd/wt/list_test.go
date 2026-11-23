@@ -1134,3 +1134,56 @@ func TestList_HumanShowsDetachedForTemp(t *testing.T) {
 		}
 	}
 }
+
+// TestList_JSONBase_RecordedAndNull: a wt-created worktree carries its recorded
+// base; main (and any unrecorded branch) carries present-null keys, with and
+// without --status.
+func TestList_JSONBase_RecordedAndNull(t *testing.T) {
+	repo := createTestRepo(t)
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--no-init", "--open", "skip", "--name", "based-wt", "--base", "main", "based-br")
+	gitRun(t, repo, "branch", "plain")
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--no-init", "--open", "skip", "--checkout", "plain")
+	wantSHA := gitRun(t, repo, "rev-parse", "main")
+
+	for _, args := range [][]string{{"list", "--json"}, {"list", "--json", "--status"}} {
+		entries := parseJSONList(t, runWtSuccess(t, repo, nil, args...).Stdout)
+		seen := map[string]bool{}
+		for _, e := range entries {
+			name, _ := e["name"].(string)
+			base, hasBase := e["base"]
+			sha, hasSHA := e["base_sha"]
+			if !hasBase || !hasSHA {
+				t.Errorf("%v: %s missing base keys: %v", args, name, e)
+				continue
+			}
+			seen[name] = true
+			switch name {
+			case "based-wt":
+				if base != "main" || sha != wantSHA {
+					t.Errorf("%v: based-wt base=%v base_sha=%v, want main/%s", args, base, sha, wantSHA)
+				}
+			default:
+				if base != nil || sha != nil {
+					t.Errorf("%v: %s base=%v base_sha=%v, want null/null", args, name, base, sha)
+				}
+			}
+		}
+		for _, n := range []string{"main", "based-wt", "plain"} {
+			if !seen[n] {
+				t.Errorf("%v: entry %q not found", args, n)
+			}
+		}
+	}
+}
+
+func TestList_Human_NoBaseOutput(t *testing.T) {
+	repo := createTestRepo(t)
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--no-init", "--open", "skip", "--name", "based-wt", "--base", "main", "based-br")
+
+	for _, args := range [][]string{{"list"}, {"list", "--status"}} {
+		out := runWtSuccess(t, repo, nil, args...).Stdout
+		assertNotContains(t, out, "wt-base")
+		assertNotContains(t, out, "BASE")
+		assertNotContains(t, out, " Base ")
+	}
+}

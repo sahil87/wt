@@ -1,11 +1,11 @@
 ---
 type: memory
-description: "`wt list` output contract — enrichment-free default, `--status` opt-in dashboard, `--sort` ordering, pointer-field JSON shape, and the always-present `temp` key (subprocess-free temp predicate, `branch: null` for temp records)."
+description: "`wt list` output contract — enrichment-free default, `--status` opt-in dashboard, `--sort` ordering, pointer-field JSON shape, the always-present `temp` key (subprocess-free temp predicate, `branch: null` for temp records), and the `--json`-only recorded `base`/`base_sha` keys (one extra constant git call)."
 ---
 # wt-cli: List Status Contract
 
 > Post-implementation behavior capture for the `wt list` status-opt-in cleanup.
-> Source changes: `260516-lfa8-list-status-opt-in`, `261123-gcos-create-temp-detached-worktree` (temp marking).
+> Source changes: `260516-lfa8-list-status-opt-in`, `261123-gcos-create-temp-detached-worktree` (temp marking), `261123-o7jg` (recorded base).
 
 This file documents the contract that `wt list` honors after the status-opt-in change. Future changes touching `cmd/wt/list.go` should preserve these invariants unless an explicit spec amendment supersedes them.
 
@@ -13,7 +13,7 @@ This file documents the contract that `wt list` honors after the status-opt-in c
 
 ### Default mode is enrichment-free
 
-- Default `wt list` (no flags, or with `--json` only) SHALL invoke exactly **one** `git` subprocess: `git worktree list --porcelain`. It MUST NOT invoke `git diff`, `git diff --cached`, `git ls-files`, `git rev-parse`, `git rev-list`, or `git status` against any worktree directory.
+- Default human `wt list` (no flags) SHALL invoke exactly **one** `git` subprocess: `git worktree list --porcelain`. `wt list --json` (without `--status`) invokes exactly **two**: that same call plus one `git config -z --get-regexp` that reads every recorded base (see "`base` / `base_sha` recorded-base fields" below) — constant regardless of worktree count. Neither mode MAY invoke `git diff`, `git diff --cached`, `git ls-files`, `git rev-parse`, `git rev-list`, or `git status` against any worktree directory, and neither forks any per-worktree subprocess.
 - The cheap code path is `listEntriesBasic(ctx)`. It builds `[]listEntry` from `listWorktreeEntries()` + name/path/branch/is_main/is_current/temp — nothing else (`temp` is derived from data the porcelain already supplied; see "`temp` key" below).
 - An unreadable worktree (broken symlink, permissions error on `.git`) MUST NOT surface an error in default mode, because no per-worktree work runs.
 
@@ -208,6 +208,13 @@ This file documents the contract that `wt list` honors after the status-opt-in c
   Status / Last Active / Path); the recent-mode human table renders 4 columns (Name /
   Branch / Last Active / Path).
 
+### `base` / `base_sha` recorded-base fields
+
+- `listEntry` has `Base *string` (`json:"base"`) and `BaseSHA *string` (`json:"base_sha"`) with **no** `omitempty`: both keys are present in every `--json` record, with or without `--status`, and are `null` when no base is recorded — every pre-existing worktree, the main worktree on an unrecorded branch, a `--checkout` worktree, and a detached worktree. Consumers MUST read `null` as "no recorded base", never as an empty string.
+- Values come from the branch's git config, written by `wt create` for branches it created (see [`create-branch-semantics`](/wt-cli/create-branch-semantics.md)): `base` = `branch.<b>.wt-base` (the `--base` ref as typed, or the HEAD label), `base_sha` = `branch.<b>.wt-base-sha` (full 40-hex SHA).
+- **One constant-cost read**: `wt.RecordedBases()` runs a single `git config -z --get-regexp '^branch\..*\.wt-base(-sha)?$'` and parses the NUL-separated `key\nvalue` records into a `map[branch]RecordedBase`, stripping the `branch.` prefix and the `.wt-base` / `.wt-base-sha` suffix from the right so branch names containing dots or slashes parse correctly. `attachRecordedBases` joins it onto entries by `Branch`, skipping `(detached)`. A missing match (git exit 1), any git failure, or a half-recorded branch degrades to nulls for that data — never an error exit.
+- **JSON path only**: the read happens only when `--json` is set. Human `wt list` / `wt list --status` and `--path` do not read it, so human output is unchanged and there is no `BASE` column.
+
 ### `idle` opt-in pointer field
 
 - `listEntry` has `Idle *bool` with the `json:"idle,omitempty"` tag (260530-5fyu) — the **same
@@ -321,6 +328,13 @@ idle predicate itself (`wt.IsIdle`, `wt.DefaultIdleThreshold`) lives in
 `internal/worktree` and is shared with `wt delete` — see
 `wt-cli/idle-staleness-contract.md`. (260530-5fyu)
 
+### Recorded base is JSON-only, with one constant git call
+
+**Decision**: `base`/`base_sha` are always-present nullable keys on the `--json` path only, read by a single `git config --get-regexp` (so `wt list --json` is exactly two git subprocesses and human `wt list` stays at one); `--status` gains no column in v1.
+**Why**: the one-subprocess rule exists to forbid per-worktree O(N) git calls on the cheap default path; one constant-cost config read preserves that purpose while giving machine consumers (`hop ls --trees`, hexokit, `fab`) the PR base without a second command. Null-not-absent mirrors the keys-present contract of the `--status` fields, so consumers need no presence check. Keeping it off the human path leaves the default view byte-stable and free of any new subprocess.
+**Rejected**: a per-worktree `git config` read (O(N) subprocesses); omitting keys when unset (consumers cannot tell "unrecorded" from "old wt"); a `BASE` column in `--status` or the default view (widens a table whose users did not ask for it, and costs the default path a subprocess); making the read failure an error (list is a read-only dashboard — an unreadable base is non-actionable).
+*Introduced by*: `261123-o7jg-create-recorded-base-list-json` (plan `fab/plans/sahil/26-11-23-worktree-base-receipts.md`, step W2).
+
 ### Persist the recency key vs. re-stat in the render path
 
 The recent-mode `Last Active` column displays the recency key `sortEntries` already
@@ -366,6 +380,7 @@ relative buckets).
 - Spec doc: `docs/specs/cli-surface.md` — `wt list` section (lines ~52-73, flag table + prose).
 - Source: `src/cmd/wt/list.go` — `listEntry` (now with `LastActive *time.Time` and `Idle *bool`), `listCmd`, `listEntriesBasic`, `listEntriesEnriched`, `buildBaseEntry`, `checkDirty`, `getUnpushedInDir`, `maxListConcurrency`, plus the `261123-gcos` additions (`listEntry.Temp`, `listEntry.MarshalJSON`, `rawEntry.detached`), plus the `260530-rtmf` additions: `sortMode`, `isValidSort`, `resolveSort`, `sortEntries`, `relativeTime`. `260601-73cv` changed `sortEntries(entries, mode, persistKey bool)` and `handleFormattedOutput(entries, ctx, showStatus, mode sortMode)`, and added the 4-column recent-layout rendering branch in `handleFormattedOutput`. `260530-5fyu` added the `Idle *bool` field, `populateIdle`, and the `⚠ idle` marker (with displayWidth-based `lastActivePad`) in the 4-column and 5-column branches.
 - Source: `src/internal/worktree/names.go` — `TempNamePrefix`, `IsTempWorktree` (the pure temp predicate); `src/internal/worktree/worktree.go` — `DetachedBranchLabel`.
+- Source: `src/internal/worktree/base.go` — `RecordedBases`, `parseRecordedBases`, `RecordedBase` (the single `git config` read behind `base`/`base_sha`); `src/cmd/wt/list.go` — `attachRecordedBases` (`261123-o7jg`). Tests: `src/cmd/wt/list_test.go` (`TestList_JSONBase_RecordedAndNull`, `TestList_Human_NoBaseOutput`), `src/internal/worktree/base_test.go`.
 - Source: `src/internal/worktree/recency.go` — `RecencyOf`, `RecencyLess`, `SortByRecency` (the shared comparator consumed by `sortEntries`).
 - Tests: `src/cmd/wt/list_test.go` — default-mode coverage (`TestList_DefaultHeader`, `TestList_DefaultModeNoDirtyIndicator`, `TestList_JSONDefaultFields`), `--status`-mode coverage (`TestList_StatusHeader`, `TestList_StatusModeShowsDirty`, `TestList_StatusFlagShowsUnpushed`, `TestList_JSONStatusFields`, `TestList_StatusAndPathMutuallyExclusive`, `TestList_StatusOrderingPreserved`), `260530-rtmf` ordering/last-active coverage (recency/name/invalid-sort/main-pinned/`--path`+`--sort` mutex, JSON-default-stable, `last_active` key presence/absence), and `260601-73cv` recent-column coverage (updated `TestList_HumanDefaultIsRecency` and `TestList_LastActiveRelativeTimeInHumanStatus`; new 4-column `Last Active` header + relative-time value in the default human view, `name`/`branch` modes stay 3-column, `--json`/`--json --sort=recent` omit `last_active`, main-worktree shows its own relative time, vanished worktree renders `-`, and a main-only repo renders the 4-column header without misalignment).
 - Sibling memory: `/wt-cli/create-branch-semantics.md` — the `wt create --temp` mode that produces the worktrees the `temp` key marks. `/wt-cli/delete-dry-run-contract.md` — how `wt delete` treats detached worktrees.

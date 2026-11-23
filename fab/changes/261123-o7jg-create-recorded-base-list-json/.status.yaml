@@ -1,0 +1,58 @@
+id: o7jg
+name: 261123-o7jg-create-recorded-base-list-json
+created: 2026-11-23T16:01:29Z
+created_by: sahil-noon
+change_type: feat
+issues: []
+progress:
+    intake: done
+    apply: done
+    review: done
+    hydrate: done
+    ship: done
+    review-pr: pending
+plan:
+    generated: true
+    task_count: 8
+    acceptance_count: 17
+    acceptance_completed: 17
+confidence:
+    certain: 6
+    confident: 5
+    tentative: 0
+    unresolved: 0
+    score: 4.8
+    fuzzy: true
+    dimensions:
+        signal: 77.3
+        reversibility: 83.6
+        competence: 84.1
+        disambiguation: 79.5
+stage_metrics:
+    intake: {started_at: "2026-11-23T16:01:29Z", driver: fab-new, iterations: 1, completed_at: "2026-11-23T16:06:03Z"}
+    apply: {started_at: "2026-11-23T16:06:03Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T16:15:06Z"}
+    review: {started_at: "2026-11-23T16:15:06Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T16:20:38Z"}
+    hydrate: {started_at: "2026-11-23T16:20:38Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T16:22:30Z"}
+    ship: {started_at: "2026-11-23T16:22:30Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T16:23:50Z"}
+prs:
+    - https://github.com/sahil87/wt/pull/66
+change_type_source: explicit
+base_branch: main
+true_impact:
+    added: 955
+    deleted: 23
+    net: 932
+    excluding:
+        added: 515
+        deleted: 9
+        net: 506
+    tests:
+        added: 372
+        deleted: 3
+        net: 369
+    computed_at: "2026-11-23T16:23:50Z"
+    computed_at_stage: ship
+summary: wt create records branch.<b>.wt-base/wt-base-sha for wt-created branches (rollback-scoped, exit 3 on failure); wt list --json gains base/base_sha (one extra constant git config call)
+# base_branch: written by /git-branch or /fab-new when the change's branch is created (no placeholder here).
+# true_impact: lazily created on first stage-finish that computes it (no placeholder here).
+last_updated: 2026-11-23T16:36:15Z

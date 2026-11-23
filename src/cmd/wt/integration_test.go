@@ -986,3 +986,31 @@ func TestIntegration_CreateTempFetch_FreshRef(t *testing.T) {
 		t.Errorf("temp worktree HEAD = %s, want %s", got, fresh)
 	}
 }
+
+func TestIntegration_RecordedBase_CreateAndList(t *testing.T) {
+	clone, _ := fetchFixture(t)
+	gitRun(t, clone, "branch", "existing")
+
+	r := runWtSuccess(t, clone, nil, "create", "--json", "--no-init", "--open", "skip", "--name", "w2", "--base", "origin/main", "w2-br")
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Result.BaseSHA == nil {
+		t.Fatalf("receipt has no base_sha: %s", r.Stdout)
+	}
+	assertRecordedBase(t, clone, "w2-br", "origin/main", *doc.Result.BaseSHA)
+
+	runWtSuccess(t, clone, nil, "create", "--non-interactive", "--no-init", "--open", "skip", "--checkout", "existing")
+	assertNoRecordedBase(t, clone, "existing")
+
+	for _, e := range parseJSONList(t, runWtSuccess(t, clone, nil, "list", "--json").Stdout) {
+		switch e["name"] {
+		case "w2":
+			if e["base"] != "origin/main" || e["base_sha"] != *doc.Result.BaseSHA {
+				t.Errorf("w2 entry = %v, want base origin/main / %s", e, *doc.Result.BaseSHA)
+			}
+		default:
+			if e["base"] != nil || e["base_sha"] != nil {
+				t.Errorf("%v entry = %v, want null base", e["name"], e)
+			}
+		}
+	}
+}

@@ -89,8 +89,9 @@ func RemoveWorktree(path string, force bool) error {
 // non-empty, is the git start-point for the new branch (else HEAD) — wt passes
 // a pinned SHA; upstream, when non-empty (see UpstreamForBase), is set on the new
 // branch after the add — the tracking git would have auto-set from a ref name.
+// baseRef is the base label recorded alongside startPoint (see recordBase).
 // Returns the worktree path.
-func CreateNewBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback, startPoint, upstream string) (string, error) {
+func CreateNewBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback, baseRef, startPoint, upstream string) (string, error) {
 	if BranchExistsLocally(branch) || BranchExistsRemotely(branch) {
 		return "", ErrBranchExists
 	}
@@ -107,6 +108,9 @@ func CreateNewBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback
 	registerNewBranchRollback(rb, wtPath, branch)
 
 	if err := trackUpstream(branch, upstream, rb); err != nil {
+		return "", err
+	}
+	if err := recordBase(branch, baseRef, startPoint, rb); err != nil {
 		return "", err
 	}
 	return wtPath, nil
@@ -128,6 +132,21 @@ func trackUpstream(branch, upstream string, rb *Rollback) error {
 		return nil
 	}
 	if err := SetUpstream(branch, upstream); err != nil {
+		rb.Execute()
+		rb.Disarm()
+		return err
+	}
+	return nil
+}
+
+// recordBase writes the recorded base for a branch wt created (a no-op when
+// there is no pinned start-point). A failure rolls the just-created worktree
+// and branch back; `git branch -D` also drops the branch's config section.
+func recordBase(branch, ref, sha string, rb *Rollback) error {
+	if sha == "" {
+		return nil
+	}
+	if err := RecordBase(branch, ref, sha); err != nil {
 		rb.Execute()
 		rb.Disarm()
 		return err
@@ -169,9 +188,9 @@ func CheckoutBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback)
 
 // CreateExploratoryWorktree creates an exploratory worktree with a new branch matching the name.
 // When startPoint is non-empty, the new branch is created from the given start-point;
-// upstream is as for CreateNewBranchWorktree.
+// baseRef and upstream are as for CreateNewBranchWorktree.
 // Returns the worktree path.
-func CreateExploratoryWorktree(name string, ctx *RepoContext, rb *Rollback, startPoint, upstream string) (string, error) {
+func CreateExploratoryWorktree(name string, ctx *RepoContext, rb *Rollback, baseRef, startPoint, upstream string) (string, error) {
 	if err := EnsureWorktreesDir(ctx.WorktreesDir); err != nil {
 		return "", err
 	}
@@ -185,6 +204,9 @@ func CreateExploratoryWorktree(name string, ctx *RepoContext, rb *Rollback, star
 	registerNewBranchRollback(rb, wtPath, branch)
 
 	if err := trackUpstream(branch, upstream, rb); err != nil {
+		return "", err
+	}
+	if err := recordBase(branch, baseRef, startPoint, rb); err != nil {
 		return "", err
 	}
 	return wtPath, nil
