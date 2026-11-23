@@ -1741,6 +1741,33 @@ func TestCreateJSON_ReuseWithBaseConflict(t *testing.T) {
 	assertBranchNotExists(t, repo, "nb")
 }
 
+// TestCreate_ReuseWithFetchConflict asserts --reuse + --fetch is a usage error
+// before any mutation or network call, whether or not the name collides, and
+// that under --json it is a failure document.
+func TestCreate_ReuseWithFetchConflict(t *testing.T) {
+	repo := createTestRepo(t)
+	existing := createWorktreeViaWt(t, repo, "reuse-fetch-hit")
+	// A broken origin proves no fetch is attempted before the conflict fires.
+	gitRun(t, repo, "remote", "set-url", "origin", filepath.Join(repo, "no-such-remote.git"))
+
+	// Name collides (would be a reuse hit).
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--reuse", "--name", "reuse-fetch-hit", "--fetch")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "--reuse and --fetch cannot be combined")
+	assertNotContains(t, r.Stderr, "Failed to fetch")
+	assertDirExists(t, existing)
+
+	// Name is free (would be a fresh create from HEAD).
+	r = runWt(t, repo, nil, "create", "--json", "--reuse", "--name", "reuse-fetch-miss", "--fetch", "nb")
+	assertExitCode(t, r, 2)
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Error == nil || doc.Error.Code != 2 || doc.Error.Message != "--reuse and --fetch cannot be combined" {
+		t.Errorf("unexpected doc: %s", r.Stdout)
+	}
+	assertWorktreeNotExists(t, repo, "reuse-fetch-miss")
+	assertBranchNotExists(t, repo, "nb")
+}
+
 // TestCreate_SetUpstreamFailure_RollsBackCompletely forces the post-add
 // set-upstream to fail (a stale .git/config.lock) and asserts exit 3, the
 // failure document, and that neither the worktree nor the branch is left.

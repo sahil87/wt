@@ -186,7 +186,7 @@ short and fails closed on an existing name (260717-2af2).
 - `--fetch` is a long-only bool flag. On a new-branch create (positional or bare exploratory) or a `--temp` create, `wt create` runs `git fetch <remote>` after flag-mutex validation, the git-repo check and the `--pr` lookup, and **before** the `--base` (or `--temp`) ref is resolved, so the pinned SHA comes from fresh refs. The fetch is argv-exec'd (no shell) and its output never reaches stdout.
 - **Remote selection** (`wt.RemoteForRef`): the first `/`-separated segment of `--base` (or the `--temp` ref) iff it is a configured remote (`git remote` output), else `origin`. So `--base upstream/main` with an `upstream` remote fetches `upstream`; `--base feature/x` (no `feature` remote), a bare SHA, and no `--base` fetch `origin`. **Known gap**: a fully-qualified `--base refs/remotes/<r>/<branch>` takes `refs` as the first segment, which is not a remote, so it fetches `origin` rather than `<r>`.
 - **Failure**: a non-zero fetch is `ExitGitError` (3): `Error: Failed to fetch remote '<remote>'` / `Why:` the trimmed git output / `Fix:` naming `git remote -v` and dropping `--fetch`. Nothing is created — no worktree directory, no branch.
-- **No-ops**: `--fetch` with `--checkout` or `--pr` (which runs the checkout path) is accepted and runs no separate fetch (a remote-only checkout already fetches via `FetchRemoteBranch`; a local branch is checked out as-is). When `--reuse` takes the reuse path (a colliding `--name`), no fetch runs and the network is not touched. Without `--fetch`, `wt create` runs no `git fetch` of its own.
+- **No-ops**: `--fetch` with `--checkout` or `--pr` (which runs the checkout path) is accepted and runs no separate fetch (a remote-only checkout already fetches via `FetchRemoteBranch`; a local branch is checked out as-is). `--fetch` with `--reuse` is a usage conflict (see "Conflicting selectors"), so it never reaches the reuse path. Without `--fetch`, `wt create` runs no `git fetch` of its own.
 - With no `--base`, `--fetch` fetches `origin` and the base stays `HEAD`.
 
 - **GIVEN** a clone whose `origin/main` is one commit behind the bare origin
@@ -204,7 +204,7 @@ the documented exit-2 class "mutually exclusive flags". All are pure argument-pa
 (no git state), validated in `cmd/create.go` **before** any git work (before
 `ValidateGitRepo`, rollback setup, branch-name and `--base` ref validation). The `--temp` and
 `--init` conflicts are held in `checkModeConflicts`, which runs first; the `--checkout` and
-`--reuse` + `--base` checks run after the `--reuse requires --name` check, and the `--pr` checks after those:
+`--reuse` + `--base` / `--reuse` + `--fetch` checks run after the `--reuse requires --name` check, and the `--pr` checks after those:
 
 - `--checkout` + a positional arg:
   - what: `--checkout cannot be combined with a positional branch argument`
@@ -223,6 +223,16 @@ the documented exit-2 class "mutually exclusive flags". All are pure argument-pa
   not a worktree named `--name` exists, so the outcome never depends on filesystem state the
   caller cannot see in its own argv. A non-empty `--base` is the trigger (an explicit
   `--base ""` reads as unset, like the `--checkout` + `--base` check).
+- `--reuse` + `--fetch` (checked right after `--reuse` + `--base`, so passing all three reports
+  the `--base` conflict):
+  - what: `--reuse and --fetch cannot be combined`
+  - why: `--reuse keeps the existing worktree's branch, and a new worktree from --reuse starts at HEAD, so there is no base for --fetch to refresh`
+  - fix: `Drop --fetch, or drop --reuse to create a new worktree (wt create --name <name> --base origin/<branch> --fetch)`
+
+  Also **unconditional on name collision**, and it fires before any network call: on a reuse
+  hit the fetch could never apply, and on a reuse miss the new branch starts at `HEAD` (`--base`
+  being banned with `--reuse`), which a fetch never moves — so the flag could only be silently
+  ignored or a wasted network call.
 - `--pr` excludes every other branch selector — each check exits 2 before `gh` runs, after the
   `--reuse requires --name` check:
   - `--pr` + positional: `--pr cannot be combined with a positional branch argument`
@@ -297,8 +307,9 @@ The check order is `--init`×`--no-init` first, then (when `--temp` is set) posi
 | `wt create --init --no-init` | conflict | `ExitInvalidArgs` (2) |
 | `wt create <new> --base <bad>` | positional, new | `ExitInvalidArgs` (2), invalid `--base` |
 | `wt create --reuse --name X --base Y` | conflict | `ExitInvalidArgs` (2), with or without an existing `X` |
+| `wt create --reuse --name X --fetch` | conflict | `ExitInvalidArgs` (2), with or without an existing `X`; no fetch runs |
 | `wt create --reuse --base Y` (no `--name`) | conflict | `ExitInvalidArgs` (2), `--reuse requires --name` (checked first) |
-| `wt create --reuse --name X …` (no `--base`) | reuse | reuse on collision; branch selectors NOT consulted |
+| `wt create --reuse --name X …` (no `--base` / `--fetch`) | reuse | reuse on collision; branch selectors NOT consulted |
 | `wt create --fetch …` (fetch fails) | positional / bare | `ExitGitError` (3), nothing created |
 | `wt create --json --open <non-skip>` | conflict | `ExitInvalidArgs` (2) |
 
@@ -333,9 +344,9 @@ best-effort `DescribeHead()` helper) lives in [`create-output-phases`](/wt-cli/c
 also satisfies the requirement — see
 [flag-naming-conventions](/wt-cli/flag-naming-conventions.md)), and on
 name collision it reuses the existing worktree **without consulting any branch selector**
-(positional / `--checkout` / `--fetch`). The reuse hit is computed up front (the final name is known because `--reuse` requires `--name`) and sits *before* the fetch, the base resolution, and the branch-dispatch
-switch, so a reused worktree's branch is never re-derived and no network call is made. `--base` is not a selector `--reuse` can ignore —
-the combination is a hard conflict (see "Conflicting selectors" above). (Init-on-reuse remains
+(positional / `--checkout`). The reuse hit is computed up front (the final name is known because `--reuse` requires `--name`) and sits *before* the base resolution and the branch-dispatch
+switch, so a reused worktree's branch is never re-derived. `--base` and `--fetch` are not flags `--reuse` can ignore —
+each combination is a hard conflict (see "Conflicting selectors" above). (Init-on-reuse remains
 warn-but-continue — see `/wt-cli/init-failure-contract.md`.)
 
 - **GIVEN** `--reuse` without `--name` (or the deprecated `--worktree-name`)
@@ -485,7 +496,7 @@ the caller cannot see from its own argv).
 
 ### `--fetch` runs before base resolution and fails closed
 
-**Decision**: `--fetch` runs `git fetch <RemoteForRef(base)>` before the base is resolved, as a flag rather than default behavior; a failed fetch is `ExitGitError` with nothing created; it is a no-op for `--checkout` and a taken `--reuse`.
+**Decision**: `--fetch` runs `git fetch <RemoteForRef(base)>` before the base is resolved, as a flag rather than default behavior; a failed fetch is `ExitGitError` with nothing created; it is a no-op for `--checkout` / `--pr`, and `--reuse` + `--fetch` is a usage conflict (W3's brief; it could only be silently ignored on a reuse hit or a wasted network call on a reuse miss starting at `HEAD`).
 **Why**: a branch cut from a stale `origin/main` is the failure the flag exists to prevent, so the fetch must precede the pin; failing closed keeps a user who asked for fresh refs from silently getting stale ones. Making it opt-in keeps `wt create` offline-capable and byte-compatible for existing callers (a default fetch would add a network dependency to every create).
 **Rejected**: fetching by default (network dependency on every create); falling back to the local ref when the fetch fails (silently stale); fetching after resolution (pins the stale SHA).
 *Introduced by*: `261123-xhgg-create-fetch-json-receipt` (plan `fab/plans/sahil/26-11-23-worktree-base-receipts.md`, step W1).
@@ -551,7 +562,7 @@ list names only the positional, `--checkout`, `--reuse`, and `--pr`.
   `src/cmd/wt/testutil_test.go`.
 - Tests: `src/cmd/wt/integration_test.go` (`261123-xhgg`: bare-origin + clone fixture proving `--fetch` picks up a commit pushed after the clone's last fetch, the stale commit without it, fetch failure exit 3 with nothing created, `--fetch --checkout` no-op); `src/cmd/wt/create_test.go` (`261123-xhgg`: base pin, upstream restoration, `ghost/main` stray remote-tracking ref, set-upstream failure rollback, the `--reuse` + `--base` conflict as a `--json` failure document; positional-existing local/remote → exit 2, `--checkout`
   local/remote-only success, `--checkout` missing → exit 2, `--checkout`+`--base` → exit 2,
-  `--checkout`+positional → exit 2, `--reuse`+`--base` → exit 2 with/without collision and with
+  `--checkout`+positional → exit 2, `--reuse`+`--fetch` → exit 2 with/without collision, no fetch attempted (`TestCreate_ReuseWithFetchConflict`, incl. the `--json` document); `--reuse`+`--base` → exit 2 with/without collision and with
   an invalid ref, `--reuse`+`--base` without `--name`; the removed `--base`-with-existing-branch
   warn tests; `--temp` happy path / naming / conflicts / bad ref / init gate);
   `src/cmd/wt/integration_test.go` (`TestIntegration_BranchDeletePreservesOthers` on an existing

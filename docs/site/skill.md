@@ -104,9 +104,10 @@ One line per subcommand (run `wt <cmd> --help` for flags):
 - **The `create` positional is new-branch-only.** Naming a branch that already
   exists (locally or on the remote) is an error (exit 2) pointing you at
   `--checkout <branch>` — the explicit opt-in for existing branches.
-- **`--reuse` and `--base` don't mix.** Passing both is an error (exit 2), even
-  when no worktree by that name exists yet — a reused worktree keeps its existing
-  branch. To cut from a ref, create a new worktree (drop `--reuse`).
+- **`--reuse` doesn't mix with `--base` or `--fetch`.** Passing either with it is
+  an error (exit 2), even when no worktree by that name exists yet — a reused
+  worktree keeps its existing branch. To cut from a fresh ref, create a new
+  worktree (drop `--reuse`): `wt create --name <n> --base origin/<b> --fetch`.
 - **`--pr` needs `gh` and a same-repository PR.** Without `gh` it exits `1`; a
   PR from a fork exits `2` — add the fork as a remote and use `--checkout`. It
   assumes gh's repo is `origin`; in a fork clone, use `--checkout` instead.

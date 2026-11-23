@@ -55,8 +55,9 @@ use --checkout to put a worktree on an existing branch.
 fetched then checked out). --checkout cannot be combined with a positional
 branch argument or with --base.
 
---reuse cannot be combined with --base: a reused worktree keeps its existing
-branch, so a start-point has nothing to apply to.
+--reuse cannot be combined with --base or --fetch: a reused worktree keeps its
+existing branch, so a start-point has nothing to apply to (and a fresh --reuse
+worktree starts at HEAD, which a fetch never moves).
 
 --pr <n> creates the worktree on pull request <n>'s head branch, resolved
 with the GitHub CLI (gh pr view), then checked out exactly like --checkout.
@@ -155,7 +156,9 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			// --checkout selects an existing branch; the positional creates a
 			// new one. They are mutually exclusive modes, as are --checkout and
 			// --base, and --reuse and --base (--base is the start-point for a
-			// NEW branch only).
+			// NEW branch only). --reuse and --fetch conflict too: a reuse keeps
+			// its branch and a --reuse miss starts at HEAD, which a fetch never
+			// moves.
 			if checkout != "" && branchArg != "" {
 				fail(wt.ExitInvalidArgs,
 					"--checkout cannot be combined with a positional branch argument",
@@ -173,6 +176,12 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 					"--reuse and --base cannot be combined",
 					"--reuse keeps the existing worktree's branch, so a start-point has nothing to apply to",
 					"Drop --base, or drop --reuse to create a new worktree")
+			}
+			if reuse && fetch {
+				fail(wt.ExitInvalidArgs,
+					"--reuse and --fetch cannot be combined",
+					"--reuse keeps the existing worktree's branch, and a new worktree from --reuse starts at HEAD, so there is no base for --fetch to refresh",
+					"Drop --fetch, or drop --reuse to create a new worktree (wt create --name <name> --base origin/<branch> --fetch)")
 			}
 
 			// --pr resolves a PR's head branch and then runs the --checkout
@@ -255,16 +264,15 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			}
 
 			// A --reuse create whose name already exists takes the reuse path:
-			// no fetch, no base resolution (--reuse + --base was rejected
-			// above). --reuse requires --name, so the final name is known here.
+			// no base resolution (--reuse + --base and --reuse + --fetch were
+			// rejected above). --reuse requires --name, so the final name is known here.
 			reuseHit := reuse && wt.CheckNameCollision(ctx.WorktreesDir, worktreeName)
 
 			// --fetch: refresh the base's remote BEFORE the base (or the --temp
 			// ref) is resolved so the worktree is cut from fresh refs. A no-op
-			// for --checkout / --pr (the remote-only path already fetches) and
-			// for a taken --reuse. All of this precedes the create dispatch
-			// (reinstall-window rule).
-			if fetch && checkout == "" && !reuseHit {
+			// for --checkout / --pr (the remote-only path already fetches).
+			// All of this precedes the create dispatch (reinstall-window rule).
+			if fetch && checkout == "" {
 				fetchRef := base
 				if tempMode {
 					fetchRef = temp
@@ -906,7 +914,7 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 	cmd.Flags().BoolVar(&noInit, "no-init", false, "Skip the worktree init script (init runs by default)")
 	cmd.Flags().StringVar(&worktreeInit, "worktree-init", "", "Run worktree init script: true (default) or false")
 	cmd.Flags().MarkDeprecated("worktree-init", "use --no-init instead")
-	cmd.Flags().BoolVar(&reuse, "reuse", false, "Reuse existing worktree if name collides (requires --name; not with --base)")
+	cmd.Flags().BoolVar(&reuse, "reuse", false, "Reuse existing worktree if name collides (requires --name; not with --base or --fetch)")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts; use defaults and skip menus")
 	cmd.Flags().StringVar(&base, "base", "", "Git ref (branch, tag, SHA) to use as start-point for new branch (not with --checkout, --reuse, or --temp)")
 	cmd.Flags().StringVar(&temp, "temp", "", "Create a detached throwaway worktree at <ref> (no branch; name prefixed tmp-; init skipped unless --init)")

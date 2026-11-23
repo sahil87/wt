@@ -33,7 +33,7 @@ an error — put a worktree on an existing branch explicitly with
 | `--worktree-name <name>` | random adjective-noun | Set the worktree directory name; skips the name prompt. |
 | `--worktree-init <true\|false>` | `true` | Run the worktree init script after creation. |
 | `--worktree-open <prompt\|default\|skip\|<app>>` | `prompt` (`skip` under `--non-interactive`) | What to do after creation: show the app menu, open in the detected default, skip, or open in a named app (e.g. `code`, `cursor`). |
-| `--reuse` | `false` | If a worktree with `--worktree-name` already exists, reuse it instead of erroring. Requires `--worktree-name`. Cannot be combined with `--base`. |
+| `--reuse` | `false` | If a worktree with `--worktree-name` already exists, reuse it instead of erroring. Requires `--worktree-name`. Cannot be combined with `--base` or `--fetch`. |
 | `--non-interactive` | `false` | No prompts; fail or use defaults rather than prompting. |
 | `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for new branches. See the table below. |
 | `--checkout <branch>` | (none) | Check out an **existing** branch (local or remote) into the new worktree. Mutually exclusive with the positional and `--base`. |
@@ -235,7 +235,7 @@ but for a worktree created on an existing branch they differ freely.
 - **The `wt create` positional never checks out an existing branch.** Naming a
   branch that already exists (locally or on the remote) is an error (exit 2) —
   checkout of an existing branch is an explicit opt-in via `--checkout <branch>`.
-  `--reuse` cannot be combined with `--base` (exit 2).
+  `--reuse` cannot be combined with `--base` or `--fetch` (exit 2).
 - **Worktrees survive `cd` into deleted directories.** If you delete a worktree
   from outside (`rm -rf`), run `git worktree prune` in the main repo to clean up
   git's bookkeeping.

@@ -34,10 +34,10 @@ Create a git worktree as a sibling of the main repo (`<repo>.worktrees/<name>/`)
 | `--name`, `-n <name>` | random adjective-noun | Set the worktree directory name; skips the name prompt. |
 | `--open`, `-o <prompt\|default\|skip\|<app>>` | `prompt` (`skip` when `--non-interactive`) | Behavior after creation: show app menu, open in detected default, skip, or open in a specific app (e.g. `code`, `cursor`). Requires an explicit value (no bare form — a bare `--open code` would be parsed as the positional `[branch]`). |
 | `--no-init` | (unset — init runs) | Skip the worktree init script (init runs by default). |
-| `--reuse` | `false` | If a worktree with `--name` already exists, reuse it instead of erroring. Requires `--name`. Cannot be combined with `--base`. |
+| `--reuse` | `false` | If a worktree with `--name` already exists, reuse it instead of erroring. Requires `--name`. Cannot be combined with `--base` or `--fetch`. |
 | `--non-interactive` | `false` | No prompts; fail or use defaults rather than prompting. |
 | `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for the NEW branch. Resolved once to a full commit SHA (`git rev-parse --verify <ref>^{commit}`) and pinned — see "Base pinning" below. Cannot be combined with `--checkout` or `--reuse`. |
-| `--fetch` | `false` | Run `git fetch <remote>` before the base (or the `--temp` ref) is resolved, so the worktree is cut from fresh refs. `<remote>` is the first `/`-separated segment of `--base` / `--temp` when that segment is a configured remote, else `origin` (so `--base origin/main` and bare `--fetch` both fetch `origin`; `--base upstream/main` fetches `upstream`). No-op with `--checkout` / `--pr` (the remote-only path already fetches) and when `--reuse` takes the reuse path. Never implicit: without `--fetch`, no extra `git fetch` runs. Long-only. |
+| `--fetch` | `false` | Run `git fetch <remote>` before the base (or the `--temp` ref) is resolved, so the worktree is cut from fresh refs. `<remote>` is the first `/`-separated segment of `--base` / `--temp` when that segment is a configured remote, else `origin` (so `--base origin/main` and bare `--fetch` both fetch `origin`; `--base upstream/main` fetches `upstream`). No-op with `--checkout` / `--pr` (the remote-only path already fetches). Cannot be combined with `--reuse` (a reused worktree keeps its branch and a fresh `--reuse` worktree starts at `HEAD`, which a fetch never moves). Never implicit: without `--fetch`, no extra `git fetch` runs. Long-only. |
 | `--json` | `false` | Print one JSON receipt document on stdout instead of the path line — see "`--json` receipt" below. Implies `--non-interactive` and `--open skip`; an explicit `--open <non-skip>` (or `--worktree-open`) is a usage error. Long-only. |
 | `--checkout <branch>` | (none) | Check out an EXISTING branch (local as-is, or remote-only fetched then checked out) into the worktree, instead of creating a new one. Cannot be combined with a positional branch argument or with `--base`. |
 | `--pr <n>` | (none) | Create the worktree on pull request `<n>`'s head branch, resolved via `gh pr view <n> --json headRefName,isCrossRepository` (15 s timeout), then checked out exactly like `--checkout`. Same-repository PRs only. Cannot be combined with a positional branch argument, `--base`, `--checkout`, `--reuse`, or `--temp`. |
@@ -164,7 +164,8 @@ positional naming an already-existing branch, `--checkout` on a branch that
 does not exist, a non-numeric `--pr`, `--pr` combined with a positional /
 `--base` / `--checkout` / `--reuse`, a fork PR, a PR head branch that exists
 neither locally nor on origin, the `--temp` conflicts above, an invalid
-`--temp` ref, and `--json` combined with a non-`skip` `--open`;
+`--temp` ref, `--reuse` combined with `--base` or `--fetch`, and `--json`
+combined with a non-`skip` `--open`;
 `ExitGeneralError` when `gh` is missing or
 `gh pr view` fails (unauthenticated, PR not found, timeout — the message carries
 gh's first error line); `ExitGitError` for `git worktree add` failures
