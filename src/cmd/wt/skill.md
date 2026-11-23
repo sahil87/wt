@@ -31,7 +31,8 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   `--temp <ref>` makes a detached throwaway worktree (see Gotchas).
 - `list` (alias `ls`) — table of worktrees (name, branch, path). `--status` adds
   dirty/unpushed indicators; `--json` emits machine records; `--path <name>`
-  prints one absolute path.
+  prints one absolute path. `--sort <recent|name|branch>` orders the non-main rows
+  (default `recent` for the table, `name` under `--json`/`--non-interactive`).
 - `open [name|path]` — launch a worktree (or any directory path, no git repo
   needed) in a detected target. `--list` prints
   the host-app table; `--list --json` prints the FULL registry: every emitted
@@ -45,8 +46,11 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   selection instead (go owns the worktree menu, open owns the app menu; this flag
   composes them). Requires a git repo.
 - `delete [names...]` (alias `rm`) — remove worktrees with optional branch cleanup.
-  `--all/-a` removes every worktree; `-s/--stash` stashes uncommitted changes first;
-  `--branch <true|false|auto>` and `--no-remote` control branch deletion.
+  `--all/-a` removes every worktree; `--stale[=Nd]` selects idle worktrees (mtime
+  older than 7 days by default; the `=` is required); `--dry-run` previews exactly
+  what would be removed, with no prompts and no changes; `-s/--stash` stashes
+  uncommitted changes first; `--branch <true|false|auto>` and `--no-remote`
+  control branch deletion.
 - `init` — run the worktree init script for the current worktree/main repo.
 - `shell-init <shell>` — print the shell wrapper function (`zsh` or `bash`) for
   `eval` in your profile; a missing/unsupported shell is a usage error (exit 2).
@@ -74,8 +78,14 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   file path resolved from the repo root and run via `bash`. It runs with the new
   worktree as its working directory; its output goes to stderr. See `docs/specs/init-protocol.md`.
 - **Machine surface.** `wt list --json` is the structured composition surface (e.g.
-  what `hop` reads; each record carries `base`/`base_sha`, the base `wt create` recorded for the branch, or `null`); `wt create` prints the worktree path as its last stdout line, or —
+  what `hop` reads); `wt create` prints the worktree path as its last stdout line, or —
   with `--json` — one receipt document (`{"ok":true,"result":{…}}` / `{"ok":false,"error":{code,message}}`).
+- **Recorded base.** Every branch `wt create` creates records what it was cut from in
+  the repo's git config: `branch.<b>.wt-base` (the `--base` ref as typed, or the HEAD
+  label) and `branch.<b>.wt-base-sha` (the pinned SHA) — read them with
+  `git config branch.<b>.wt-base`, e.g. to pick a PR's base. `wt list --json` exposes
+  them as `base`/`base_sha` (`null` when unrecorded). `--checkout`, `--pr`, `--reuse`
+  and `--temp` record nothing.
 
 ## Output & exit-code contracts
 
