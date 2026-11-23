@@ -128,7 +128,8 @@ without `--base`) gets two keys in the repository's own git config (never
 `branch.<branch>.wt-base-sha` — the full pinned start-point (the receipt's
 `base_sha`). They are written after the worktree add and the upstream step, and
 travel with the branch (`git branch -m`) and die with it (`git branch -D`).
-`--checkout` and `--reuse` never write them — wt did not create those branches.
+`--checkout`, `--pr`, `--reuse` and `--temp` never write them — wt did not create
+those branches (`--temp` creates no branch at all).
 A failed write rolls the worktree and branch back and exits 3 (`ExitGitError`):
 `Error: Failed to record base for branch '<branch>'`, `Why:` git's first output
 line, `Fix: Check that .git/config is writable (no stale config.lock), then

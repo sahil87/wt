@@ -1958,6 +1958,22 @@ func TestCreate_CheckoutAndReuse_RecordNothing(t *testing.T) {
 	}
 }
 
+// TestCreate_PRAndTemp_RecordNothing: --pr checks out an existing branch and
+// --temp creates no branch, so neither writes any wt-base key.
+func TestCreate_PRAndTemp_RecordNothing(t *testing.T) {
+	repo := createTestRepo(t)
+	gitRun(t, repo, "branch", "pr-head")
+
+	env, _ := writeGhStub(t, prHeadJSON("pr-head", false), "", 0)
+	runWtSuccess(t, repo, env, "create", "--non-interactive", "--no-init", "--open", "skip", "--pr", "12", "--name", "pr-wt")
+	assertNoRecordedBase(t, repo, "pr-head")
+
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--open", "skip", "--temp", "main", "--name", "surgery")
+	if out, err := exec.Command("git", "-C", repo, "config", "--get-regexp", `\.wt-base`).Output(); err == nil {
+		t.Errorf("--pr/--temp wrote recorded-base keys:\n%s", out)
+	}
+}
+
 // TestCreate_RecordBaseFailure_RollsBackCompletely forces the base write to
 // fail (a stale .git/config.lock; a local base sets no upstream first) and
 // asserts exit 3, the failure document, and that nothing is left behind.

@@ -37,7 +37,7 @@ stage_metrics:
 prs:
     - https://github.com/sahil87/wt/pull/66
 change_type_source: explicit
-base_branch: 261123-xhgg-create-fetch-json-receipt
+base_branch: main
 true_impact:
     added: 955
     deleted: 23
@@ -55,4 +55,4 @@ true_impact:
 summary: wt create records branch.<b>.wt-base/wt-base-sha for wt-created branches (rollback-scoped, exit 3 on failure); wt list --json gains base/base_sha (one extra constant git config call)
 # base_branch: written by /git-branch or /fab-new when the change's branch is created (no placeholder here).
 # true_impact: lazily created on first stage-finish that computes it (no placeholder here).
-last_updated: 2026-11-23T16:23:50Z
+last_updated: 2026-11-23T16:36:15Z

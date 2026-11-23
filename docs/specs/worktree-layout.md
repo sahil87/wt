@@ -82,7 +82,7 @@ directory name. Three illustrative cases:
    [cli-surface.md](cli-surface.md) § `wt create`) — use `--checkout` for that.
    Branches `wt create` creates carry their recorded base in git config
    (`branch.<name>.wt-base` / `wt-base-sha`), surfaced as `base` / `base_sha` in
-   `wt list --json`; `--checkout` branches carry none.
+   `wt list --json`; `--checkout` / `--pr` branches and `--temp` worktrees carry none.
 2. **Worktree for an existing branch** (`--checkout <branch>`): the worktree
    directory still gets a random or user-supplied name, while the branch stays
    whatever the user passed (`<repo>.worktrees/swift-fox/` checked out on branch
