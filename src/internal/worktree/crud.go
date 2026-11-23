@@ -86,9 +86,11 @@ func RemoveWorktree(path string, force bool) error {
 // already exists locally or remotely it returns ErrBranchExists and creates
 // nothing — checking out an existing branch is CheckoutBranchWorktree's job
 // (the positional argument only creates new branches). startPoint, when
-// non-empty, is the git start-point for the new branch (else HEAD).
+// non-empty, is the git start-point for the new branch (else HEAD) — wt passes
+// a pinned SHA; upstream, when non-empty (see UpstreamForBase), is set on the new
+// branch after the add — the tracking git would have auto-set from a ref name.
 // Returns the worktree path.
-func CreateNewBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback, startPoint string) (string, error) {
+func CreateNewBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback, startPoint, upstream string) (string, error) {
 	if BranchExistsLocally(branch) || BranchExistsRemotely(branch) {
 		return "", ErrBranchExists
 	}
@@ -102,10 +104,35 @@ func CreateNewBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback
 	if err := CreateWorktree(wtPath, branch, true, startPoint); err != nil {
 		return "", err
 	}
-	rb.Register("git", "worktree", "remove", "--force", wtPath)
-	rb.Register("git", "branch", "-D", branch)
+	registerNewBranchRollback(rb, wtPath, branch)
 
+	if err := trackUpstream(branch, upstream, rb); err != nil {
+		return "", err
+	}
 	return wtPath, nil
+}
+
+// registerNewBranchRollback registers the undo for a just-created worktree on
+// a new branch. Rollback runs LIFO, so the branch deletion is registered FIRST
+// and runs LAST: git refuses to delete a branch that is still checked out in a
+// worktree, so the worktree must be removed before `branch -D`.
+func registerNewBranchRollback(rb *Rollback, wtPath, branch string) {
+	rb.Register("git", "branch", "-D", branch)
+	rb.Register("git", "worktree", "remove", "--force", wtPath)
+}
+
+// trackUpstream applies the upstream UpstreamForBase chose (a no-op for ""). A
+// failure rolls the just-created worktree and branch back.
+func trackUpstream(branch, upstream string, rb *Rollback) error {
+	if upstream == "" {
+		return nil
+	}
+	if err := SetUpstream(branch, upstream); err != nil {
+		rb.Execute()
+		rb.Disarm()
+		return err
+	}
+	return nil
 }
 
 // CheckoutBranchWorktree creates a worktree on an EXISTING branch — a local
@@ -141,9 +168,10 @@ func CheckoutBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback)
 }
 
 // CreateExploratoryWorktree creates an exploratory worktree with a new branch matching the name.
-// When startPoint is non-empty, the new branch is created from the given start-point.
+// When startPoint is non-empty, the new branch is created from the given start-point;
+// upstream is as for CreateNewBranchWorktree.
 // Returns the worktree path.
-func CreateExploratoryWorktree(name string, ctx *RepoContext, rb *Rollback, startPoint string) (string, error) {
+func CreateExploratoryWorktree(name string, ctx *RepoContext, rb *Rollback, startPoint, upstream string) (string, error) {
 	if err := EnsureWorktreesDir(ctx.WorktreesDir); err != nil {
 		return "", err
 	}
@@ -154,9 +182,11 @@ func CreateExploratoryWorktree(name string, ctx *RepoContext, rb *Rollback, star
 	if err := CreateWorktree(wtPath, branch, true, startPoint); err != nil {
 		return "", err
 	}
-	rb.Register("git", "worktree", "remove", "--force", wtPath)
-	rb.Register("git", "branch", "-D", branch)
+	registerNewBranchRollback(rb, wtPath, branch)
 
+	if err := trackUpstream(branch, upstream, rb); err != nil {
+		return "", err
+	}
 	return wtPath, nil
 }
 
@@ -207,13 +237,24 @@ func RunWorktreeSetup(wtPath, initScript string, isDefault bool, repoRoot string
 // in-flight init child without growing the public API surface. Pass nil to
 // behave identically to RunWorktreeSetup.
 func RunWorktreeSetupWithObserver(wtPath, initScript string, isDefault bool, repoRoot string, observer func(cmd *exec.Cmd)) error {
+	_, err := RunWorktreeSetupOutcome(wtPath, initScript, isDefault, repoRoot, observer)
+	return err
+}
+
+// RunWorktreeSetupOutcome is the runner behind wt create (and RunWorktreeSetupWithObserver) plus the init outcome
+// (the `wt create --json` receipt's `init` field): InitNotFoundSkip when the
+// structured not-found skip fired, InitSkipped for the built-in default's
+// not-applicable skip, InitOK when the script exited 0, InitFailed (with the
+// error) when it could not be resolved or exited non-zero. Behavior and stderr
+// output are identical to the error-only wrappers.
+func RunWorktreeSetupOutcome(wtPath, initScript string, isDefault bool, repoRoot string, observer func(cmd *exec.Cmd)) (InitOutcome, error) {
 	cmd, notFound, err := ResolveInitInvocation(initScript, repoRoot)
 	if err != nil {
-		return err
+		return InitFailed, err
 	}
 	if notFound != nil {
 		fmt.Fprintln(os.Stderr, notFound.RenderWarning())
-		return nil
+		return InitNotFoundSkip, nil
 	}
 
 	// Init phase separator, labeled with the resolved init command as the
@@ -238,10 +279,10 @@ func RunWorktreeSetupWithObserver(wtPath, initScript string, isDefault bool, rep
 		// branch; it falls through to the hard-failure return below.
 		if DefaultNotApplicable(err, isDefault) {
 			fmt.Fprintln(os.Stderr, RenderDefaultSkipWarning())
-			return nil
+			return InitSkipped, nil
 		}
-		return fmt.Errorf("init script failed: %w", err)
+		return InitFailed, fmt.Errorf("init script failed: %w", err)
 	}
 	fmt.Fprintln(os.Stderr, "Worktree init complete.")
-	return nil
+	return InitOK, nil
 }

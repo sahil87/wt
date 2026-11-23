@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,7 +113,25 @@ func TestCreate_SummaryFrom_NewBranchWithBase(t *testing.T) {
 	r := runWtSuccess(t, repo, nil, "create", "--non-interactive",
 		"--worktree-name", "from-base-wt", "new-feature", "--base", "main")
 
-	assertContains(t, r.Stderr, "From: main")
+	sha := gitRun(t, repo, "rev-parse", "main")
+	assertContains(t, r.Stderr, "From: main @ "+sha[:7])
+}
+
+// TestCreate_BasePinnedToResolvedSHA asserts the new branch is cut from the
+// commit --base resolved to before the command ran.
+func TestCreate_BasePinnedToResolvedSHA(t *testing.T) {
+	repo := createTestRepo(t)
+	gitRun(t, repo, "checkout", "-q", "-b", "feature-A")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "on feature-A")
+	gitRun(t, repo, "checkout", "-q", "main")
+	want := gitRun(t, repo, "rev-parse", "feature-A")
+
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive",
+		"--name", "pin-wt", "--base", "feature-A", "pinned")
+
+	if got := gitRun(t, strings.TrimSpace(r.Stdout), "rev-parse", "HEAD"); got != want {
+		t.Errorf("worktree HEAD = %s, want %s", got, want)
+	}
 }
 
 // TestCreate_SummaryFrom_NewBranchNoBase asserts the From: line shows the
@@ -1429,4 +1448,431 @@ func TestCreateTemp_HelpListsFlags(t *testing.T) {
 
 	assertContains(t, r.Stdout, "--temp")
 	assertContains(t, r.Stdout, "--init")
+}
+
+// ---------- --json receipt ----------
+
+type jsonResult struct {
+	Path    string  `json:"path"`
+	Name    string  `json:"name"`
+	Branch  *string `json:"branch"`
+	BaseRef *string `json:"base_ref"`
+	BaseSHA *string `json:"base_sha"`
+	Mode    string  `json:"mode"`
+	Init    string  `json:"init"`
+}
+
+type jsonDoc struct {
+	OK    bool `json:"ok"`
+	Error *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+	Result *jsonResult `json:"result"`
+}
+
+// parseCreateDoc asserts stdout is exactly one JSON document on one line and
+// that ok == (exit code == 0), then returns it with its raw key set.
+func parseCreateDoc(t *testing.T, r wtResult) (jsonDoc, map[string]json.RawMessage) {
+	t.Helper()
+	if !strings.HasSuffix(r.Stdout, "\n") || strings.Count(r.Stdout, "\n") != 1 {
+		t.Fatalf("stdout must be exactly one line, got %q", r.Stdout)
+	}
+	var doc jsonDoc
+	if err := json.Unmarshal([]byte(r.Stdout), &doc); err != nil {
+		t.Fatalf("stdout is not one JSON document: %v\n%q", err, r.Stdout)
+	}
+	if doc.OK != (r.ExitCode == 0) {
+		t.Errorf("ok=%v but exit code %d", doc.OK, r.ExitCode)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(r.Stdout), &raw); err != nil {
+		t.Fatal(err)
+	}
+	return doc, raw
+}
+
+func assertAllResultKeys(t *testing.T, raw map[string]json.RawMessage) {
+	t.Helper()
+	var res map[string]json.RawMessage
+	if err := json.Unmarshal(raw["result"], &res); err != nil {
+		t.Fatalf("result is not an object: %v", err)
+	}
+	for _, k := range []string{"path", "name", "branch", "base_ref", "base_sha", "mode", "init"} {
+		if _, ok := res[k]; !ok {
+			t.Errorf("result missing key %q", k)
+		}
+	}
+}
+
+func TestCreateJSON_PositionalWithBase(t *testing.T) {
+	repo := createTestRepo(t)
+	sha := gitRun(t, repo, "rev-parse", "main")
+
+	r := runWtSuccess(t, repo, nil, "create", "--json", "--name", "mp-f1", "--base", "main", "mp-f1")
+	doc, raw := parseCreateDoc(t, r)
+	assertAllResultKeys(t, raw)
+
+	res := doc.Result
+	if res == nil || res.Mode != "new" || res.Name != "mp-f1" || res.Init != "not-found" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if res.Path != worktreePath(repo, "mp-f1") {
+		t.Errorf("path = %q", res.Path)
+	}
+	if res.Branch == nil || *res.Branch != "mp-f1" {
+		t.Errorf("branch = %v", res.Branch)
+	}
+	if res.BaseRef == nil || *res.BaseRef != "main" {
+		t.Errorf("base_ref = %v", res.BaseRef)
+	}
+	if res.BaseSHA == nil || *res.BaseSHA != sha {
+		t.Errorf("base_sha = %v, want %s", res.BaseSHA, sha)
+	}
+	assertDirExists(t, res.Path)
+	// Human output stays on stderr.
+	assertContains(t, r.Stderr, "Created worktree:")
+	assertContains(t, r.Stderr, "From: main @ "+sha[:7])
+}
+
+func TestCreateJSON_BareExploratory_HeadLabel(t *testing.T) {
+	repo := createTestRepo(t)
+	sha := gitRun(t, repo, "rev-parse", "HEAD")
+
+	r := runWtSuccess(t, repo, nil, "create", "--json", "--name", "bare-wt")
+	doc, raw := parseCreateDoc(t, r)
+	assertAllResultKeys(t, raw)
+	if doc.Result.Mode != "new" || doc.Result.BaseRef == nil || *doc.Result.BaseRef != "main" ||
+		doc.Result.BaseSHA == nil || *doc.Result.BaseSHA != sha {
+		t.Errorf("unexpected result: %+v", doc.Result)
+	}
+}
+
+func TestCreateJSON_Checkout_NullBase(t *testing.T) {
+	repo := createTestRepo(t)
+	gitRun(t, repo, "branch", "existing-br")
+
+	r := runWtSuccess(t, repo, nil, "create", "--json", "--checkout", "existing-br")
+	doc, raw := parseCreateDoc(t, r)
+	assertAllResultKeys(t, raw)
+	res := doc.Result
+	if res.Mode != "checkout" || res.BaseRef != nil || res.BaseSHA != nil ||
+		res.Branch == nil || *res.Branch != "existing-br" {
+		t.Errorf("unexpected result: %+v", res)
+	}
+}
+
+func TestCreateJSON_Reuse_NullBase(t *testing.T) {
+	repo := createTestRepo(t)
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--name", "again")
+
+	r := runWtSuccess(t, repo, nil, "create", "--json", "--reuse", "--name", "again")
+	doc, raw := parseCreateDoc(t, r)
+	assertAllResultKeys(t, raw)
+	res := doc.Result
+	if res.Mode != "reuse" || res.BaseRef != nil || res.BaseSHA != nil ||
+		res.Branch == nil || *res.Branch != "again" || res.Path != worktreePath(repo, "again") {
+		t.Errorf("unexpected result: %+v", res)
+	}
+	assertContains(t, r.Stderr, "Reusing existing worktree: again")
+}
+
+func TestCreateJSON_InitSkipped(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "create", "--json", "--no-init", "--name", "noinit-wt")
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Result.Init != "skipped" {
+		t.Errorf("init = %q, want skipped", doc.Result.Init)
+	}
+}
+
+func TestCreateJSON_InitOK(t *testing.T) {
+	repo := createTestRepo(t)
+	createInitScript(t, repo)
+	gitRun(t, repo, "add", "scripts/worktree-init.sh")
+	gitRun(t, repo, "commit", "-q", "-m", "init script")
+
+	r := runWtSuccess(t, repo, []string{"WORKTREE_INIT_SCRIPT=scripts/worktree-init.sh"},
+		"create", "--json", "--name", "initok-wt")
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Result.Init != "ok" {
+		t.Errorf("init = %q, want ok", doc.Result.Init)
+	}
+	// The init script's own stdout must not leak onto stdout.
+	assertNotContains(t, r.Stdout, "Test init script executed")
+}
+
+func TestCreateJSON_InvalidBase(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWt(t, repo, nil, "create", "--json", "--name", "bad-base", "--base", "nonexistent-ref")
+	assertExitCode(t, r, 2)
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Error == nil || doc.Error.Code != 2 || doc.Error.Message != "Invalid --base ref: nonexistent-ref" || doc.Result != nil {
+		t.Errorf("unexpected doc: %s", r.Stdout)
+	}
+	assertContains(t, r.Stderr, "Error: Invalid --base ref: nonexistent-ref")
+	assertWorktreeNotExists(t, repo, "bad-base")
+}
+
+func TestCreateJSON_PositionalExistingBranch(t *testing.T) {
+	repo := createTestRepo(t)
+	gitRun(t, repo, "branch", "taken")
+
+	r := runWt(t, repo, nil, "create", "--json", "--name", "taken-wt", "taken")
+	assertExitCode(t, r, 2)
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Error == nil || doc.Error.Code != 2 {
+		t.Errorf("unexpected doc: %s", r.Stdout)
+	}
+}
+
+func TestCreateJSON_OpenConflict(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWt(t, repo, nil, "create", "--json", "--open", "code", "--name", "open-conflict", "nb")
+	assertExitCode(t, r, 2)
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Error == nil || doc.Error.Code != 2 || doc.Error.Message != "--json cannot be combined with --open code" {
+		t.Errorf("unexpected doc: %s", r.Stdout)
+	}
+	assertWorktreeNotExists(t, repo, "open-conflict")
+	assertBranchNotExists(t, repo, "nb")
+
+	// An explicit --open skip is fine.
+	ok := runWtSuccess(t, repo, nil, "create", "--json", "--open", "skip", "--name", "open-skip", "nb2")
+	parseCreateDoc(t, ok)
+}
+
+func TestCreateJSON_InitFailure_KeptWorktree(t *testing.T) {
+	repo := createTestRepo(t)
+	env := writeFailingInitScript(t, repo)
+
+	r := runWt(t, repo, env, "create", "--json", "--name", "initfail-wt")
+	assertExitCode(t, r, 7)
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Error == nil || doc.Error.Code != 7 || doc.Error.Message != "init script exited with status 1" {
+		t.Fatalf("unexpected doc: %s", r.Stdout)
+	}
+	if doc.Result == nil || doc.Result.Init != "failed" || doc.Result.Mode != "new" {
+		t.Fatalf("unexpected result: %s", r.Stdout)
+	}
+	assertDirExists(t, doc.Result.Path)
+	assertContains(t, r.Stderr, "INIT_FAIL_MARKER")
+}
+
+func TestCreateJSON_ReuseInitFailureIsNonFatal(t *testing.T) {
+	repo := createTestRepo(t)
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--name", "reuse-fail")
+	env := writeFailingInitScript(t, repo)
+
+	r := runWtSuccess(t, repo, env, "create", "--json", "--reuse", "--name", "reuse-fail")
+	doc, _ := parseCreateDoc(t, r)
+	if !doc.OK || doc.Result.Init != "failed" || doc.Result.Mode != "reuse" {
+		t.Errorf("unexpected doc: %s", r.Stdout)
+	}
+}
+
+func TestCreate_NoJSON_StdoutStaysPathOnly(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--name", "plain-wt", "--base", "main", "plain")
+	if got, want := r.Stdout, worktreePath(repo, "plain-wt")+"\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+}
+
+// ---------- upstream preservation with a pinned base (review cycle 1) ----------
+
+func TestCreate_RemoteTrackingBase_SetsUpstream(t *testing.T) {
+	repo := createTestRepo(t)
+	pushMainToRemote(t, repo)
+
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--name", "up-wt", "--base", "origin/main", "nb")
+	wtPath := strings.TrimSpace(r.Stdout)
+
+	if got := gitRun(t, repo, "rev-parse", "--abbrev-ref", "nb@{upstream}"); got != "origin/main" {
+		t.Errorf("nb upstream = %q, want origin/main", got)
+	}
+	if got, want := gitRun(t, wtPath, "rev-parse", "HEAD"), gitRun(t, repo, "rev-parse", "origin/main"); got != want {
+		t.Errorf("worktree HEAD = %s, want pinned %s", got, want)
+	}
+
+	// An unpushed commit is visible to the status machinery that guards delete.
+	gitRun(t, wtPath, "commit", "-q", "--allow-empty", "-m", "unpushed")
+	list := runWtSuccess(t, repo, nil, "list", "--json", "--status")
+	var found bool
+	for _, e := range parseJSONList(t, list.Stdout) {
+		if e["name"] == "up-wt" {
+			found = true
+			if n, _ := e["unpushed"].(float64); n < 1 {
+				t.Errorf("unpushed = %v, want >= 1 (entry %v)", e["unpushed"], e)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("worktree up-wt not in list: %s", list.Stdout)
+	}
+}
+
+func TestCreate_LocalBase_NoUpstream(t *testing.T) {
+	repo := createTestRepo(t)
+
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--name", "noup-wt", "--base", "main", "nb")
+
+	if out, err := exec.Command("git", "-C", repo, "rev-parse", "--abbrev-ref", "nb@{upstream}").CombinedOutput(); err == nil {
+		t.Errorf("nb unexpectedly has upstream %q", strings.TrimSpace(string(out)))
+	}
+}
+
+// TestCreateJSON_ReuseWithBaseConflict asserts the --reuse + --base usage
+// error (W3) is reported as a --json failure document, not stderr-only.
+func TestCreateJSON_ReuseWithBaseConflict(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWt(t, repo, nil, "create", "--json", "--reuse", "--name", "fresh-wt", "--base", "main", "nb")
+	assertExitCode(t, r, 2)
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Error == nil || doc.Error.Code != 2 || doc.Error.Message != "--reuse and --base cannot be combined" {
+		t.Errorf("unexpected doc: %s", r.Stdout)
+	}
+	assertWorktreeNotExists(t, repo, "fresh-wt")
+	assertBranchNotExists(t, repo, "nb")
+}
+
+// TestCreate_ReuseWithFetchConflict asserts --reuse + --fetch is a usage error
+// before any mutation or network call, whether or not the name collides, and
+// that under --json it is a failure document.
+func TestCreate_ReuseWithFetchConflict(t *testing.T) {
+	repo := createTestRepo(t)
+	existing := createWorktreeViaWt(t, repo, "reuse-fetch-hit")
+	// A broken origin proves no fetch is attempted before the conflict fires.
+	gitRun(t, repo, "remote", "set-url", "origin", filepath.Join(repo, "no-such-remote.git"))
+
+	// Name collides (would be a reuse hit).
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--reuse", "--name", "reuse-fetch-hit", "--fetch")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "--reuse and --fetch cannot be combined")
+	assertNotContains(t, r.Stderr, "Failed to fetch")
+	assertDirExists(t, existing)
+
+	// Name is free (would be a fresh create from HEAD).
+	r = runWt(t, repo, nil, "create", "--json", "--reuse", "--name", "reuse-fetch-miss", "--fetch", "nb")
+	assertExitCode(t, r, 2)
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Error == nil || doc.Error.Code != 2 || doc.Error.Message != "--reuse and --fetch cannot be combined" {
+		t.Errorf("unexpected doc: %s", r.Stdout)
+	}
+	assertWorktreeNotExists(t, repo, "reuse-fetch-miss")
+	assertBranchNotExists(t, repo, "nb")
+}
+
+// TestCreate_SetUpstreamFailure_RollsBackCompletely forces the post-add
+// set-upstream to fail (a stale .git/config.lock) and asserts exit 3, the
+// failure document, and that neither the worktree nor the branch is left.
+func TestCreate_SetUpstreamFailure_RollsBackCompletely(t *testing.T) {
+	repo := createTestRepo(t)
+	pushMainToRemote(t, repo)
+	if err := os.WriteFile(filepath.Join(repo, ".git", "config.lock"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--no-init", "--json",
+		"--name", "w", "--base", "origin/main", "nb")
+	assertExitCode(t, r, 3)
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Error == nil || doc.Error.Code != 3 || doc.Result != nil {
+		t.Errorf("unexpected doc: %s", r.Stdout)
+	}
+	assertWorktreeNotExists(t, repo, "w")
+	assertBranchNotExists(t, repo, "nb")
+	assertContains(t, r.Stderr, "Failed to set upstream 'origin/main' for branch 'nb'")
+	assertContains(t, r.Stderr, "stale config.lock")
+	if doc.Error != nil && !strings.HasPrefix(doc.Error.Message, "Failed to set upstream") {
+		t.Errorf("error.message = %q", doc.Error.Message)
+	}
+}
+
+// TestCreate_StrayRemoteTrackingBase_NoUpstreamNoError: a refs/remotes/* ref no
+// configured remote's refspec maps to is not a tracking candidate — git creates
+// the branch untracked and exits 0, and so must wt.
+func TestCreate_StrayRemoteTrackingBase_NoUpstreamNoError(t *testing.T) {
+	repo := createTestRepo(t)
+	gitRun(t, repo, "update-ref", "refs/remotes/ghost/main", "HEAD")
+
+	r := runWtSuccess(t, repo, nil, "create", "--json", "--no-init", "--name", "w5", "--base", "ghost/main", "nb5")
+	parseCreateDoc(t, r)
+	assertBranchExists(t, repo, "nb5")
+	if out, err := exec.Command("git", "-C", repo, "rev-parse", "--abbrev-ref", "nb5@{upstream}").CombinedOutput(); err == nil {
+		t.Errorf("nb5 unexpectedly has upstream %q", strings.TrimSpace(string(out)))
+	}
+}
+
+func TestJSONDocGuard_EmitsExactlyOnce(t *testing.T) {
+	var g jsonDocGuard
+	if !g.emit(`{"ok":true}`) {
+		t.Error("first emit should print")
+	}
+	if g.emit(`{"ok":false}`) {
+		t.Error("second emit must be suppressed")
+	}
+}
+
+// ---------- --json × --temp / --pr ----------
+
+// TestCreateJSON_Temp asserts a --temp create reports mode "temp", a null
+// branch, and the --temp ref + resolved SHA as base_ref / base_sha.
+func TestCreateJSON_Temp(t *testing.T) {
+	repo := createTestRepo(t)
+	head := gitRun(t, repo, "rev-parse", "HEAD")
+
+	r := runWtSuccess(t, repo, nil, "create", "--json", "--temp", "main", "--name", "surgery")
+	doc, _ := parseCreateDoc(t, r)
+	res := doc.Result
+	if res.Mode != "temp" || res.Branch != nil || res.Name != "tmp-surgery" {
+		t.Errorf("unexpected result: %s", r.Stdout)
+	}
+	if res.BaseRef == nil || *res.BaseRef != "main" || res.BaseSHA == nil || *res.BaseSHA != head {
+		t.Errorf("base_ref/base_sha = %v/%v, want main/%s", res.BaseRef, res.BaseSHA, head)
+	}
+	if res.Init != "skipped" {
+		t.Errorf("init = %q, want skipped (temp init is opt-in)", res.Init)
+	}
+}
+
+// TestCreateJSON_TempConflictDocument asserts a --temp mode conflict is a
+// --json failure document, not stderr-only.
+func TestCreateJSON_TempConflictDocument(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWt(t, repo, nil, "create", "--json", "--temp", "HEAD", "--base", "main")
+	assertExitCode(t, r, 2)
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Error == nil || doc.Error.Code != 2 || doc.Error.Message != "--temp cannot be combined with --base" {
+		t.Errorf("unexpected doc: %s", r.Stdout)
+	}
+}
+
+// TestCreateJSON_PR asserts a --pr create reports mode "checkout" on the PR's
+// head branch, and that a fork PR is a code-2 failure document.
+func TestCreateJSON_PR(t *testing.T) {
+	repo := createTestRepo(t)
+	gitRun(t, repo, "branch", "pr-head")
+
+	env, _ := writeGhStub(t, prHeadJSON("pr-head", false), "", 0)
+	r := runWtSuccess(t, repo, env, "create", "--json", "--pr", "12", "--name", "pr-wt")
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Result.Mode != "checkout" || doc.Result.Branch == nil || *doc.Result.Branch != "pr-head" || doc.Result.BaseSHA != nil {
+		t.Errorf("unexpected result: %s", r.Stdout)
+	}
+
+	forkEnv, _ := writeGhStub(t, prHeadJSON("their-branch", true), "", 0)
+	r = runWt(t, repo, forkEnv, "create", "--json", "--pr", "13", "--name", "fork-wt")
+	assertExitCode(t, r, 2)
+	doc, _ = parseCreateDoc(t, r)
+	if doc.Error == nil || doc.Error.Code != 2 {
+		t.Errorf("unexpected doc: %s", r.Stdout)
+	}
+	assertWorktreeNotExists(t, repo, "fork-wt")
 }

@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 
@@ -32,6 +34,8 @@ func createCmd() *cobra.Command {
 		pr             string
 		temp           string
 		initFlag       bool
+		fetch          bool
+		jsonOut        bool
 	)
 
 	cmd := &cobra.Command{
@@ -51,8 +55,9 @@ use --checkout to put a worktree on an existing branch.
 fetched then checked out). --checkout cannot be combined with a positional
 branch argument or with --base.
 
---reuse cannot be combined with --base: a reused worktree keeps its existing
-branch, so a start-point has nothing to apply to.
+--reuse cannot be combined with --base or --fetch: a reused worktree keeps its
+existing branch, so a start-point has nothing to apply to (and a fresh --reuse
+worktree starts at HEAD, which a fetch never moves).
 
 --pr <n> creates the worktree on pull request <n>'s head branch, resolved
 with the GitHub CLI (gh pr view), then checked out exactly like --checkout.
@@ -69,6 +74,48 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			var branchArg string
 			if len(args) > 0 {
 				branchArg = args[0]
+			}
+
+			// doc guards the --json document: exactly one is ever printed, even
+			// when the SIGINT/SIGTERM handler races a failure or success path.
+			// printSuccess/printFailure are the main-path emitters; if the signal
+			// handler already claimed the document they park forever so the
+			// handler's exit 130 is the process's exit (the document says 130).
+			var doc jsonDocGuard
+			printSuccess := func(r wt.CreateReceipt) {
+				if d, err := wt.FormatCreateSuccessJSON(r); err == nil && !doc.emit(d) {
+					select {}
+				}
+			}
+			printFailure := func(code int, message string, r *wt.CreateReceipt) {
+				if d, err := wt.FormatCreateFailureJSON(code, message, r); err == nil && !doc.emit(d) {
+					select {}
+				}
+			}
+
+			// fail is the single failure exit for RunE: the structured error goes
+			// to stderr as always, and under --json the failure document goes to
+			// stdout (exactly one document on every exit path). It exits the
+			// process with code.
+			fail := func(code int, what, why, fix string) {
+				wt.PrintError(what, why, fix)
+				if jsonOut {
+					printFailure(code, what, nil)
+				}
+				os.Exit(code)
+			}
+
+			// --json implies --non-interactive and defaults --open to skip; an
+			// explicit non-skip --open is a usage error (opening an app can write
+			// to stdout or prompt, and stdout is reserved for the one document).
+			if jsonOut {
+				if (cmd.Flags().Changed("open") || cmd.Flags().Changed("worktree-open")) && worktreeOpen != "skip" {
+					fail(wt.ExitInvalidArgs,
+						fmt.Sprintf("--json cannot be combined with --open %s", worktreeOpen),
+						"--json reserves stdout for one JSON document; opening an app can write to stdout or prompt",
+						"Drop --open (it defaults to skip under --json), or drop --json")
+				}
+				nonInteractive = true
 			}
 
 			// Apply defaults. --no-init (real bool) supersedes the deprecated
@@ -96,38 +143,45 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			}
 
 			tempMode := cmd.Flags().Changed("temp")
-			checkModeConflicts(tempMode, branchArg, checkout, reuse, base, cmd.Flags().Changed("pr"), initFlag, noInit)
+			checkModeConflicts(fail, tempMode, branchArg, checkout, reuse, base, cmd.Flags().Changed("pr"), initFlag, noInit)
 
 			// Validate --reuse requires --name
 			if reuse && worktreeName == "" {
-				wt.PrintError(
+				fail(wt.ExitInvalidArgs,
 					"--reuse requires --name",
 					"--reuse only works with an explicit worktree name",
 					"Example: wt create --reuse --name my-feature branch-name")
-				os.Exit(wt.ExitInvalidArgs)
 			}
 
 			// --checkout selects an existing branch; the positional creates a
 			// new one. They are mutually exclusive modes, as are --checkout and
 			// --base, and --reuse and --base (--base is the start-point for a
-			// NEW branch only).
+			// NEW branch only). --reuse and --fetch conflict too: a reuse keeps
+			// its branch and a --reuse miss starts at HEAD, which a fetch never
+			// moves.
 			if checkout != "" && branchArg != "" {
-				wt.ExitWithError(wt.ExitInvalidArgs,
+				fail(wt.ExitInvalidArgs,
 					"--checkout cannot be combined with a positional branch argument",
 					"The positional creates a new branch; --checkout checks out an existing one",
 					"Use one of: wt create <new-branch> | wt create --checkout <existing-branch>")
 			}
 			if checkout != "" && base != "" {
-				wt.ExitWithError(wt.ExitInvalidArgs,
+				fail(wt.ExitInvalidArgs,
 					"--base cannot be combined with --checkout",
 					"--base is the start-point for a NEW branch; --checkout targets an existing branch",
 					"Drop --base, or create a new branch: wt create <name> --base <ref>")
 			}
 			if reuse && base != "" {
-				wt.ExitWithError(wt.ExitInvalidArgs,
+				fail(wt.ExitInvalidArgs,
 					"--reuse and --base cannot be combined",
 					"--reuse keeps the existing worktree's branch, so a start-point has nothing to apply to",
 					"Drop --base, or drop --reuse to create a new worktree")
+			}
+			if reuse && fetch {
+				fail(wt.ExitInvalidArgs,
+					"--reuse and --fetch cannot be combined",
+					"--reuse keeps the existing worktree's branch, and a new worktree from --reuse starts at HEAD, so there is no base for --fetch to refresh",
+					"Drop --fetch, or drop --reuse to create a new worktree (wt create --name <name> --base origin/<branch> --fetch)")
 			}
 
 			// --pr resolves a PR's head branch and then runs the --checkout
@@ -137,31 +191,31 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			// to a bare create.
 			if cmd.Flags().Changed("pr") {
 				if !prNumberPattern.MatchString(pr) {
-					wt.ExitWithError(wt.ExitInvalidArgs,
+					fail(wt.ExitInvalidArgs,
 						fmt.Sprintf("Invalid --pr value: %s", pr),
 						"--pr takes a pull request number",
 						"Example: wt create --pr 42")
 				}
 				if branchArg != "" {
-					wt.ExitWithError(wt.ExitInvalidArgs,
+					fail(wt.ExitInvalidArgs,
 						"--pr cannot be combined with a positional branch argument",
 						"--pr checks out the PR's existing head branch; the positional creates a new branch",
 						"Use one of: wt create <new-branch> | wt create --pr <n>")
 				}
 				if base != "" {
-					wt.ExitWithError(wt.ExitInvalidArgs,
+					fail(wt.ExitInvalidArgs,
 						"--base cannot be combined with --pr",
 						"--base is the start-point for a NEW branch; --pr targets the PR's existing head branch",
 						"Drop --base, or create a new branch: wt create <name> --base <ref>")
 				}
 				if checkout != "" {
-					wt.ExitWithError(wt.ExitInvalidArgs,
+					fail(wt.ExitInvalidArgs,
 						"--pr cannot be combined with --checkout",
 						"Both select an existing branch to check out",
 						"Use one of: wt create --pr <n> | wt create --checkout <branch>")
 				}
 				if reuse {
-					wt.ExitWithError(wt.ExitInvalidArgs,
+					fail(wt.ExitInvalidArgs,
 						"--pr cannot be combined with --reuse",
 						"--reuse keeps an existing worktree's branch, so there is no PR head to check out",
 						"Drop --reuse, or reuse by name: wt create --reuse --name <name>")
@@ -170,7 +224,7 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 
 			// Validate git repo
 			if err := wt.ValidateGitRepo(); err != nil {
-				wt.ExitWithError(wt.ExitGitError,
+				fail(wt.ExitGitError,
 					"Not a git repository",
 					"This command requires a git repository",
 					"Navigate to a git repository and try again")
@@ -178,7 +232,7 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 
 			ctx, err := wt.GetRepoContext()
 			if err != nil {
-				wt.ExitWithError(wt.ExitGeneralError,
+				fail(wt.ExitGeneralError,
 					"Not a git repository",
 					"This command must be run from within a git repository",
 					"Navigate to a git repository and try again")
@@ -191,22 +245,45 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 				head, err := wt.ResolvePRHead(pr)
 				switch {
 				case errors.Is(err, wt.ErrGhNotFound):
-					wt.ExitWithError(wt.ExitGeneralError,
+					fail(wt.ExitGeneralError,
 						"GitHub CLI (gh) not found",
 						"--pr resolves the pull request's head branch with gh",
 						"Install gh (https://cli.github.com) and run gh auth login, or use: wt create --checkout <branch>")
 				case errors.Is(err, wt.ErrPRCrossRepository):
-					wt.ExitWithError(wt.ExitInvalidArgs,
+					fail(wt.ExitInvalidArgs,
 						fmt.Sprintf("PR #%s is from a fork (head branch '%s')", pr, head.Branch),
 						"--pr only supports pull requests whose head branch is in this repository",
 						"Add the fork as a remote and use --checkout")
 				case err != nil:
-					wt.ExitWithError(wt.ExitGeneralError,
+					fail(wt.ExitGeneralError,
 						fmt.Sprintf("Could not resolve PR #%s", pr),
 						err.Error(),
 						"Check the PR number and that gh is authenticated (gh auth status)")
 				}
 				checkout = head.Branch
+			}
+
+			// A --reuse create whose name already exists takes the reuse path:
+			// no base resolution (--reuse + --base and --reuse + --fetch were
+			// rejected above). --reuse requires --name, so the final name is known here.
+			reuseHit := reuse && wt.CheckNameCollision(ctx.WorktreesDir, worktreeName)
+
+			// --fetch: refresh the base's remote BEFORE the base (or the --temp
+			// ref) is resolved so the worktree is cut from fresh refs. A no-op
+			// for --checkout / --pr (the remote-only path already fetches).
+			// All of this precedes the create dispatch (reinstall-window rule).
+			if fetch && checkout == "" {
+				fetchRef := base
+				if tempMode {
+					fetchRef = temp
+				}
+				remote := wt.RemoteForRef(fetchRef)
+				if err := wt.FetchRemote(remote); err != nil {
+					fail(wt.ExitGitError,
+						fmt.Sprintf("Failed to fetch remote '%s'", remote),
+						err.Error(),
+						"Check the remote URL and your network/credentials (git remote -v), or drop --fetch to use the local ref")
+				}
 			}
 
 			// --temp: resolve the ref to a commit once, up front (before any
@@ -215,7 +292,7 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			if tempMode {
 				tempSHA, err = wt.ResolveCommit(temp)
 				if err != nil {
-					wt.ExitWithError(wt.ExitInvalidArgs,
+					fail(wt.ExitInvalidArgs,
 						fmt.Sprintf("Invalid --temp ref: %s", temp),
 						fmt.Sprintf("'%s' does not resolve to a commit", temp),
 						"Provide a valid branch name, tag, or commit SHA")
@@ -228,7 +305,17 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 			go func() {
 				<-sigCh
-				fmt.Println()
+				if jsonOut {
+					// stdout is reserved for the one document: emit the
+					// interrupted failure instead of the framing newline.
+					d, _ := wt.FormatCreateFailureJSON(130, "interrupted", nil)
+					if !doc.emit(d) {
+						// A document is already out: the main path owns the exit.
+						return
+					}
+				} else {
+					fmt.Println()
+				}
 				rb.Execute()
 				os.Exit(130)
 			}()
@@ -244,22 +331,39 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			}
 			if branchToValidate != "" {
 				if err := wt.ValidateBranchName(branchToValidate); err != nil {
-					wt.ExitWithError(wt.ExitInvalidArgs,
+					fail(wt.ExitInvalidArgs,
 						"Invalid branch name",
 						fmt.Sprintf("Branch name '%s' contains invalid characters", branchToValidate),
 						"Use alphanumeric characters, hyphens, and single slashes")
 				}
 			}
 
-			// Validate --base ref whenever it is set. --base + --checkout and
-			// --base + --reuse were both rejected above, so a --base reaching
-			// here always applies to a NEW branch (positional or bare).
-			if base != "" {
-				if err := exec.Command("git", "rev-parse", "--verify", base).Run(); err != nil {
-					wt.ExitWithError(wt.ExitInvalidArgs,
-						fmt.Sprintf("Invalid --base ref: %s", base),
-						fmt.Sprintf("'%s' does not resolve to a valid git object", base),
-						"Provide a valid branch name, tag, or commit SHA")
+			// Resolve the new-branch start-point ONCE to a full SHA and pin it:
+			// the branch is cut from exactly this commit and the receipt's
+			// base_sha reports it. --base always applies to a NEW branch
+			// (--base + --checkout was rejected above); --checkout and a taken
+			// --reuse never create a branch, and --temp detaches at its own
+			// resolved ref, so they resolve nothing here.
+			var baseSHA, baseUpstream string
+			if checkout == "" && !reuseHit && !tempMode {
+				if base != "" {
+					sha, err := wt.ResolveCommit(base)
+					if err != nil {
+						fail(wt.ExitInvalidArgs,
+							fmt.Sprintf("Invalid --base ref: %s", base),
+							fmt.Sprintf("'%s' does not resolve to a valid git object", base),
+							"Provide a valid branch name, tag, or commit SHA")
+					}
+					baseSHA = sha
+				} else {
+					sha, err := wt.ResolveCommit("HEAD")
+					if err != nil {
+						fail(wt.ExitGitError,
+							"Failed to resolve HEAD",
+							err.Error(),
+							"Make an initial commit first, or pass --base <ref>")
+					}
+					baseSHA = sha
 				}
 			}
 
@@ -281,14 +385,14 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 					"Abort",
 				}, -1)
 				if err != nil {
-					wt.ExitWithError(wt.ExitGeneralError, "Menu error", err.Error(), "")
+					fail(wt.ExitGeneralError, "Menu error", err.Error(), "")
 				}
 				switch choice {
 				case 1: // continue
 				case 2:
 					stashID, err := wt.StashCreate("wt-create: pre-creation stash")
 					if err != nil {
-						wt.ExitWithError(wt.ExitGeneralError,
+						fail(wt.ExitGeneralError,
 							"Failed to create stash",
 							err.Error(),
 							"Resolve any repository issues and try again")
@@ -310,7 +414,7 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			case tempMode:
 				suggestedName, err = wt.GenerateUniqueNameWithPrefix(ctx.WorktreesDir, wt.TempNamePrefix, 10)
 				if err != nil {
-					wt.ExitWithError(wt.ExitRetryExhausted,
+					fail(wt.ExitRetryExhausted,
 						"Could not find unique worktree name",
 						"All 10 random name attempts collided with existing worktrees",
 						fmt.Sprintf("Remove some worktrees from %s or increase retries", ctx.WorktreesDir))
@@ -322,7 +426,7 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			default:
 				suggestedName, err = wt.GenerateUniqueName(ctx.WorktreesDir, 10)
 				if err != nil {
-					wt.ExitWithError(wt.ExitRetryExhausted,
+					fail(wt.ExitRetryExhausted,
 						"Could not find unique worktree name",
 						"All 10 random name attempts collided with existing worktrees",
 						fmt.Sprintf("Remove some worktrees from %s or increase retries", ctx.WorktreesDir))
@@ -352,16 +456,32 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 					existingWtPath := filepath.Join(ctx.WorktreesDir, finalName)
 					// Run init script on reuse — ensures skills are current even in existing worktrees.
 					// Non-fatal: reuse proceeds even if init fails (existing worktree may be functional).
+					reuseInit := wt.InitSkipped
 					if worktreeInit == "true" {
 						initScript, isDefault := wt.InitScriptPath()
-						if err := wt.RunWorktreeSetup(existingWtPath, initScript, isDefault, ctx.RepoRoot); err != nil {
+						var err error
+						reuseInit, err = wt.RunWorktreeSetupOutcome(existingWtPath, initScript, isDefault, ctx.RepoRoot, nil)
+						if err != nil {
 							wt.Warn("worktree init failed for reused worktree %q: %v", finalName, err)
 						}
+					}
+					if jsonOut {
+						// The reused worktree's branch is read best-effort;
+						// unreadable or detached is null.
+						var reuseBranch *string
+						if b := wt.BranchForPath(existingWtPath); b != "unknown" && b != "HEAD" {
+							reuseBranch = wt.StrPtr(b)
+						}
+						printSuccess(wt.CreateReceipt{
+							Path: existingWtPath, Name: finalName, Branch: reuseBranch,
+							Mode: wt.ModeReuse, Init: reuseInit,
+						})
+						return nil
 					}
 					fmt.Println(existingWtPath)
 					return nil
 				}
-				wt.ExitWithError(wt.ExitGeneralError,
+				fail(wt.ExitGeneralError,
 					fmt.Sprintf("Worktree '%s' already exists", finalName),
 					fmt.Sprintf("A worktree with this name already exists at %s/%s", ctx.WorktreesDir, finalName),
 					"Remove the existing worktree or use a different branch name")
@@ -395,9 +515,12 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			//   --pr       → fixed copy naming the PR and its head (no query)
 			//   --temp     → the ref as typed plus the resolved short SHA (no query)
 			//   --checkout → fixed copy naming the existing-branch path (no query)
-			//   --base     → the ref verbatim as typed (no query)
+			//   --base     → the ref as typed plus " @ <short-sha>" of the pinned
+			//                start-point (no further query)
 			//   else       → the resolved HEAD label (one query, best-effort)
-			var createdSummaryFrom string
+			// baseRefLabel is the receipt's base_ref: the --base ref verbatim,
+			// or the HEAD label when no --base was given.
+			var createdSummaryFrom, baseRefLabel string
 			switch {
 			case tempMode:
 				createdSummaryFrom = fmt.Sprintf("%s @ %s", temp, wt.ShortSHA(tempSHA))
@@ -406,16 +529,42 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			case checkout != "":
 				createdSummaryFrom = fmt.Sprintf("existing branch '%s' (checked out directly)", checkout)
 			case base != "":
-				createdSummaryFrom = base
+				baseRefLabel = base
+				createdSummaryFrom = base + " @ " + wt.ShortSHA(baseSHA)
 			default:
-				createdSummaryFrom = wt.DescribeHead()
+				baseRefLabel = wt.DescribeHead()
+				createdSummaryFrom = baseRefLabel
+			}
+
+			// failIfSetUpstream maps a post-add set-upstream failure (already
+			// rolled back by internal/worktree) to its own exit-3 copy.
+			failIfSetUpstream := func(err error) {
+				var upErr *wt.SetUpstreamError
+				if errors.As(err, &upErr) {
+					why, _, _ := strings.Cut(upErr.Output, "\n")
+					fail(wt.ExitGitError,
+						fmt.Sprintf("Failed to set upstream '%s' for branch '%s'", upErr.Upstream, upErr.Branch),
+						why,
+						"Check that .git/config is writable (no stale config.lock), then retry")
+				}
+			}
+
+			// The upstream git would have auto-tracked had it been given the ref
+			// name rather than the pinned SHA: a pure lookup resolved here, before
+			// the dispatch, so only the write happens after the worktree add.
+			if checkout == "" && !tempMode {
+				newBranch := branchArg
+				if newBranch == "" {
+					newBranch = finalName
+				}
+				baseUpstream = wt.UpstreamForBase(base, newBranch)
 			}
 
 			switch {
 			case tempMode:
 				wtPath, err = wt.CreateTempWorktree(tempSHA, finalName, ctx, rb)
 				if err != nil {
-					wt.ExitWithError(wt.ExitGitError, "Failed to create worktree", err.Error(),
+					fail(wt.ExitGitError, "Failed to create worktree", err.Error(),
 						"Check that the commit is reachable and the worktrees directory is writable")
 				}
 				createdSummaryBranch = wt.DetachedBranchLabel
@@ -423,41 +572,74 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 				wtPath, err = wt.CheckoutBranchWorktree(checkout, finalName, ctx, rb)
 				if err != nil {
 					if errors.Is(err, wt.ErrBranchNotFound) && pr != "" {
-						wt.ExitWithError(wt.ExitInvalidArgs,
+						fail(wt.ExitInvalidArgs,
 							fmt.Sprintf("PR #%s head branch '%s' not found", pr, checkout),
 							"The branch exists neither locally nor on origin",
 							fmt.Sprintf("Fetch it yourself, or check the PR: gh pr view %s", pr))
 					}
 					if errors.Is(err, wt.ErrBranchNotFound) {
-						wt.ExitWithError(wt.ExitInvalidArgs,
+						fail(wt.ExitInvalidArgs,
 							fmt.Sprintf("Branch '%s' not found", checkout),
 							"--checkout requires an existing local or remote branch",
 							fmt.Sprintf("To create a new branch: wt create %s [--base <ref>]", checkout))
 					}
-					wt.ExitWithError(wt.ExitGitError, "Failed to create worktree", err.Error(),
+					fail(wt.ExitGitError, "Failed to create worktree", err.Error(),
 						"The branch may already be checked out in another worktree")
 				}
 				createdSummaryBranch = checkout
 			case branchArg != "":
-				wtPath, err = wt.CreateNewBranchWorktree(branchArg, finalName, ctx, rb, base)
+				wtPath, err = wt.CreateNewBranchWorktree(branchArg, finalName, ctx, rb, baseSHA, baseUpstream)
 				if err != nil {
 					if errors.Is(err, wt.ErrBranchExists) {
-						wt.ExitWithError(wt.ExitInvalidArgs,
+						fail(wt.ExitInvalidArgs,
 							fmt.Sprintf("Branch '%s' already exists", branchArg),
 							"The positional argument only creates new branches",
 							fmt.Sprintf("To put a worktree on the existing branch: wt create --checkout %s", branchArg))
 					}
-					wt.ExitWithError(wt.ExitGitError, "Failed to create worktree", err.Error(),
+					failIfSetUpstream(err)
+					fail(wt.ExitGitError, "Failed to create worktree", err.Error(),
 						"The branch may already be checked out in another worktree")
 				}
 				createdSummaryBranch = branchArg
 			default:
-				wtPath, err = wt.CreateExploratoryWorktree(finalName, ctx, rb, base)
+				wtPath, err = wt.CreateExploratoryWorktree(finalName, ctx, rb, baseSHA, baseUpstream)
 				if err != nil {
-					wt.ExitWithError(wt.ExitGitError, "Failed to create worktree", err.Error(),
+					failIfSetUpstream(err)
+					fail(wt.ExitGitError, "Failed to create worktree", err.Error(),
 						"Check if the branch already exists or if there are permission issues")
 				}
 				createdSummaryBranch = finalName
+			}
+
+			// Assemble the receipt (pure data, no I/O — safe before the
+			// init-phase signal.Reset). init is filled in once init has run.
+			receipt := wt.CreateReceipt{
+				Path:   wtPath,
+				Name:   finalName,
+				Branch: wt.StrPtr(createdSummaryBranch),
+				Mode:   wt.ModeNew,
+				Init:   wt.InitSkipped,
+			}
+			switch {
+			case tempMode:
+				receipt.Mode = wt.ModeTemp
+				receipt.Branch = nil
+				receipt.BaseRef = wt.StrPtr(temp)
+				receipt.BaseSHA = wt.StrPtr(tempSHA)
+			case checkout != "":
+				receipt.Mode = wt.ModeCheckout
+			default:
+				receipt.BaseRef = wt.StrPtr(baseRefLabel)
+				receipt.BaseSHA = wt.StrPtr(baseSHA)
+			}
+			// exitInitFailed ends the run for an init failure with the worktree
+			// kept: exit 7, and under --json the failure document carries the
+			// kept worktree's receipt.
+			exitInitFailed := func(initErr error) {
+				if jsonOut {
+					printFailure(wt.ExitInitFailed, wt.InitFailureMessage(initErr), &receipt)
+				}
+				os.Exit(wt.ExitInitFailed)
 			}
 
 			// Setup
@@ -472,7 +654,7 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			//   2. Emit the deferred summary lines (still under the
 			//      rollback handler).
 			//   3. Swap to the init-phase handler with NO I/O in between.
-			//   4. Run init via RunWorktreeSetupWithObserver (no prompt
+			//   4. Run init via RunWorktreeSetupOutcome (no prompt
 			//      inside the runner).
 			// The confirm fires whenever a branch was explicitly named —
 			// positional (new branch) or --checkout / --pr (existing branch) —
@@ -501,6 +683,7 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			// force ExitInitFailed on ALL init-failure paths — a successful
 			// open must NOT downgrade the exit to 0.
 			var initFailed bool
+			var initFailedErr error
 			if runInit {
 				initScript, isDefault := wt.InitScriptPath()
 
@@ -571,7 +754,8 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 				}()
 				captureInit := func(c *exec.Cmd) { initCmdPtr.Store(c) }
 
-				initErr := wt.RunWorktreeSetupWithObserver(wtPath, initScript, isDefault, ctx.RepoRoot, captureInit)
+				initOutcome, initErr := wt.RunWorktreeSetupOutcome(wtPath, initScript, isDefault, ctx.RepoRoot, captureInit)
+				receipt.Init = initOutcome
 
 				// SIGINT Option B teardown — tear down the init-child signal
 				// handler before any further TTY work (banner, open-anyway
@@ -600,6 +784,7 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 					// operators can still distinguish "worktree exists, init
 					// didn't complete" from other failures.
 					initFailed = true
+					initFailedErr = initErr
 					// Worktree is KEPT on init-script non-zero exit: disarm the
 					// rollback so the deferred rb.Execute() (which still fires on
 					// any OTHER failure) does not remove the just-created worktree.
@@ -623,7 +808,7 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 						// the initFailed check.
 					} else {
 						// Non-interactive: exit 7 immediately, no prompt, no Open.
-						os.Exit(wt.ExitInitFailed)
+						exitInitFailed(initErr)
 					}
 				}
 			}
@@ -682,6 +867,9 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			// where rb was already disarmed in the init-failure branch — the
 			// worktree was always kept).
 			rb.Disarm()
+			// Rollback is over: a late SIGINT/SIGTERM must not run the rollback
+			// handler (or print the 130 document) for a worktree that is kept.
+			signal.Stop(sigCh)
 
 			// Init-failure override: when the interactive open-anyway path
 			// fell through to Open, the process MUST still exit
@@ -690,7 +878,7 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			// This is the single exit point for the open-anyway path; it runs
 			// regardless of whether the open succeeded or the user chose No.
 			if initFailed {
-				os.Exit(wt.ExitInitFailed)
+				exitInitFailed(initFailedErr)
 			}
 
 			// Output the worktree path as the last line. This runs on every
@@ -699,6 +887,10 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 			// contract is "the worktree path is always the last line", not
 			// "exactly one line"). The former open_here suppression special
 			// case is retired with the unified shell-cd contract.
+			if jsonOut {
+				printSuccess(receipt)
+				return nil
+			}
 			fmt.Println(wtPath)
 			return nil
 		},
@@ -722,11 +914,13 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 	cmd.Flags().BoolVar(&noInit, "no-init", false, "Skip the worktree init script (init runs by default)")
 	cmd.Flags().StringVar(&worktreeInit, "worktree-init", "", "Run worktree init script: true (default) or false")
 	cmd.Flags().MarkDeprecated("worktree-init", "use --no-init instead")
-	cmd.Flags().BoolVar(&reuse, "reuse", false, "Reuse existing worktree if name collides (requires --name; not with --base)")
+	cmd.Flags().BoolVar(&reuse, "reuse", false, "Reuse existing worktree if name collides (requires --name; not with --base or --fetch)")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts; use defaults and skip menus")
 	cmd.Flags().StringVar(&base, "base", "", "Git ref (branch, tag, SHA) to use as start-point for new branch (not with --checkout, --reuse, or --temp)")
 	cmd.Flags().StringVar(&temp, "temp", "", "Create a detached throwaway worktree at <ref> (no branch; name prefixed tmp-; init skipped unless --init)")
 	cmd.Flags().BoolVar(&initFlag, "init", false, "Run the worktree init script for --temp (skipped by default for temp worktrees)")
+	cmd.Flags().BoolVar(&fetch, "fetch", false, "Fetch the base's remote (first --base segment if it is a remote, else origin) before resolving the base")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Print one JSON receipt document on stdout (implies --non-interactive and --open skip)")
 	cmd.Flags().StringVar(&checkout, "checkout", "", "Check out an EXISTING branch (local or remote) into the worktree instead of creating a new one")
 	cmd.Flags().StringVar(&pr, "pr", "", "Create the worktree on pull request <n>'s head branch (resolved via gh; same-repository PRs only)")
 
@@ -736,10 +930,11 @@ branch argument, --checkout, --reuse, --base, or --pr.`,
 // checkModeConflicts exits ExitInvalidArgs when --temp is combined with a flag
 // or argument that selects a different creation mode, or when --init and
 // --no-init contradict each other. It runs before any git work so a rejected
-// invocation creates nothing.
-func checkModeConflicts(tempMode bool, branchArg, checkout string, reuse bool, base string, prSet, initFlag, noInit bool) {
+// invocation creates nothing. fail is create's failure exit (stderr error plus
+// the --json failure document).
+func checkModeConflicts(fail func(code int, what, why, fix string), tempMode bool, branchArg, checkout string, reuse bool, base string, prSet, initFlag, noInit bool) {
 	if initFlag && noInit {
-		wt.ExitWithError(wt.ExitInvalidArgs,
+		fail(wt.ExitInvalidArgs,
 			"--init cannot be combined with --no-init",
 			"--init opts in to the init script for --temp; --no-init skips it",
 			"Pass one of --init or --no-init")
@@ -749,29 +944,48 @@ func checkModeConflicts(tempMode bool, branchArg, checkout string, reuse bool, b
 	}
 	switch {
 	case branchArg != "":
-		wt.ExitWithError(wt.ExitInvalidArgs,
+		fail(wt.ExitInvalidArgs,
 			"--temp cannot be combined with a positional branch argument",
 			"--temp creates a detached worktree with no branch; the positional names a new branch",
 			"Use one of: wt create <new-branch> | wt create --temp <ref>")
 	case checkout != "":
-		wt.ExitWithError(wt.ExitInvalidArgs,
+		fail(wt.ExitInvalidArgs,
 			"--temp cannot be combined with --checkout",
 			"--temp creates a detached worktree; --checkout puts a worktree on an existing branch",
 			"Use one of: wt create --checkout <branch> | wt create --temp <ref>")
 	case reuse:
-		wt.ExitWithError(wt.ExitInvalidArgs,
+		fail(wt.ExitInvalidArgs,
 			"--temp cannot be combined with --reuse",
 			"A temp worktree is always freshly created; --reuse returns an existing one",
 			"Drop --reuse, or reuse by name without --temp: wt create --reuse --name <name>")
 	case base != "":
-		wt.ExitWithError(wt.ExitInvalidArgs,
+		fail(wt.ExitInvalidArgs,
 			"--temp cannot be combined with --base",
 			"--temp's <ref> is already the commit to detach at; --base is the start-point for a NEW branch",
 			"Pass the commit to --temp directly: wt create --temp <ref>")
 	case prSet:
-		wt.ExitWithError(wt.ExitInvalidArgs,
+		fail(wt.ExitInvalidArgs,
 			"--temp cannot be combined with --pr",
 			"--pr checks out the PR's head branch; --temp detaches at a commit",
 			"For a detached worktree at a PR head, pass its SHA: wt create --temp <sha>")
 	}
+}
+
+// jsonDocGuard lets exactly one `--json` document be printed per run.
+type jsonDocGuard struct {
+	mu   sync.Mutex
+	done bool
+}
+
+// emit prints doc (one line on stdout) and reports true, unless a document was
+// already emitted, in which case it prints nothing and reports false.
+func (g *jsonDocGuard) emit(doc string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.done {
+		return false
+	}
+	g.done = true
+	fmt.Println(doc)
+	return true
 }

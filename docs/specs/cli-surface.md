@@ -34,9 +34,11 @@ Create a git worktree as a sibling of the main repo (`<repo>.worktrees/<name>/`)
 | `--name`, `-n <name>` | random adjective-noun | Set the worktree directory name; skips the name prompt. |
 | `--open`, `-o <prompt\|default\|skip\|<app>>` | `prompt` (`skip` when `--non-interactive`) | Behavior after creation: show app menu, open in detected default, skip, or open in a specific app (e.g. `code`, `cursor`). Requires an explicit value (no bare form — a bare `--open code` would be parsed as the positional `[branch]`). |
 | `--no-init` | (unset — init runs) | Skip the worktree init script (init runs by default). |
-| `--reuse` | `false` | If a worktree with `--name` already exists, reuse it instead of erroring. Requires `--name`. Cannot be combined with `--base`. |
+| `--reuse` | `false` | If a worktree with `--name` already exists, reuse it instead of erroring. Requires `--name`. Cannot be combined with `--base` or `--fetch`. |
 | `--non-interactive` | `false` | No prompts; fail or use defaults rather than prompting. |
-| `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for the NEW branch. Validated via `git rev-parse --verify`. Cannot be combined with `--checkout` or `--reuse`. |
+| `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for the NEW branch. Resolved once to a full commit SHA (`git rev-parse --verify <ref>^{commit}`) and pinned — see "Base pinning" below. Cannot be combined with `--checkout` or `--reuse`. |
+| `--fetch` | `false` | Run `git fetch <remote>` before the base (or the `--temp` ref) is resolved, so the worktree is cut from fresh refs. `<remote>` is the first `/`-separated segment of `--base` / `--temp` when that segment is a configured remote, else `origin` (so `--base origin/main` and bare `--fetch` both fetch `origin`; `--base upstream/main` fetches `upstream`). No-op with `--checkout` / `--pr` (the remote-only path already fetches). Cannot be combined with `--reuse` (a reused worktree keeps its branch and a fresh `--reuse` worktree starts at `HEAD`, which a fetch never moves). Never implicit: without `--fetch`, no extra `git fetch` runs. Long-only. |
+| `--json` | `false` | Print one JSON receipt document on stdout instead of the path line — see "`--json` receipt" below. Implies `--non-interactive` and `--open skip`; an explicit `--open <non-skip>` (or `--worktree-open`) is a usage error. Long-only. |
 | `--checkout <branch>` | (none) | Check out an EXISTING branch (local as-is, or remote-only fetched then checked out) into the worktree, instead of creating a new one. Cannot be combined with a positional branch argument or with `--base`. |
 | `--pr <n>` | (none) | Create the worktree on pull request `<n>`'s head branch, resolved via `gh pr view <n> --json headRefName,isCrossRepository` (15 s timeout), then checked out exactly like `--checkout`. Same-repository PRs only. Cannot be combined with a positional branch argument, `--base`, `--checkout`, `--reuse`, or `--temp`. |
 | `--temp <ref>` | (none) | Create a DETACHED throwaway worktree at `<ref>` (branch, tag, or commit SHA) — see [Temp worktrees](#temp-worktrees-wt-create---temp-ref). Cannot be combined with a positional branch argument, `--checkout`, `--reuse`, `--base`, or `--pr`. Long-only. |
@@ -102,7 +104,56 @@ that must not pollute any branch.
 - Temp worktrees show in `wt list` (`temp: true`, see below) and are removed
   with `wt delete <name>`, which does no branch handling for them.
 
-On success, the worktree path is always written as the last line of stdout.
+**Base pinning.** For a new branch (positional or bare), the start-point is
+resolved once — `<--base>^{commit}`, else `HEAD^{commit}` — before the worktree
+is created, and the full 40-hex SHA is what `git worktree add -b` receives. The
+branch is therefore cut from exactly the commit reported as `base_sha`, even if
+the ref moves mid-command. Passing a SHA would lose the upstream git auto-sets for
+a ref name, so `wt` restores it after the add per `branch.autoSetupMerge`: a
+remote-tracking `--base` (e.g. `origin/main`, covered by a configured remote's
+fetch refspec — a stray `refs/remotes/*` ref no remote maps is left untracked, as
+in git) becomes the new branch's upstream (`always` also tracks a local branch;
+`simple` tracks a remote-tracking base only when its branch name equals the new
+branch's; `inherit` copies a local base branch's own upstream when it has one;
+`false` never; a SHA, tag or `HEAD` never) —
+this keeps `wt delete`'s unpushed-commits guard and `wt list --status` ↑N working.
+A set-upstream failure rolls the create back (exit 3). The Git-phase summary's `From:` line is
+`From: <ref-as-typed> @ <short-sha>` (7 characters) when `--base` was given; the
+no-`--base` HEAD label and the `--checkout` copy are unchanged.
+
+**`--json` receipt.** Under `--json`, stdout carries exactly one JSON document
+(compact, one line, terminated by a newline) on every exit path `RunE`
+controls, and nothing else; phase separators, the summary, warnings, init output
+and the structured `Error/Why/Fix` stay on stderr.
+
+```
+{"ok":true,"result":{"path","name","branch","base_ref","base_sha","mode","init"}}
+{"ok":false,"error":{"code":<exit code>,"message":"<the Error: line>"}[,"result":{…}]}
+```
+
+- `path` — absolute worktree path; `name` — worktree directory name; `branch` —
+  the new branch / `--checkout` or `--pr` head / (reuse) the existing worktree's
+  current branch (`null` when unreadable or detached, and always `null` for `temp`).
+- `base_ref` — `--base` verbatim, or the `HEAD` label when no `--base`, or the
+  `--temp` ref as typed; `base_sha` — the full 40-hex start-point (for `temp`, the
+  detached commit). Both are `null` for `checkout` (incl. `--pr`) and `reuse`.
+- `mode` — `new` | `checkout` (also `--pr`) | `reuse` | `temp`.
+- `init` — `ok` (script ran, exit 0) | `failed` | `skipped` (`--no-init`, or the
+  built-in default's not-applicable skip) | `not-found` (the init command/file is
+  missing).
+- `error.code` is the integer process exit code and `ok` is true iff the exit
+  code is 0. An init failure (exit 7, worktree kept) is `ok:false` and also
+  carries `result` (with `init:"failed"`) so the kept worktree is discoverable; a
+  `--reuse` hit whose init fails stays non-fatal (`ok:true`, `init:"failed"`,
+  exit 0). SIGINT/SIGTERM rollback emits `{"ok":false,"error":{"code":130,"message":"interrupted"}}`.
+  Cobra-level parse errors raised before `RunE` (unknown flag, more than one
+  positional) are out of scope and keep their usual stderr-only behavior.
+- `wt list --json` keeps its bare array — only the new `wt create --json` surface
+  uses this envelope.
+
+Plan: `fab/plans/sahil/26-11-23-worktree-base-receipts.md` (W1).
+
+Without `--json`, the worktree path is always written as the last line of stdout.
 (When the chosen app was `open_here`, the unified shell-cd contract's own
 path emission precedes it — the contract is "the path is the last line", not
 "exactly one line".)
@@ -112,11 +163,13 @@ with a positional argument or with `--base`), invalid `--base`/branch name, a
 positional naming an already-existing branch, `--checkout` on a branch that
 does not exist, a non-numeric `--pr`, `--pr` combined with a positional /
 `--base` / `--checkout` / `--reuse`, a fork PR, a PR head branch that exists
-neither locally nor on origin, the `--temp` conflicts above, or an invalid
-`--temp` ref; `ExitGeneralError` when `gh` is missing or
+neither locally nor on origin, the `--temp` conflicts above, an invalid
+`--temp` ref, `--reuse` combined with `--base` or `--fetch`, and `--json`
+combined with a non-`skip` `--open`;
+`ExitGeneralError` when `gh` is missing or
 `gh pr view` fails (unauthenticated, PR not found, timeout — the message carries
 gh's first error line); `ExitGitError` for `git worktree add` failures
-(including `--temp`);
+(including `--temp`) and a failed `--fetch` (nothing is created);
 `ExitRetryExhausted` for name generation; `ExitInitFailed` (7) when the init
 script runs but exits non-zero
 (the worktree is kept; the code holds on every init-failure path, including a

@@ -164,5 +164,5 @@ detected app, or `7` to copy the absolute path to your clipboard.
 ## Gotchas
 
 - **`wt open` can't `cd` without the shell wrapper.** A child process can't change its parent shell's directory — that's a Unix constraint, not a wt bug. `eval "$(wt shell-init zsh)"` (or `bash`) installs a shell function that wraps the binary so the "Open here" menu option actually works.
-- **The `wt create` positional never checks out an existing branch.** Naming a branch that already exists (locally or on the remote) is an error (exit 2) — checkout of an existing branch is an explicit opt-in via `--checkout <branch>`. `--reuse` cannot be combined with `--base` (exit 2).
+- **The `wt create` positional never checks out an existing branch.** Naming a branch that already exists (locally or on the remote) is an error (exit 2) — checkout of an existing branch is an explicit opt-in via `--checkout <branch>`. `--reuse` cannot be combined with `--base` or `--fetch` (exit 2).
 - **Worktrees survive `cd` into deleted directories.** If you delete a worktree from outside (`rm -rf`), run `git worktree prune` in the main repo to clean up git's bookkeeping.

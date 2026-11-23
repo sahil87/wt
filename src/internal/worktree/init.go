@@ -43,7 +43,7 @@ const (
 const exitNotManaged = 3
 
 // Skip-warning copy for the default-not-applicable case. File-scoped so the two
-// run sites (crud.go's RunWorktreeSetupWithObserver and cmd/wt/init.go) share
+// run sites (crud.go's RunWorktreeSetupOutcome and cmd/wt/init.go) share
 // the canonical phrasing without duplicating literals — the same anti-drift
 // discipline InitNotFound.RenderWarning applies to the not-found copy.
 const (

@@ -137,6 +137,18 @@ const (
 	bannerOutputNote    = "(init output is above)"
 )
 
+// InitFailureMessage is the banner's status phrasing ("init script exited with
+// status N", or "init script did not complete" when err does not unwrap to an
+// *exec.ExitError). It is also the `error.message` of the `wt create --json`
+// init-failure document, so the copy has a single source.
+func InitFailureMessage(err error) string {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return fmt.Sprintf("init script exited with status %d", exitErr.ExitCode())
+	}
+	return "init script did not complete"
+}
+
 // PrintInitFailureBanner writes a structured init-failure banner to stderr.
 // The banner reports the failure shape (status code when err unwraps to
 // *exec.ExitError, otherwise a generic phrasing), the absolute worktree path
@@ -159,15 +171,8 @@ const (
 // `&&` (never `;`) is used in the retry hint so it parses identically in
 // bash, zsh, and fish.
 func PrintInitFailureBanner(wtPath, name string, err error) {
-	var statusLine string
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		statusLine = fmt.Sprintf("%sError:%s init script exited with status %d %s",
-			ColorRed, ColorReset, exitErr.ExitCode(), bannerOutputNote)
-	} else {
-		statusLine = fmt.Sprintf("%sError:%s init script did not complete %s",
-			ColorRed, ColorReset, bannerOutputNote)
-	}
+	statusLine := fmt.Sprintf("%sError:%s %s %s",
+		ColorRed, ColorReset, InitFailureMessage(err), bannerOutputNote)
 
 	fmt.Fprintln(os.Stderr, statusLine)
 	fmt.Fprintf(os.Stderr, "  %s%s%s %s  %s\n",
