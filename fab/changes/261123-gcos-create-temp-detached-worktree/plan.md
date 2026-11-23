@@ -140,45 +140,50 @@ For a detached worktree — porcelain sentinel `(detached)` on the by-name/multi
 
 ### Functional Completeness
 
-- [ ] A-001 R1: `wt create --temp <ref>` creates a worktree whose HEAD is the resolved SHA, detached, with no new branch and no new `branch.*` git config
-- [ ] A-002 R2: Temp names are `tmp-`-prefixed (random, `--name foo` → `tmp-foo`, `--name tmp-foo` not double-prefixed), prefix is a named constant, random generation reuses the existing generator
-- [ ] A-003 R3: All five conflicts and an invalid `--temp` ref exit 2 before any mutation with Error/Why/Fix copy
-- [ ] A-004 R4: Summary shows `Branch: (detached)` and `From: <ref> @ <short-sha>`; stdout last line is the path
-- [ ] A-005 R5: Init skipped by default under `--temp`, runs with `--init` (no confirm), `--init` alone is a no-op
-- [ ] A-006 R6: `wt list --json` emits `temp` on every record; temp records have `branch: null`; non-temp detached keep `"(detached)"`
-- [ ] A-007 R7: `wt delete` on a detached worktree removes it with no branch handling on every target-resolution path, including `--branch true` and `--dry-run`
-- [ ] A-008 R8: cli-surface, worktree-layout, init-protocol specs and the skill bundle (synced) document `--temp` / `--init`
+- [x] A-001 R1: `wt create --temp <ref>` creates a worktree whose HEAD is the resolved SHA, detached, with no new branch and no new `branch.*` git config
+- [x] A-002 R2: Temp names are `tmp-`-prefixed (random, `--name foo` → `tmp-foo`, `--name tmp-foo` not double-prefixed), prefix is a named constant, random generation reuses the existing generator
+- [x] A-003 R3: All five conflicts and an invalid `--temp` ref exit 2 before any mutation with Error/Why/Fix copy
+- [x] A-004 R4: Summary shows `Branch: (detached)` and `From: <ref> @ <short-sha>`; stdout last line is the path
+- [x] A-005 R5: Init skipped by default under `--temp`, runs with `--init` (no confirm), `--init` alone is a no-op
+- [x] A-006 R6: `wt list --json` emits `temp` on every record; temp records have `branch: null`; non-temp detached keep `"(detached)"`
+- [x] A-007 R7: `wt delete` on a detached worktree removes it with no branch handling on every target-resolution path, including `--branch true` and `--dry-run`
+- [x] A-008 R8: cli-surface, worktree-layout, init-protocol specs and the skill bundle (synced) document `--temp` / `--init`
 
 ### Behavioral Correctness
 
-- [ ] A-009 R7: The bogus `Skipped branch deletion: branch '(detached)'…` line and the `git branch -D HEAD` attempt no longer occur for detached worktrees
-- [ ] A-010 R1: Existing create modes (bare, positional, `--checkout`, `--reuse`, `--base`) are byte-for-byte unchanged when `--temp` is absent
+- [x] A-009 R7: The bogus `Skipped branch deletion: branch '(detached)'…` line and the `git branch -D HEAD` attempt no longer occur for detached worktrees
+- [x] A-010 R1: Existing create modes (bare, positional, `--checkout`, `--reuse`, `--base`) are byte-for-byte unchanged when `--temp` is absent
 
 ### Scenario Coverage
 
-- [ ] A-011 R1: Unit + integration tests assert detached HEAD at the SHA and no branch for `--temp <sha>` and `--temp <branch>`
-- [ ] A-012 R6: Tests cover temp, normal, main and raw-detached records in `wt list --json` and human output
-- [ ] A-013 R5: Tests cover init skipped / `--init` runs / `--init` alone
+- [x] A-011 R1: Unit + integration tests assert detached HEAD at the SHA and no branch for `--temp <sha>` and `--temp <branch>`
+- [x] A-012 R6: Tests cover temp, normal, main and raw-detached records in `wt list --json` and human output
+- [x] A-013 R5: Tests cover init skipped / `--init` runs / `--init` alone
 
 ### Edge Cases & Error Handling
 
-- [ ] A-014 R3: Failed `git worktree add` under `--temp` exits 3 and leaves no directory behind (rollback)
-- [ ] A-015 R2: Name collision at `tmp-<name>` exits 1 with the existing "already exists" copy; nothing created
-- [ ] A-016 R6: Default `wt list` still spawns exactly one git subprocess (temp predicate is pure)
+- [x] A-014 R3: Failed `git worktree add` under `--temp` exits 3 and leaves no directory behind (rollback)
+- [x] A-015 R2: Name collision at `tmp-<name>` exits 1 with the existing "already exists" copy; nothing created
+- [x] A-016 R6: Default `wt list` still spawns exactly one git subprocess (temp predicate is pure) — verified by inspection: `IsTempWorktree` is pure and reads the porcelain `detached` flag already parsed; no subprocess-count test exists
 
 ### Code Quality
 
-- [ ] A-017 Pattern consistency: New code follows create.go/crud.go/list.go/delete.go naming and Error/Why/Fix patterns; git ops only in `internal/worktree` (Constitution V)
-- [ ] A-018 No unnecessary duplication: Prefixed name generation reuses `GenerateRandomName`/`GenerateUniqueName`; detached normalization lives in one place
-- [ ] A-019: No magic strings — `tmp-` and the detached sentinel are named constants
-- [ ] A-020: No god functions — the create RunE grows by small, readable blocks (extract helpers if the temp path adds >~30 lines inline)
-- [ ] A-021: Readability over cleverness; tests use non-side-effecting `--open skip` / `--non-interactive` per code-review.md
+- [x] A-017 Pattern consistency: New code follows create.go/crud.go/list.go/delete.go naming and Error/Why/Fix patterns; git ops only in `internal/worktree` (Constitution V)
+- [x] A-018 No unnecessary duplication: Prefixed name generation reuses `GenerateRandomName`/`GenerateUniqueName`; detached normalization lives in one place
+- [x] A-019: No magic strings — `tmp-` and the detached sentinel are named constants
+- [x] A-020: No god functions — the create RunE grows by small, readable blocks (extract helpers if the temp path adds >~30 lines inline)
+- [x] A-021: Readability over cleverness; tests use non-side-effecting `--open skip` / `--non-interactive` per code-review.md
 
 ## Notes
 
 - Check items as you review: `- [x]`
 - All acceptance items must pass before `/fab-continue` (hydrate)
 - If an item is not applicable, mark checked and prefix with **N/A**: `- [x] A-NNN **N/A**: {reason}`
+
+## Deletion Candidates
+
+- `src/internal/worktree/context.go:181-196` (`DescribeHead`'s literal `"HEAD"` comparisons) — the new `detachedHeadRef` constant / `IsDetachedBranch` in `worktree.go` now names the same "abbrev-ref says detached" sentinel; `DescribeHead` could reuse it instead of the bare literal
+- `src/cmd/wt/list.go` `rawEntry.branch = DetachedBranchLabel` on `detached` lines — with the new `rawEntry.detached` bool carrying the fact, the sentinel string in `branch` is kept only for human rendering/back-compat; no deletion needed now, noted so a future cleanup does not reintroduce string comparisons on it
 
 ## Assumptions
 
