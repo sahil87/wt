@@ -36,6 +36,8 @@ type listEntry struct {
 	Unpushed   *int       `json:"unpushed,omitempty"`
 	LastActive *time.Time `json:"last_active,omitempty"`
 	Idle       *bool      `json:"idle,omitempty"`
+	Base       *string    `json:"base"`
+	BaseSHA    *string    `json:"base_sha"`
 	// Temp marks a `wt create --temp` worktree (detached, non-main, tmp- name).
 	// Always emitted so the record schema is stable.
 	Temp bool `json:"temp"`
@@ -159,6 +161,7 @@ it forks 2 git subprocesses per worktree (parallelized).`,
 			populateIdle(entries, time.Now())
 
 			if jsonOut {
+				attachRecordedBases(entries, wt.RecordedBases())
 				return handleJSONOutput(entries)
 			}
 
@@ -308,6 +311,23 @@ func populateIdle(entries []listEntry, now time.Time) {
 		}
 		idle := !entries[i].IsMain && wt.IsIdle(*entries[i].LastActive, now, wt.DefaultIdleThreshold)
 		entries[i].Idle = &idle
+	}
+}
+
+// attachRecordedBases joins the recorded bases onto entries by branch. A
+// detached or unrecorded entry keeps nil Base/BaseSHA, serialized as null.
+func attachRecordedBases(entries []listEntry, bases map[string]wt.RecordedBase) {
+	for i := range entries {
+		b, ok := bases[entries[i].Branch]
+		if !ok || entries[i].Branch == "(detached)" {
+			continue
+		}
+		if b.Ref != "" {
+			entries[i].Base = wt.StrPtr(b.Ref)
+		}
+		if b.SHA != "" {
+			entries[i].BaseSHA = wt.StrPtr(b.SHA)
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -202,10 +203,10 @@ func TestCreateWorktree_RollbackRemovesWorktreeBeforeBranch(t *testing.T) {
 
 	for name, create := range map[string]func(rb *Rollback) (string, error){
 		"positional": func(rb *Rollback) (string, error) {
-			return CreateNewBranchWorktree("nb", "wt-nb", ctx, rb, "HEAD", "")
+			return CreateNewBranchWorktree("nb", "wt-nb", ctx, rb, "HEAD", "HEAD", "")
 		},
 		"exploratory": func(rb *Rollback) (string, error) {
-			return CreateExploratoryWorktree("wt-ex", ctx, rb, "HEAD", "")
+			return CreateExploratoryWorktree("wt-ex", ctx, rb, "HEAD", "HEAD", "")
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -248,7 +249,7 @@ func TestCreateWorktree_SetUpstreamFailureRollsBack(t *testing.T) {
 	dir, ctx := newRollbackFixture(t)
 
 	rb := NewRollback()
-	path, err := CreateNewBranchWorktree("nb", "wt-nb", ctx, rb, "HEAD", "no-such-upstream")
+	path, err := CreateNewBranchWorktree("nb", "wt-nb", ctx, rb, "HEAD", "HEAD", "no-such-upstream")
 	if err == nil {
 		t.Fatal("expected set-upstream failure")
 	}
@@ -260,5 +261,131 @@ func TestCreateWorktree_SetUpstreamFailureRollsBack(t *testing.T) {
 	}
 	if branchExists(t, dir, "nb") {
 		t.Error("branch nb survived the failed create")
+	}
+}
+
+// configGet returns a git config value, or "" and false when the key is unset.
+func configGet(t *testing.T, dir, key string) (string, bool) {
+	t.Helper()
+	cmd := exec.Command("git", "config", "--get", key)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err == nil
+}
+
+func headSHA(t *testing.T, dir string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestCreateWorktree_RecordsBase(t *testing.T) {
+	dir, ctx := newRollbackFixture(t)
+	sha := headSHA(t, dir)
+
+	rb := NewRollback()
+	if _, err := CreateNewBranchWorktree("nb", "wt-nb", ctx, rb, "main", sha, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateExploratoryWorktree("wt-ex", ctx, rb, "HEAD-label", sha, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	for branch, ref := range map[string]string{"nb": "main", "wt-ex": "HEAD-label"} {
+		if got, ok := configGet(t, dir, "branch."+branch+".wt-base"); !ok || got != ref {
+			t.Errorf("%s wt-base = %q (set=%v), want %q", branch, got, ok, ref)
+		}
+		if got, ok := configGet(t, dir, "branch."+branch+".wt-base-sha"); !ok || got != sha {
+			t.Errorf("%s wt-base-sha = %q (set=%v), want %q", branch, got, ok, sha)
+		}
+	}
+}
+
+func TestCreateWorktree_EmptyStartPointRecordsNothing(t *testing.T) {
+	dir, ctx := newRollbackFixture(t)
+
+	rb := NewRollback()
+	if _, err := CreateNewBranchWorktree("nb", "wt-nb", ctx, rb, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateExploratoryWorktree("wt-ex", ctx, rb, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, branch := range []string{"nb", "wt-ex"} {
+		for _, key := range []string{"wt-base", "wt-base-sha"} {
+			if got, ok := configGet(t, dir, "branch."+branch+"."+key); ok {
+				t.Errorf("branch.%s.%s = %q, want unset", branch, key, got)
+			}
+		}
+	}
+}
+
+func TestCheckoutBranchWorktree_RecordsNothing(t *testing.T) {
+	dir, ctx := newRollbackFixture(t)
+	if out, err := exec.Command("git", "-C", dir, "branch", "feat").CombinedOutput(); err != nil {
+		t.Fatalf("git branch: %v: %s", err, out)
+	}
+
+	if _, err := CheckoutBranchWorktree("feat", "wt-feat", ctx, NewRollback()); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"wt-base", "wt-base-sha"} {
+		if got, ok := configGet(t, dir, "branch.feat."+key); ok {
+			t.Errorf("branch.feat.%s = %q, want unset", key, got)
+		}
+	}
+}
+
+// TestCreateWorktree_RecordBaseFailureRollsBack forces the record write to
+// fail (a stale .git/config.lock; a local base sets no upstream first) and
+// asserts a *RecordBaseError with nothing left behind.
+func TestCreateWorktree_RecordBaseFailureRollsBack(t *testing.T) {
+	dir, ctx := newRollbackFixture(t)
+	sha := headSHA(t, dir)
+
+	for name, create := range map[string]func(rb *Rollback) (string, error){
+		"positional": func(rb *Rollback) (string, error) {
+			return CreateNewBranchWorktree("nb", "wt-nb", ctx, rb, "main", sha, "")
+		},
+		"exploratory": func(rb *Rollback) (string, error) {
+			return CreateExploratoryWorktree("nb", ctx, rb, "main", sha, "")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			lock := filepath.Join(dir, ".git", "config.lock")
+			if err := os.WriteFile(lock, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			defer os.Remove(lock)
+
+			path, err := create(NewRollback())
+			var recErr *RecordBaseError
+			if !errors.As(err, &recErr) || recErr.Branch != "nb" {
+				t.Fatalf("err = %v, want *RecordBaseError for nb", err)
+			}
+			if path != "" {
+				t.Errorf("path = %q, want empty on failure", path)
+			}
+			if _, statErr := os.Stat(filepath.Join(ctx.WorktreesDir, "wt-nb")); statErr == nil {
+				t.Error("worktree dir survived the failed create")
+			}
+			if _, statErr := os.Stat(filepath.Join(ctx.WorktreesDir, "nb")); statErr == nil {
+				t.Error("worktree dir survived the failed create")
+			}
+			if branchExists(t, dir, "nb") {
+				t.Error("branch nb survived the failed create")
+			}
+			os.Remove(lock)
+			for _, key := range []string{"wt-base", "wt-base-sha"} {
+				if got, ok := configGet(t, dir, "branch.nb."+key); ok {
+					t.Errorf("branch.nb.%s = %q survived rollback", key, got)
+				}
+			}
+		})
 	}
 }

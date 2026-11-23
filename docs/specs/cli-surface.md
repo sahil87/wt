@@ -121,6 +121,19 @@ A set-upstream failure rolls the create back (exit 3). The Git-phase summary's `
 `From: <ref-as-typed> @ <short-sha>` (7 characters) when `--base` was given; the
 no-`--base` HEAD label and the `--checkout` copy are unchanged.
 
+**Recorded base.** Every branch `wt create` creates (positional or bare, with or
+without `--base`) gets two keys in the repository's own git config (never
+`--global`): `branch.<branch>.wt-base` — the `--base` ref exactly as typed, or the
+`HEAD` label when no `--base` (the receipt's `base_ref`) — and
+`branch.<branch>.wt-base-sha` — the full pinned start-point (the receipt's
+`base_sha`). They are written after the worktree add and the upstream step, and
+travel with the branch (`git branch -m`) and die with it (`git branch -D`).
+`--checkout` and `--reuse` never write them — wt did not create those branches.
+A failed write rolls the worktree and branch back and exits 3 (`ExitGitError`):
+`Error: Failed to record base for branch '<branch>'`, `Why:` git's first output
+line, `Fix: Check that .git/config is writable (no stale config.lock), then
+retry`; under `--json` the failure document carries the same message.
+
 **`--json` receipt.** Under `--json`, stdout carries exactly one JSON document
 (compact, one line, terminated by a newline) on every exit path `RunE`
 controls, and nothing else; phase separators, the summary, warnings, init output
@@ -187,12 +200,15 @@ List all worktrees for the current repository.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--path <name>` | (none) | Print only the absolute path for the named worktree. Mutually exclusive with `--json` and `--status`. |
-| `--json` | `false` | Emit a JSON array of worktree records. Always emits `name`, `branch`, `path`, `is_main`, `is_current`, `temp`. The `dirty` and `unpushed` keys are present only when `--status` is set. `temp` is `true` for `wt create --temp` worktrees, whose `branch` is `null`. Mutually exclusive with `--path`. |
+| `--json` | `false` | Emit a JSON array of worktree records. Always emits `name`, `branch`, `path`, `is_main`, `is_current`, `temp`. The `dirty` and `unpushed` keys are present only when `--status` is set. `temp` is `true` for `wt create --temp` worktrees, whose `branch` is `null`. Every record also carries `base` and `base_sha` — the branch's recorded base (see `wt create` § Recorded base), always present and `null` when none is recorded (pre-existing worktrees, `--checkout` worktrees, the main worktree on an unrecorded branch, detached and `--temp` worktrees). Mutually exclusive with `--path`. |
 | `--status` | `false` | Compute and display dirty/unpushed status per worktree. Slower (forks 2 git subprocesses per worktree; parallelized). Mutually exclusive with `--path`. |
 
 Default human output: a table with Name, Branch, and Path columns. The current
 worktree is marked with a green asterisk. No per-worktree git invocations
-occur — discovery is O(1) regardless of worktree count.
+occur — discovery is O(1) regardless of worktree count. Recorded bases are
+JSON-only (no `BASE` column): `--json` adds one constant `git config
+--get-regexp` call for all worktrees, and the human and `--path` outputs never
+read them.
 
 A worktree is **temp** when it is detached, not the main worktree, and its
 directory name starts with `tmp-` — computed from the single porcelain listing,

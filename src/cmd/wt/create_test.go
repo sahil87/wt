@@ -1876,3 +1876,113 @@ func TestCreateJSON_PR(t *testing.T) {
 	}
 	assertWorktreeNotExists(t, repo, "fork-wt")
 }
+
+// ---------- recorded base (branch.<name>.wt-base[-sha]) ----------
+
+// configValue returns a git config value and whether it is set.
+func configValue(t *testing.T, repo, key string) (string, bool) {
+	t.Helper()
+	out, err := exec.Command("git", "-C", repo, "config", "--get", key).Output()
+	return strings.TrimSpace(string(out)), err == nil
+}
+
+func assertRecordedBase(t *testing.T, repo, branch, wantRef, wantSHA string) {
+	t.Helper()
+	if got, ok := configValue(t, repo, "branch."+branch+".wt-base"); !ok || got != wantRef {
+		t.Errorf("branch.%s.wt-base = %q (set=%v), want %q", branch, got, ok, wantRef)
+	}
+	if got, ok := configValue(t, repo, "branch."+branch+".wt-base-sha"); !ok || got != wantSHA {
+		t.Errorf("branch.%s.wt-base-sha = %q (set=%v), want %q", branch, got, ok, wantSHA)
+	}
+}
+
+func assertNoRecordedBase(t *testing.T, repo, branch string) {
+	t.Helper()
+	for _, key := range []string{"wt-base", "wt-base-sha"} {
+		if got, ok := configValue(t, repo, "branch."+branch+"."+key); ok {
+			t.Errorf("branch.%s.%s = %q, want unset", branch, key, got)
+		}
+	}
+}
+
+func TestCreate_RecordsBase_PositionalWithBase(t *testing.T) {
+	repo := createTestRepo(t)
+	pushMainToRemote(t, repo)
+
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--no-init", "--open", "skip", "--json",
+		"--name", "w2", "--base", "origin/main", "nb")
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Result.BaseSHA == nil {
+		t.Fatalf("receipt has no base_sha: %s", r.Stdout)
+	}
+	// The recorded ref is as typed; the recorded SHA is the receipt's.
+	assertRecordedBase(t, repo, "nb", "origin/main", *doc.Result.BaseSHA)
+	if want := gitRun(t, repo, "rev-parse", "origin/main"); *doc.Result.BaseSHA != want {
+		t.Errorf("base_sha = %s, want %s", *doc.Result.BaseSHA, want)
+	}
+}
+
+func TestCreate_RecordsBase_BareUsesHeadLabel(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--no-init", "--open", "skip", "--json", "--name", "bare-wt")
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Result.BaseSHA == nil || doc.Result.BaseRef == nil {
+		t.Fatalf("receipt missing base: %s", r.Stdout)
+	}
+	if *doc.Result.BaseRef != "main" {
+		t.Errorf("base_ref = %q, want main", *doc.Result.BaseRef)
+	}
+	assertRecordedBase(t, repo, "bare-wt", *doc.Result.BaseRef, gitRun(t, repo, "rev-parse", "HEAD"))
+}
+
+func TestCreate_RecordsBase_PositionalWithoutBase(t *testing.T) {
+	repo := createTestRepo(t)
+
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--no-init", "--open", "skip", "--name", "pos-wt", "pos-br")
+	assertRecordedBase(t, repo, "pos-br", "main", gitRun(t, repo, "rev-parse", "HEAD"))
+}
+
+func TestCreate_CheckoutAndReuse_RecordNothing(t *testing.T) {
+	repo := createTestRepo(t)
+	gitRun(t, repo, "branch", "feat")
+
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--no-init", "--open", "skip", "--checkout", "feat")
+	assertNoRecordedBase(t, repo, "feat")
+
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--no-init", "--open", "skip", "--name", "reused", "reused-br")
+	before := gitRun(t, repo, "config", "--get-regexp", `^branch\.`)
+	runWtSuccess(t, repo, nil, "create", "--non-interactive", "--no-init", "--open", "skip", "--reuse", "--name", "reused")
+	if after := gitRun(t, repo, "config", "--get-regexp", `^branch\.`); after != before {
+		t.Errorf("--reuse changed branch config:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// TestCreate_RecordBaseFailure_RollsBackCompletely forces the base write to
+// fail (a stale .git/config.lock; a local base sets no upstream first) and
+// asserts exit 3, the failure document, and that nothing is left behind.
+func TestCreate_RecordBaseFailure_RollsBackCompletely(t *testing.T) {
+	repo := createTestRepo(t)
+	lock := filepath.Join(repo, ".git", "config.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--no-init", "--open", "skip", "--json",
+		"--name", "w", "--base", "main", "newb")
+	assertExitCode(t, r, 3)
+	doc, _ := parseCreateDoc(t, r)
+	if doc.Error == nil || doc.Error.Code != 3 || doc.Result != nil ||
+		doc.Error.Message != "Failed to record base for branch 'newb'" {
+		t.Errorf("unexpected doc: %s", r.Stdout)
+	}
+	assertContains(t, r.Stderr, "Failed to record base for branch 'newb'")
+	assertContains(t, r.Stderr, "stale config.lock")
+	assertWorktreeNotExists(t, repo, "w")
+	assertBranchNotExists(t, repo, "newb")
+
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	assertNoRecordedBase(t, repo, "newb")
+}

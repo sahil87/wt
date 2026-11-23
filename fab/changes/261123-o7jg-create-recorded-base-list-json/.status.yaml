@@ -1,0 +1,54 @@
+id: o7jg
+name: 261123-o7jg-create-recorded-base-list-json
+created: 2026-11-23T16:01:29Z
+created_by: sahil-noon
+change_type: feat
+issues: []
+progress:
+    intake: done
+    apply: done
+    review: active
+    hydrate: pending
+    ship: pending
+    review-pr: pending
+plan:
+    generated: true
+    task_count: 8
+    acceptance_count: 17
+    acceptance_completed: 0
+confidence:
+    certain: 6
+    confident: 5
+    tentative: 0
+    unresolved: 0
+    score: 4.8
+    fuzzy: true
+    dimensions:
+        signal: 77.3
+        reversibility: 83.6
+        competence: 84.1
+        disambiguation: 79.5
+stage_metrics:
+    intake: {started_at: "2026-11-23T16:01:29Z", driver: fab-new, iterations: 1, completed_at: "2026-11-23T16:06:03Z"}
+    apply: {started_at: "2026-11-23T16:06:03Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T16:15:06Z"}
+    review: {started_at: "2026-11-23T16:15:06Z", driver: fab-fff, iterations: 1}
+prs: []
+change_type_source: explicit
+base_branch: 261123-xhgg-create-fetch-json-receipt
+true_impact:
+    added: 2053
+    deleted: 116
+    net: 1937
+    excluding:
+        added: 1364
+        deleted: 65
+        net: 1299
+    tests:
+        added: 808
+        deleted: 1
+        net: 807
+    computed_at: "2026-11-23T16:15:06Z"
+    computed_at_stage: apply
+# base_branch: written by /git-branch or /fab-new when the change's branch is created (no placeholder here).
+# true_impact: lazily created on first stage-finish that computes it (no placeholder here).
+last_updated: 2026-11-23T16:15:06Z

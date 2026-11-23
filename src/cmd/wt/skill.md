@@ -74,7 +74,7 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   file path resolved from the repo root and run via `bash`. It runs with the new
   worktree as its working directory; its output goes to stderr. See `docs/specs/init-protocol.md`.
 - **Machine surface.** `wt list --json` is the structured composition surface (e.g.
-  what `hop` reads); `wt create` prints the worktree path as its last stdout line, or —
+  what `hop` reads; each record carries `base`/`base_sha`, the base `wt create` recorded for the branch, or `null`); `wt create` prints the worktree path as its last stdout line, or —
   with `--json` — one receipt document (`{"ok":true,"result":{…}}` / `{"ok":false,"error":{code,message}}`).
 
 ## Output & exit-code contracts
