@@ -9,7 +9,7 @@ progress:
     apply: done
     review: done
     hydrate: done
-    ship: active
+    ship: done
     review-pr: pending
 plan:
     generated: true
@@ -33,14 +33,15 @@ stage_metrics:
     apply: {started_at: "2026-11-23T16:06:03Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T16:15:06Z"}
     review: {started_at: "2026-11-23T16:15:06Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T16:20:38Z"}
     hydrate: {started_at: "2026-11-23T16:20:38Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T16:22:30Z"}
-    ship: {started_at: "2026-11-23T16:22:30Z", driver: fab-fff, iterations: 1}
-prs: []
+    ship: {started_at: "2026-11-23T16:22:30Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T16:23:50Z"}
+prs:
+    - https://github.com/sahil87/wt/pull/66
 change_type_source: explicit
 base_branch: 261123-xhgg-create-fetch-json-receipt
 true_impact:
-    added: 905
-    deleted: 12
-    net: 893
+    added: 955
+    deleted: 23
+    net: 932
     excluding:
         added: 515
         deleted: 9
@@ -49,9 +50,9 @@ true_impact:
         added: 372
         deleted: 3
         net: 369
-    computed_at: "2026-11-23T16:22:30Z"
-    computed_at_stage: hydrate
+    computed_at: "2026-11-23T16:23:50Z"
+    computed_at_stage: ship
 summary: wt create records branch.<b>.wt-base/wt-base-sha for wt-created branches (rollback-scoped, exit 3 on failure); wt list --json gains base/base_sha (one extra constant git config call)
 # base_branch: written by /git-branch or /fab-new when the change's branch is created (no placeholder here).
 # true_impact: lazily created on first stage-finish that computes it (no placeholder here).
-last_updated: 2026-11-23T16:22:30Z
+last_updated: 2026-11-23T16:23:50Z
