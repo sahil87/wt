@@ -1,6 +1,6 @@
 ---
 type: memory
-description: "The `wt` CLI flag-surface conventions — no command-noun prefixes, `--no-*` negation, short flags only for common interactive use, the additive rename-via-MarkDeprecated back-compat contract (stderr warning, hidden from help, old names never removed), and the git/unix command aliases (new/rm/ls)."
+description: "The `wt` CLI flag-surface conventions — no command-noun prefixes, `--no-*` negation (and the `--init` positive opt-in for the one default-OFF mode), short flags only for common interactive use, the additive rename-via-MarkDeprecated back-compat contract (stderr warning, hidden from help, old names never removed), and the git/unix command aliases (new/rm/ls)."
 ---
 # wt-cli: Flag Naming Conventions
 
@@ -8,7 +8,7 @@ description: "The `wt` CLI flag-surface conventions — no command-noun prefixes
 
 > Post-implementation behavior capture for the cross-command flag-surface
 > conventions the `wt` CLI follows.
-> Source changes: `260717-59u8-intuitive-flag-names`, `260722-0is3-go-open-orthogonality`.
+> Source changes: `260717-59u8-intuitive-flag-names`, `260722-0is3-go-open-orthogonality`, `261123-gcos-create-temp-detached-worktree`.
 
 ## Overview
 
@@ -66,6 +66,15 @@ inconsistent verb (`--skip-*`). The default (behavior ON) is preserved; passing
   string type because `auto` is a real third state, not a
   boolean — see [`create-branch-semantics`](/wt-cli/create-branch-semantics.md)
   and the `wt delete` flag table in `docs/specs/cli-surface.md`.
+
+A behavior that is OFF by default in one mode and opted into by the user is the
+mirror case: a **positive** long-only boolean, named for the thing it enables.
+`wt create --init` is the only instance — init runs by default for every mode
+except `--temp`, where it is skipped; `--init` opts back in there. `--no-init`
+keeps meaning "turn off the default-ON init"; `--init` means "turn on the
+default-OFF temp init". `--init` without `--temp` is a silent no-op (init already
+runs), and `--init` with `--no-init` is a usage error (exit 2) because the two
+contradict each other. Neither flag carries a short form.
 
 #### Scenario: a string-bool default becomes a `--no-*` real bool
 - **GIVEN** `wt create`, whose init script runs by default
@@ -236,6 +245,19 @@ machine-generated); splitting the `--delete-branch` tri-state into two bools
 stays a string).
 *Introduced by*: `260717-59u8-intuitive-flag-names`.
 
+### `--init` is a positive opt-in beside `--no-init`, not an overloaded `--no-init=false`
+**Decision**: the default-OFF init of `wt create --temp` is enabled with a dedicated long-only
+real boolean `--init`; `--no-init` stays the negation of the default-ON init, and passing both
+exits `ExitInvalidArgs`. Plan `26-11-23-worktree-base-receipts.md` W5 leaves the temp-init
+default open; skipping it by default is what makes an opt-in flag necessary.
+**Why**: `--no-init` cannot express "turn on" without reading as a double negative
+(`--no-init=false`), and the cobra bool already rejects no extra syntax. A distinct positive flag
+is self-describing in `--help` and scripts, and accepting it as a no-op outside `--temp` keeps
+callers that always pass `--init` working.
+**Rejected**: reusing `--no-init=false` to opt in (double negative, invisible in help); making
+`--init` an error without `--temp` (breaks scripts that pass it unconditionally).
+*Introduced by*: `261123-gcos-create-temp-detached-worktree`.
+
 ### `--open` gets no `NoOptDefVal` (positional footgun)
 **Decision**: `wt create --open` and `wt go --open` require an explicit value.
 **Why**: both commands take an optional positional (`wt create [branch]`,
@@ -275,7 +297,7 @@ footgun. `wt go --open` (`260722-0is3`) copies the rule verbatim from
 - Sibling memory: [`create-output-phases`](/wt-cli/create-output-phases.md) — the
   canonical stdout=machine / stderr=human stream-discipline contract that the
   deprecation-warning-on-stderr rule honors.
-- Source: `src/cmd/wt/create.go` (`--name`/`-n`, `--open`/`-o`, `--no-init` +
+- Source: `src/cmd/wt/create.go` (`--init` and `--temp` long-only, no shorts — `261123-gcos`; `--name`/`-n`, `--open`/`-o`, `--no-init` +
   deprecated `--worktree-name`/`--worktree-open`/`--worktree-init`, `Aliases:
   ["new"]`), `src/cmd/wt/delete.go` (`--all`/`-a`, `--branch`, `--no-remote` +
   deprecated `--delete-all`/`--delete-branch`/`--delete-remote`, `Aliases:

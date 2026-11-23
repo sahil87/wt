@@ -8,8 +8,8 @@ progress:
     intake: done
     apply: done
     review: done
-    hydrate: active
-    ship: pending
+    hydrate: done
+    ship: active
     review-pr: pending
 plan:
     generated: true
@@ -32,24 +32,26 @@ stage_metrics:
     intake: {started_at: "2026-11-23T15:05:23Z", driver: fab-new, iterations: 1, completed_at: "2026-11-23T15:12:50Z"}
     apply: {started_at: "2026-11-23T15:12:50Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T15:24:08Z"}
     review: {started_at: "2026-11-23T15:24:08Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T15:27:29Z"}
-    hydrate: {started_at: "2026-11-23T15:27:29Z", driver: fab-fff, iterations: 1}
+    hydrate: {started_at: "2026-11-23T15:27:29Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T15:31:11Z"}
+    ship: {started_at: "2026-11-23T15:31:11Z", driver: fab-fff, iterations: 1}
 prs: []
 change_type_source: explicit
 base_branch: main
 true_impact:
-    added: 0
-    deleted: 0
-    net: 0
+    added: 1591
+    deleted: 18
+    net: 1573
     excluding:
-        added: 0
-        deleted: 0
-        net: 0
+        added: 1054
+        deleted: 13
+        net: 1041
     tests:
-        added: 0
+        added: 826
         deleted: 0
-        net: 0
-    computed_at: "2026-11-23T15:24:08Z"
-    computed_at_stage: apply
+        net: 826
+    computed_at: "2026-11-23T15:31:11Z"
+    computed_at_stage: hydrate
+summary: 'wt create --temp <ref>: detached tmp- throwaway worktree (init skipped unless --init); wt list temp key; wt delete no branch handling for detached worktrees'
 # base_branch: written by /git-branch or /fab-new when the change's branch is created (no placeholder here).
 # true_impact: lazily created on first stage-finish that computes it (no placeholder here).
-last_updated: 2026-11-23T15:27:29Z
+last_updated: 2026-11-23T15:31:11Z

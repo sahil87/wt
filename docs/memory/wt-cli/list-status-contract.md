@@ -1,11 +1,11 @@
 ---
 type: memory
-description: "`wt list` output contract — enrichment-free default, `--status` opt-in dashboard, `--sort` ordering, and pointer-field JSON shape."
+description: "`wt list` output contract — enrichment-free default, `--status` opt-in dashboard, `--sort` ordering, pointer-field JSON shape, and the always-present `temp` key (subprocess-free temp predicate, `branch: null` for temp records)."
 ---
 # wt-cli: List Status Contract
 
 > Post-implementation behavior capture for the `wt list` status-opt-in cleanup.
-> Source change: `260516-lfa8-list-status-opt-in`.
+> Source changes: `260516-lfa8-list-status-opt-in`, `261123-gcos-create-temp-detached-worktree` (temp marking).
 
 This file documents the contract that `wt list` honors after the status-opt-in change. Future changes touching `cmd/wt/list.go` should preserve these invariants unless an explicit spec amendment supersedes them.
 
@@ -14,7 +14,7 @@ This file documents the contract that `wt list` honors after the status-opt-in c
 ### Default mode is enrichment-free
 
 - Default `wt list` (no flags, or with `--json` only) SHALL invoke exactly **one** `git` subprocess: `git worktree list --porcelain`. It MUST NOT invoke `git diff`, `git diff --cached`, `git ls-files`, `git rev-parse`, `git rev-list`, or `git status` against any worktree directory.
-- The cheap code path is `listEntriesBasic(ctx)`. It builds `[]listEntry` from `listWorktreeEntries()` + name/path/branch/is_main/is_current — nothing else.
+- The cheap code path is `listEntriesBasic(ctx)`. It builds `[]listEntry` from `listWorktreeEntries()` + name/path/branch/is_main/is_current/temp — nothing else (`temp` is derived from data the porcelain already supplied; see "`temp` key" below).
 - An unreadable worktree (broken symlink, permissions error on `.git`) MUST NOT surface an error in default mode, because no per-worktree work runs.
 
 ### Human output layout is keyed on the resolved sort mode
@@ -32,6 +32,18 @@ This file documents the contract that `wt list` honors after the status-opt-in c
 - `listEntry.Dirty` is `*bool`; `listEntry.Unpushed` is `*int`. Both have `omitempty` tags.
 - Default mode (no `--status`) NEVER sets these pointers — they remain nil and the keys are omitted from JSON output.
 - Consumers MUST treat the absence of `dirty`/`unpushed` keys as "status was not computed", NOT as "clean / not ahead". Defaulting absent keys to false/0 in consumer code is a contract violation on the consumer side.
+
+### `temp` key: always present, derived without a subprocess
+
+- `listEntry.Temp` is a plain `bool` tagged `json:"temp"` — **no `omitempty`**, so every record in every mode (default, `--status`, `--sort`) carries `"temp": true|false`. Unlike `dirty`/`unpushed`/`last_active`/`idle` it is not an opt-in pointer: it costs nothing to compute, so it is always emitted and the record schema stays stable for consumers.
+- A worktree is temp iff **all** of: the porcelain entry for it is `detached`; it is not the main worktree; its basename starts with `wt.TempNamePrefix` (`tmp-`). The predicate is the pure helper `wt.IsTempWorktree(name string, detached bool) bool` (the caller excludes main), called from `buildBaseEntry`. `rawEntry` carries the porcelain `detached` bool alongside the `(detached)` branch sentinel, so classifying adds **zero** git subprocesses and the default-mode one-subprocess invariant holds.
+- A detached worktree without the prefix (raw `git worktree add --detach`) is **not** temp, and a `tmp-*`-named worktree on a branch is **not** temp.
+- **`branch` is `null` in JSON for temp records only** — `listEntry.MarshalJSON` emits `"branch": null` when `Temp` is true and the plain string otherwise. Non-temp detached worktrees keep the `"branch": "(detached)"` string. `Branch` stays a `string` in memory, so sorting by branch and human rendering are unaffected; `(detached)` still shows in the Branch column of every human layout (3-, 4-, and 5-column) for temp rows.
+- `--path <name>` lookup is unchanged.
+
+- **GIVEN** a temp worktree `tmp-x`, a normal worktree, and a raw detached worktree `raw-det`
+- **WHEN** the user runs `wt list --json`
+- **THEN** `tmp-x` has `"temp": true, "branch": null`; main and the normal worktree have `"temp": false` with their branch; `raw-det` has `"temp": false, "branch": "(detached)"`.
 
 ### `--status` flag opts back into enrichment
 
@@ -58,7 +70,7 @@ This file documents the contract that `wt list` honors after the status-opt-in c
 
 - `getUnpushedInDir(wtPath)` runs ONE `git rev-list --count @{u}..HEAD` invocation. No separate `git rev-parse --abbrev-ref @{u}` upstream lookup — `@{u}` resolves the upstream inline.
 - Non-zero exit (no upstream configured, untracked branch, detached) returns 0. Stderr discarded.
-- Detached HEAD is detected via `r.branch == "(detached)"` and skips the `getUnpushedInDir` call entirely; `Unpushed` stays at `0` from the pre-allocation.
+- Detached HEAD is detected via the porcelain `r.detached` flag (not by comparing the branch string) and skips the `getUnpushedInDir` call entirely; `Unpushed` stays at `0` from the pre-allocation. This covers temp worktrees and raw detached ones alike.
 
 ### `--path` lookup mode skips enrichment
 
@@ -333,6 +345,13 @@ recomputation. Rejected: recomputing `resolveSort` inside `handleFormattedOutput
 (duplicates resolution logic and its flag inputs); inferring recency from a non-nil
 `LastActive` (ambiguous — `--status` also sets it, and that path must stay 5-column).
 
+### Temp predicate = detached + non-main + `tmp-` basename; `branch: null` only for temp
+
+**Decision**: `wt list` derives `temp` from the porcelain `detached` line, the not-main check, and the `tmp-` basename prefix alone, and serializes `branch` as `null` for temp records only. Plan `26-11-23-worktree-base-receipts.md` W5 binds `temp: true` / `branch` null for `wt create --temp` worktrees.
+**Why**: zero extra subprocesses preserves the single-`git worktree list --porcelain` default-mode invariant, and no state file or git config is needed (Constitution I) because `--temp` always applies the prefix at creation. Limiting `null` to the new temp records keeps the change additive for existing consumers, who still see the `(detached)` string everywhere it appeared before.
+**Rejected**: a git-config or marker-file flag per worktree (hidden state plus a read per worktree); treating every detached worktree as temp (mislabels hand-made ones); turning `(detached)` into `null` for all detached worktrees (breaks existing consumers).
+*Introduced by*: `261123-gcos-create-temp-detached-worktree`.
+
 ### Scope the `Last Active` column to recent mode only
 
 `name`/`branch` human modes do zero per-worktree work; adding a `Last Active`
@@ -345,9 +364,11 @@ relative buckets).
 ## Cross-references
 
 - Spec doc: `docs/specs/cli-surface.md` — `wt list` section (lines ~52-73, flag table + prose).
-- Source: `src/cmd/wt/list.go` — `listEntry` (now with `LastActive *time.Time` and `Idle *bool`), `listCmd`, `listEntriesBasic`, `listEntriesEnriched`, `buildBaseEntry`, `checkDirty`, `getUnpushedInDir`, `maxListConcurrency`, plus the `260530-rtmf` additions: `sortMode`, `isValidSort`, `resolveSort`, `sortEntries`, `relativeTime`. `260601-73cv` changed `sortEntries(entries, mode, persistKey bool)` and `handleFormattedOutput(entries, ctx, showStatus, mode sortMode)`, and added the 4-column recent-layout rendering branch in `handleFormattedOutput`. `260530-5fyu` added the `Idle *bool` field, `populateIdle`, and the `⚠ idle` marker (with displayWidth-based `lastActivePad`) in the 4-column and 5-column branches.
+- Source: `src/cmd/wt/list.go` — `listEntry` (now with `LastActive *time.Time` and `Idle *bool`), `listCmd`, `listEntriesBasic`, `listEntriesEnriched`, `buildBaseEntry`, `checkDirty`, `getUnpushedInDir`, `maxListConcurrency`, plus the `261123-gcos` additions (`listEntry.Temp`, `listEntry.MarshalJSON`, `rawEntry.detached`), plus the `260530-rtmf` additions: `sortMode`, `isValidSort`, `resolveSort`, `sortEntries`, `relativeTime`. `260601-73cv` changed `sortEntries(entries, mode, persistKey bool)` and `handleFormattedOutput(entries, ctx, showStatus, mode sortMode)`, and added the 4-column recent-layout rendering branch in `handleFormattedOutput`. `260530-5fyu` added the `Idle *bool` field, `populateIdle`, and the `⚠ idle` marker (with displayWidth-based `lastActivePad`) in the 4-column and 5-column branches.
+- Source: `src/internal/worktree/names.go` — `TempNamePrefix`, `IsTempWorktree` (the pure temp predicate); `src/internal/worktree/worktree.go` — `DetachedBranchLabel`.
 - Source: `src/internal/worktree/recency.go` — `RecencyOf`, `RecencyLess`, `SortByRecency` (the shared comparator consumed by `sortEntries`).
 - Tests: `src/cmd/wt/list_test.go` — default-mode coverage (`TestList_DefaultHeader`, `TestList_DefaultModeNoDirtyIndicator`, `TestList_JSONDefaultFields`), `--status`-mode coverage (`TestList_StatusHeader`, `TestList_StatusModeShowsDirty`, `TestList_StatusFlagShowsUnpushed`, `TestList_JSONStatusFields`, `TestList_StatusAndPathMutuallyExclusive`, `TestList_StatusOrderingPreserved`), `260530-rtmf` ordering/last-active coverage (recency/name/invalid-sort/main-pinned/`--path`+`--sort` mutex, JSON-default-stable, `last_active` key presence/absence), and `260601-73cv` recent-column coverage (updated `TestList_HumanDefaultIsRecency` and `TestList_LastActiveRelativeTimeInHumanStatus`; new 4-column `Last Active` header + relative-time value in the default human view, `name`/`branch` modes stay 3-column, `--json`/`--json --sort=recent` omit `last_active`, main-worktree shows its own relative time, vanished worktree renders `-`, and a main-only repo renders the 4-column header without misalignment).
+- Sibling memory: `/wt-cli/create-branch-semantics.md` — the `wt create --temp` mode that produces the worktrees the `temp` key marks. `/wt-cli/delete-dry-run-contract.md` — how `wt delete` treats detached worktrees.
 - Constitution: Principle II (Cobra command surface), III (Typed exit codes — `ExitInvalidArgs` for the new mutex check), IV (test coverage split per mode).
 - Sibling memory: `wt-cli/init-failure-contract.md` — same pattern of post-change invariant capture for a different `wt` subcommand.
 - Sibling memory: `wt-cli/recency-ordering-contract.md` — the shared `RecencyOf`/`RecencyLess`/`SortByRecency` definition that this file's `--sort`/`recent` ordering and `last_active` field consume; also covers the `wt open`/`wt delete` menu ordering.

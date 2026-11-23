@@ -5,12 +5,16 @@ description: "Init-failure behavior of `wt create` / `wt init` — kept-worktree
 # wt-cli: Init Failure Contract
 
 > Post-implementation behavior capture for the `wt create` / `wt init` init-failure behavior.
-> Source changes: `260516-g5e7`, `260602-z4p7`, `260626-n6ma`, `260705-irnt`
+> Source changes: `260516-g5e7`, `260602-z4p7`, `260626-n6ma`, `260705-irnt`, `261123-gcos`
 > (each contract below carries its citation).
 
 This file documents the contract that `wt create` and `wt init` honor when the init script is missing or fails. Future changes touching `cmd/wt/create.go`, `cmd/wt/init.go`, or `src/internal/worktree/{init.go,errors.go,crud.go,apps.go}` should preserve these invariants unless an explicit spec amendment supersedes them.
 
 ## Requirements
+
+### These contracts apply only when init runs
+
+`wt create` runs init by default, except under `--temp`, where init is skipped unless `--init` is passed (see `create-branch-semantics.md` "`--temp <ref>` creates a DETACHED throwaway worktree"). A `--temp` create without `--init` therefore has no init phase and none of the behavior below; with `--init` it runs through the same runner and every contract in this file applies unchanged — kept worktree and `ExitInitFailed = 7` on failure, the SIGINT handler swap, and foreground reclaim — except that no `Initialize worktree?` confirm is issued (the flag is the consent).
 
 ### Init invocation resolution is unified
 

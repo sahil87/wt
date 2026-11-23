@@ -9,7 +9,7 @@ description: "The `wt delete --dry-run` contract — a live-path-sharing preview
 > Post-implementation behavior capture for the `wt delete --dry-run` preview
 > flag, the live-path-sharing guarantee it rests on, and the destructive-path
 > audit that dispositioned every other `wt` command.
-> Source change: `260717-p5m9-delete-dry-run`.
+> Source changes: `260717-p5m9-delete-dry-run`, `261123-gcos-create-temp-detached-worktree` (detached worktrees).
 
 ## Overview
 
@@ -92,6 +92,34 @@ dry-run gating is orchestration and stays in `cmd/`.
   detection all run against real git state, and each suppressed mutation
   (worktree removal, local branch delete, remote branch delete, discard)
   produces exactly one `Would …` line — nothing is mutated
+
+### Detached worktrees have no branch: no branch preview lines
+
+A detached worktree — a `wt create --temp` one or a raw `git worktree add --detach` — has no
+branch, so `wt delete` removes it and performs **no branch handling** on every
+target-resolution path (by name, multiple, `--all`, `--stale`, the menu, delete-current). The
+"no branch" signal arrives in two spellings, both recognized by `wt.IsDetachedBranch`: the
+porcelain sentinel `wt.DetachedBranchLabel` (`(detached)`) on the by-name/multi/all/stale/menu
+paths, and the literal `HEAD` that `git rev-parse --abbrev-ref HEAD` prints on the
+delete-current path (normalized to `(detached)` at the read site, so the `Branch:` header line
+shows `(detached)`, never `HEAD`).
+
+For a detached worktree `handleBranchCleanup` returns before doing anything, so:
+
+- no `Would delete branch:` lines under `--dry-run` and no live `Deleted branch` /
+  `Skipped branch deletion` copy;
+- `--branch true` is a no-op (it never reaches `git branch -D`);
+- the orphan `wt/<name>` cleanup is skipped (a detached worktree never had one);
+- the delete-current path skips the unpushed-commits check (there is no branch to push).
+
+Everything else is unchanged: `--dry-run` still prints `Would remove worktree: <name>`, and the
+stash/dirty-discard hazards, confirmations, and exit codes behave as before.
+
+#### Scenario: dry-run on a temp worktree previews only the removal
+- **GIVEN** a temp worktree `tmp-x` (and an unrelated branch `wt/tmp-x` is not involved)
+- **WHEN** `wt delete tmp-x --dry-run` runs
+- **THEN** the output has `Would remove worktree: tmp-x` and no `Would delete branch` line, and
+  every pre-existing branch still exists (`TestDelete_TempDryRunNoBranchLines`)
 
 ### The `os.Chdir` skip
 
@@ -298,6 +326,22 @@ closes it.
 drift bug the review found).
 *Introduced by*: `260717-p5m9-delete-dry-run`
 
+### Detached worktrees are branchless for delete, not only `tmp-*` ones
+
+**Decision**: `handleBranchCleanup` (and the delete-current unpushed check) treat any detached
+worktree as having no branch, keyed on `wt.IsDetachedBranch`, not on the `tmp-` name. Plan
+`26-11-23-worktree-base-receipts.md` W5 requires `wt delete <name>` to remove a temp worktree
+"without branch prompts".
+**Why**: before this, the `(detached)` sentinel (or `HEAD`, on the delete-current path) was passed
+as if it were a branch name — printing a bogus `Skipped branch deletion: branch '(detached)'…` or,
+with `--branch true`, attempting `git branch -D HEAD`. A detached worktree has no branch by
+definition, so the fix belongs at the point where branch handling begins and benefits raw
+detached worktrees too. Both spellings are named constants behind one helper rather than string
+comparisons scattered across the handlers.
+**Rejected**: special-casing only `tmp-*`-named worktrees (leaves the bogus output for raw
+detached ones); mapping both spellings to `""` at every read site (duplicated normalization).
+*Introduced by*: `261123-gcos-create-temp-detached-worktree`.
+
 ## Cross-references
 
 - Sibling memory: [toolkit-standards-conformance](/wt-cli/toolkit-standards-conformance.md)
@@ -315,7 +359,10 @@ drift bug the review found).
 - Source: `src/cmd/wt/delete.go` — flag registration (`--dry-run` on
   `deleteCmd()`), the `dryRun` threading through all nine `handle*` functions,
   `printDryRunHeader`, the leaf gating at each mutation seam, the `os.Chdir` skip,
-  and the separately-gated orphan `wt/<name>` previews (`handleBranchCleanup`).
+  the separately-gated orphan `wt/<name>` previews (`handleBranchCleanup`), and the detached
+  early return in `handleBranchCleanup` plus the `HEAD` → `(detached)` normalization and unpushed
+  skip in `handleDeleteCurrent` (`261123-gcos`).
+- Source: `src/internal/worktree/worktree.go` — `DetachedBranchLabel`, `IsDetachedBranch`.
 - Source: `src/internal/worktree/` — reused decision/hazard functions
   (`RemoveWorktree`, `DeleteLocalBranch`, `DeleteRemoteBranch`,
   `BranchExistsLocally`, `BranchExistsRemotely`, `HasUncommittedChanges`,
@@ -324,7 +371,8 @@ drift bug the review found).
 - Tests: `src/cmd/wt/delete_test.go` (preview-per-path, `--stash`×`--dry-run`,
   `--branch` tri-state / `--no-remote` preview, hazard report lines, prompt
   suppression, no-mutation guarantee, exit-code parity,
-  `TestDelete_DryRunRemoteOnlyOrphanPreviewsRemote`),
+  `TestDelete_DryRunRemoteOnlyOrphanPreviewsRemote`; `261123-gcos`: `TestDelete_Temp*` and
+  `TestDelete_RawDetachedWorktreeHasNoBranchHandling` for the detached no-branch-handling paths),
   `src/cmd/wt/integration_test.go` (`TestIntegration_DeleteDryRun_LeavesStateByteIdentical`
   and the multi-target byte-identical / exit-0 assertions).
 - Constitution: Principle I (no side-effecting state under a preview — the
