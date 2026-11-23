@@ -38,7 +38,9 @@ Create a git worktree as a sibling of the main repo (`<repo>.worktrees/<name>/`)
 | `--non-interactive` | `false` | No prompts; fail or use defaults rather than prompting. |
 | `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for the NEW branch. Validated via `git rev-parse --verify`. Cannot be combined with `--checkout` or `--reuse`. |
 | `--checkout <branch>` | (none) | Check out an EXISTING branch (local as-is, or remote-only fetched then checked out) into the worktree, instead of creating a new one. Cannot be combined with a positional branch argument or with `--base`. |
-| `--pr <n>` | (none) | Create the worktree on pull request `<n>`'s head branch, resolved via `gh pr view <n> --json headRefName,isCrossRepository` (15 s timeout), then checked out exactly like `--checkout`. Same-repository PRs only. Cannot be combined with a positional branch argument, `--base`, `--checkout`, or `--reuse`. |
+| `--pr <n>` | (none) | Create the worktree on pull request `<n>`'s head branch, resolved via `gh pr view <n> --json headRefName,isCrossRepository` (15 s timeout), then checked out exactly like `--checkout`. Same-repository PRs only. Cannot be combined with a positional branch argument, `--base`, `--checkout`, `--reuse`, or `--temp`. |
+| `--temp <ref>` | (none) | Create a DETACHED throwaway worktree at `<ref>` (branch, tag, or commit SHA) — see [Temp worktrees](#temp-worktrees-wt-create---temp-ref). Cannot be combined with a positional branch argument, `--checkout`, `--reuse`, `--base`, or `--pr`. Long-only. |
+| `--init` | `false` | Opt in to the init script for `--temp` (skipped by default for temp worktrees). Without `--temp` it is accepted and is a no-op (init already runs by default). Cannot be combined with `--no-init`. Long-only. |
 
 **Deprecated aliases** (still accepted; hidden from `--help`; print a stderr deprecation warning): `--worktree-name` → `--name`, `--worktree-open` → `--open`, `--worktree-init true|false` → `--no-init` (`--worktree-init false` ≡ `--no-init`).
 
@@ -73,6 +75,33 @@ while the checkout looks the head up locally and on `origin`, so `--pr` assumes
 gh's repository *is* `origin`; in a fork clone (origin = your fork, gh default =
 upstream) use `--checkout` instead.
 
+### Temp worktrees: `wt create --temp <ref>`
+
+`--temp <ref>` creates a **detached** worktree at the commit `<ref>` resolves to
+— the surface for PR surgery (resolve a conflict, restack, inspect a commit)
+that must not pollute any branch.
+
+- `<ref>` is resolved once to a commit SHA (`git rev-parse --verify --quiet
+  <ref>^{commit}`) and the worktree is made with `git worktree add --detach
+  <path> <sha>` under `<repo>.worktrees/`. A branch name resolves to its tip and
+  the branch is **not** checked out. No branch is created and no git config is
+  written; the rollback registers only the worktree removal.
+- The name is always `tmp-`-prefixed: `tmp-<adjective>-<noun>` when `--name` is
+  absent; `--name foo` → `tmp-foo`; `--name tmp-foo` → `tmp-foo` (no double
+  prefix). The name prompt is skipped. An existing directory at the final name
+  is the usual `Worktree '<name>' already exists` error (`ExitGeneralError`).
+- The Git-phase summary (stderr) reads `Branch: (detached)` and
+  `From: <ref as typed> @ <7-char sha>`.
+- The init script is **skipped by default** (no Init phase output); `--init`
+  runs it through the normal runner, with no `Initialize worktree?` confirm. See
+  [`init-protocol.md`](init-protocol.md).
+- Conflicts exit `ExitInvalidArgs` before any mutation: `--temp` with a
+  positional, `--checkout`, `--reuse`, `--base`, or `--pr`; and `--init` with
+  `--no-init` (whether or not `--temp` is set). An unresolvable `<ref>` also
+  exits `ExitInvalidArgs` (`Invalid --temp ref: <ref>`).
+- Temp worktrees show in `wt list` (`temp: true`, see below) and are removed
+  with `wt delete <name>`, which does no branch handling for them.
+
 On success, the worktree path is always written as the last line of stdout.
 (When the chosen app was `open_here`, the unified shell-cd contract's own
 path emission precedes it — the contract is "the path is the last line", not
@@ -82,10 +111,12 @@ Exit codes: `ExitInvalidArgs` for flag misuse (including `--checkout` combined
 with a positional argument or with `--base`), invalid `--base`/branch name, a
 positional naming an already-existing branch, `--checkout` on a branch that
 does not exist, a non-numeric `--pr`, `--pr` combined with a positional /
-`--base` / `--checkout` / `--reuse`, a fork PR, or a PR head branch that exists
-neither locally nor on origin; `ExitGeneralError` when `gh` is missing or
+`--base` / `--checkout` / `--reuse`, a fork PR, a PR head branch that exists
+neither locally nor on origin, the `--temp` conflicts above, or an invalid
+`--temp` ref; `ExitGeneralError` when `gh` is missing or
 `gh pr view` fails (unauthenticated, PR not found, timeout — the message carries
-gh's first error line); `ExitGitError` for `git worktree add` failures;
+gh's first error line); `ExitGitError` for `git worktree add` failures
+(including `--temp`);
 `ExitRetryExhausted` for name generation; `ExitInitFailed` (7) when the init
 script runs but exits non-zero
 (the worktree is kept; the code holds on every init-failure path, including a
@@ -103,12 +134,19 @@ List all worktrees for the current repository.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--path <name>` | (none) | Print only the absolute path for the named worktree. Mutually exclusive with `--json` and `--status`. |
-| `--json` | `false` | Emit a JSON array of worktree records. Always emits `name`, `branch`, `path`, `is_main`, `is_current`. The `dirty` and `unpushed` keys are present only when `--status` is set. Mutually exclusive with `--path`. |
+| `--json` | `false` | Emit a JSON array of worktree records. Always emits `name`, `branch`, `path`, `is_main`, `is_current`, `temp`. The `dirty` and `unpushed` keys are present only when `--status` is set. `temp` is `true` for `wt create --temp` worktrees, whose `branch` is `null`. Mutually exclusive with `--path`. |
 | `--status` | `false` | Compute and display dirty/unpushed status per worktree. Slower (forks 2 git subprocesses per worktree; parallelized). Mutually exclusive with `--path`. |
 
 Default human output: a table with Name, Branch, and Path columns. The current
 worktree is marked with a green asterisk. No per-worktree git invocations
 occur — discovery is O(1) regardless of worktree count.
+
+A worktree is **temp** when it is detached, not the main worktree, and its
+directory name starts with `tmp-` — computed from the single porcelain listing,
+with no extra git invocation. Temp records emit `"branch": null` in `--json`;
+every other record (including a hand-made detached worktree, which keeps the
+`"(detached)"` string) keeps its branch string. Human output shows `(detached)`
+in the Branch column for temp worktrees in every layout.
 
 With `--status`: the table gains a Status column. Dirty worktrees show `*`,
 unpushed commits show `↑N`. Enrichment uses a bounded worker pool of
@@ -267,6 +305,14 @@ Positional args (zero or more): worktree names to delete. Resolution priority:
 worktree → interactive selection menu.
 
 Mixing positional args with `--worktree-name` exits with `ExitInvalidArgs`.
+
+**Detached worktrees have no branch.** For a detached worktree (a `wt create
+--temp` one, or any other) on every target-resolution path, `wt delete`
+removes the worktree and does no branch handling: no branch cleanup (so
+`--branch true` is a no-op), no `wt/<name>` orphan cleanup, no unpushed-commits
+check, and under `--dry-run` no `Would delete branch` lines. The header's
+`Branch:` line shows `(detached)`. Everything else (stash, dirty-discard
+hazard, confirmations, exit codes) is unchanged.
 
 Exit codes: `ExitInvalidArgs` for flag conflicts; `ExitGitError` for git
 failures; `ExitGeneralError` for non-git failures during deletion.

@@ -7,6 +7,28 @@ import (
 	"strings"
 )
 
+// shortSHALen is the length of the abbreviated commit SHA shown in summaries.
+const shortSHALen = 7
+
+// ResolveCommit resolves ref (branch, tag, or commit SHA) to the full SHA of
+// the commit it points at, via `git rev-parse --verify --quiet <ref>^{commit}`.
+// Returns an error when ref does not resolve to a commit.
+func ResolveCommit(ref string) (string, error) {
+	out, err := exec.Command("git", "rev-parse", "--verify", "--quiet", ref+"^{commit}").Output()
+	if err != nil {
+		return "", fmt.Errorf("'%s' does not resolve to a commit", ref)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// ShortSHA abbreviates a full commit SHA to the 7 characters used in summaries.
+func ShortSHA(sha string) string {
+	if len(sha) > shortSHALen {
+		return sha[:shortSHALen]
+	}
+	return sha
+}
+
 // HasUncommittedChanges returns true if the current directory has staged or unstaged changes.
 func HasUncommittedChanges() bool {
 	if err := exec.Command("git", "diff", "--quiet").Run(); err != nil {

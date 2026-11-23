@@ -51,10 +51,27 @@ name is generated and no retry happens — the name is used as-is and an existin
 directory at that name is an error (or, with `--reuse`, signals that the
 existing worktree should be returned instead of created).
 
+### Temp worktrees
+
+`wt create --temp <ref>` worktrees are always named with the `tmp-` prefix
+(`TempNamePrefix` in `internal/worktree/names.go`) so they are visibly
+disposable in every listing:
+
+| Invocation | Directory |
+|------------|-----------|
+| `--temp <ref>` | `tmp-<adjective>-<noun>` (via `GenerateUniqueNameWithPrefix`; collision checked on the prefixed name) |
+| `--temp <ref> --name foo` | `tmp-foo` |
+| `--temp <ref> --name tmp-foo` | `tmp-foo` (the prefix is never doubled) |
+
+`wt list` classifies a worktree as temp when it is detached, not the main
+worktree, and its directory name starts with `tmp-` (`IsTempWorktree`) — a pure
+check on data the single porcelain listing already returns. A detached worktree
+without the prefix, or a `tmp-*` worktree on a branch, is not temp.
+
 ## Branch ↔ worktree relationship
 
 The branch checked out in a worktree is **independent** of the worktree
-directory name. Two illustrative cases:
+directory name. Three illustrative cases:
 
 1. **Exploratory / new-branch worktree** (no positional, or a positional
    naming a *new* branch): a new branch is created — named after the worktree
@@ -70,8 +87,12 @@ directory name. Two illustrative cases:
    branch, `DeriveWorktreeName` takes the last path segment after `/` and
    replaces non-alphanumeric characters (except `-` and `_`) with `-` — so
    branch `feature/oauth-pkce` yields suggestion `oauth-pkce`.
+3. **Temp / detached worktree** (`--temp <ref>`): HEAD is detached at the
+   resolved commit — **no branch exists** and no git config is written. There
+   is nothing for `wt delete` to clean up: branch handling (including
+   `--branch true`) is skipped for any detached worktree.
 
-`wt delete --branch auto` collapses these two cases by deleting the
+`wt delete --branch auto` collapses the first two cases by deleting the
 branch only when it matches the worktree name — the typical exploratory case.
 For the second case (worktree name and branch differ), `auto` keeps the
 branch.

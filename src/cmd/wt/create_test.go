@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -1156,4 +1157,276 @@ func TestCreate_PRHeadNotFound(t *testing.T) {
 	assertExitCode(t, r, 2)
 	assertContains(t, r.Stderr, "PR #7 head branch 'gone-branch' not found")
 	assertWorktreeNotExists(t, repo, "gone-wt")
+}
+
+// ---------- --temp / --init ----------
+
+// tempInitEnv commits an init script that drops a marker file and returns the
+// env pointing WORKTREE_INIT_SCRIPT at it.
+func tempInitEnv(t *testing.T, repo string) []string {
+	t.Helper()
+	createInitScript(t, repo)
+	gitRun(t, repo, "add", "scripts/worktree-init.sh")
+	gitRun(t, repo, "commit", "-q", "-m", "Add init script")
+	return []string{"WORKTREE_INIT_SCRIPT=scripts/worktree-init.sh"}
+}
+
+// assertDetachedAt fails unless the worktree at path is detached at sha.
+func assertDetachedAt(t *testing.T, path, sha string) {
+	t.Helper()
+	if got := gitRun(t, path, "rev-parse", "HEAD"); got != sha {
+		t.Errorf("worktree HEAD = %s, want %s", got, sha)
+	}
+	if err := exec.Command("git", "-C", path, "symbolic-ref", "-q", "HEAD").Run(); err == nil {
+		t.Errorf("worktree at %s is on a branch; want detached", path)
+	}
+}
+
+func TestCreateTemp_DetachedAtSHA(t *testing.T) {
+	repo := createTestRepo(t)
+	first := gitRun(t, repo, "rev-parse", "HEAD")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "second")
+	branchesBefore := gitRun(t, repo, "branch", "--list")
+
+	r := runWtSuccess(t, repo, nil, "create", "--temp", first, "--non-interactive")
+
+	path := strings.TrimSpace(r.Stdout)
+	lines := strings.Split(path, "\n")
+	if len(lines) != 1 {
+		t.Errorf("expected 1 line of stdout, got %d: %q", len(lines), r.Stdout)
+	}
+	name := filepath.Base(path)
+	if !regexp.MustCompile(`^tmp-[a-z]+-[a-z]+$`).MatchString(name) {
+		t.Errorf("temp name %q does not match ^tmp-<adj>-<noun>$", name)
+	}
+	if filepath.Dir(path) != worktreesDir(repo) {
+		t.Errorf("temp worktree at %s, want under %s", path, worktreesDir(repo))
+	}
+	assertDetachedAt(t, path, first)
+	if got := gitRun(t, repo, "branch", "--list"); got != branchesBefore {
+		t.Errorf("branches changed: before %q, after %q", branchesBefore, got)
+	}
+	if cfg := gitRun(t, repo, "config", "--local", "--list"); strings.Contains(cfg, name) {
+		t.Errorf("git config mentions the temp worktree:\n%s", cfg)
+	}
+}
+
+func TestCreateTemp_BranchRefStaysDetached(t *testing.T) {
+	repo := createTestRepo(t)
+	gitRun(t, repo, "branch", "feature/x")
+	tip := gitRun(t, repo, "rev-parse", "feature/x")
+
+	r := runWtSuccess(t, repo, nil, "create", "--temp", "feature/x", "--non-interactive", "--name", "br")
+
+	path := strings.TrimSpace(r.Stdout)
+	assertDetachedAt(t, path, tip)
+	// The branch is not checked out anywhere: it can still be checked out here.
+	gitRun(t, repo, "checkout", "-q", "feature/x")
+}
+
+func TestCreateTemp_SummaryLines(t *testing.T) {
+	repo := createTestRepo(t)
+	first := gitRun(t, repo, "rev-parse", "HEAD")
+	gitRun(t, repo, "commit", "-q", "--allow-empty", "-m", "second")
+
+	r := runWtSuccess(t, repo, nil, "create", "--temp", "HEAD~1", "--non-interactive")
+
+	assertContains(t, r.Stderr, "Branch: (detached)")
+	assertContains(t, r.Stderr, "From: HEAD~1 @ "+first[:7])
+	// No init phase, no open phase by default.
+	assertNotContains(t, r.Stderr, "Init (")
+}
+
+func TestCreateTemp_Naming(t *testing.T) {
+	repo := createTestRepo(t)
+
+	runWtSuccess(t, repo, nil, "create", "--temp", "HEAD", "--name", "foo", "--non-interactive")
+	assertWorktreeExists(t, repo, "tmp-foo")
+
+	runWtSuccess(t, repo, nil, "create", "--temp", "HEAD", "--name", "tmp-bar", "--non-interactive")
+	assertWorktreeExists(t, repo, "tmp-bar")
+	assertWorktreeNotExists(t, repo, "tmp-tmp-bar")
+
+	// Deprecated alias still gets the prefix.
+	runWtSuccess(t, repo, nil, "create", "--temp", "HEAD", "--worktree-name", "baz", "--non-interactive")
+	assertWorktreeExists(t, repo, "tmp-baz")
+}
+
+func TestCreateTemp_NamePromptSkippedInteractive(t *testing.T) {
+	repo := createTestRepo(t)
+
+	// Not --non-interactive: a name prompt would print "Worktree name". The
+	// untracked remote.git/ trips the dirty-state menu, so answer "1" (continue
+	// anyway). --open skip keeps the Open phase inert.
+	r := runWtStdin(t, repo, nil, "1\n", "create", "--temp", "HEAD", "--open", "skip")
+	assertExitCode(t, r, 0)
+
+	assertNotContains(t, r.Stderr, "Worktree name")
+	lines := strings.Split(strings.TrimSpace(r.Stdout), "\n")
+	if name := filepath.Base(lines[len(lines)-1]); !strings.HasPrefix(name, "tmp-") {
+		t.Errorf("name %q missing tmp- prefix", name)
+	}
+}
+
+func TestCreateTemp_NameCollision(t *testing.T) {
+	repo := createTestRepo(t)
+	runWtSuccess(t, repo, nil, "create", "--temp", "HEAD", "--name", "dup", "--non-interactive")
+
+	r := runWt(t, repo, nil, "create", "--temp", "HEAD", "--name", "dup", "--non-interactive")
+
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stderr, "Worktree 'tmp-dup' already exists")
+}
+
+func TestCreateTemp_ModeConflictsExit2(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"positional", []string{"--temp", "HEAD", "feat-x"}, "--temp cannot be combined with a positional branch argument"},
+		{"checkout", []string{"--temp", "HEAD", "--checkout", "main"}, "--temp cannot be combined with --checkout"},
+		{"reuse", []string{"--temp", "HEAD", "--reuse", "--name", "n"}, "--temp cannot be combined with --reuse"},
+		{"reuse-no-name", []string{"--temp", "HEAD", "--reuse"}, "--temp cannot be combined with --reuse"},
+		{"base", []string{"--temp", "HEAD", "--base", "main"}, "--temp cannot be combined with --base"},
+		// Rejected before --pr's own validation, so gh is never consulted.
+		{"pr", []string{"--temp", "HEAD", "--pr", "7"}, "--temp cannot be combined with --pr"},
+		{"init-no-init", []string{"--temp", "HEAD", "--init", "--no-init"}, "--init cannot be combined with --no-init"},
+		{"init-no-init-without-temp", []string{"--init", "--no-init"}, "--init cannot be combined with --no-init"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			repo := createTestRepo(t)
+			branchesBefore := gitRun(t, repo, "branch", "--list")
+
+			r := runWt(t, repo, nil, append([]string{"create", "--non-interactive"}, c.args...)...)
+
+			assertExitCode(t, r, 2)
+			assertContains(t, r.Stderr, "Error: "+c.want)
+			assertContains(t, r.Stderr, "Fix:")
+			if entries, _ := os.ReadDir(worktreesDir(repo)); len(entries) != 0 {
+				t.Errorf("worktrees dir not empty after rejected invocation: %v", entries)
+			}
+			if got := gitRun(t, repo, "branch", "--list"); got != branchesBefore {
+				t.Errorf("branches changed: before %q, after %q", branchesBefore, got)
+			}
+		})
+	}
+}
+
+func TestCreateTemp_InvalidRefExit2(t *testing.T) {
+	repo := createTestRepo(t)
+
+	for _, ref := range []string{"no-such-ref", ""} {
+		r := runWt(t, repo, nil, "create", "--temp", ref, "--non-interactive")
+
+		assertExitCode(t, r, 2)
+		assertContains(t, r.Stderr, "Invalid --temp ref: "+ref)
+		assertContains(t, r.Stderr, "does not resolve to a commit")
+		assertContains(t, r.Stderr, "Provide a valid branch name, tag, or commit SHA")
+	}
+	if entries, _ := os.ReadDir(worktreesDir(repo)); len(entries) != 0 {
+		t.Errorf("worktrees dir not empty after invalid ref: %v", entries)
+	}
+}
+
+func TestCreateTemp_InitSkippedByDefault(t *testing.T) {
+	repo := createTestRepo(t)
+	env := tempInitEnv(t, repo)
+
+	r := runWtSuccess(t, repo, env, "create", "--temp", "HEAD", "--non-interactive")
+
+	path := strings.TrimSpace(r.Stdout)
+	if _, err := os.Stat(filepath.Join(path, ".init-script-ran")); err == nil {
+		t.Error("init script ran for --temp without --init")
+	}
+	assertNotContains(t, r.Stderr, "Init (")
+	assertNotContains(t, r.Stderr, "Running worktree init")
+}
+
+func TestCreateTemp_InitFlagRunsInit(t *testing.T) {
+	repo := createTestRepo(t)
+	env := tempInitEnv(t, repo)
+
+	r := runWtSuccess(t, repo, env, "create", "--temp", "HEAD", "--init", "--non-interactive")
+
+	path := strings.TrimSpace(r.Stdout)
+	assertFileExists(t, filepath.Join(path, ".init-script-ran"))
+	assertContains(t, r.Stderr, "Init (")
+}
+
+func TestCreateTemp_InitFlagNoConfirmWhenInteractive(t *testing.T) {
+	repo := createTestRepo(t)
+	env := tempInitEnv(t, repo)
+
+	// Interactive (no --non-interactive) with empty stdin: a confirm prompt
+	// would read EOF as "no". --init is the consent, so init must still run.
+	r := runWtStdin(t, repo, env, "1\n", "create", "--temp", "HEAD", "--init", "--open", "skip")
+	assertExitCode(t, r, 0)
+
+	assertNotContains(t, r.Stderr, "Initialize worktree?")
+	// The menu's "Choice: " prompt shares stdout's last line, so locate the
+	// worktree on disk rather than parsing the path out of stdout.
+	markers, _ := filepath.Glob(filepath.Join(worktreesDir(repo), "tmp-*", ".init-script-ran"))
+	if len(markers) != 1 {
+		t.Errorf("expected init marker in the temp worktree, found %v", markers)
+	}
+}
+
+func TestCreateTemp_InitFailureKeepsWorktree(t *testing.T) {
+	repo := createTestRepo(t)
+	env := createFailingInitScript(t, repo)
+
+	r := runWt(t, repo, env, "create", "--temp", "HEAD", "--init", "--non-interactive", "--name", "boom")
+
+	assertExitCode(t, r, 7)
+	assertWorktreeExists(t, repo, "tmp-boom")
+}
+
+func TestCreate_InitFlagWithoutTempIsNoOp(t *testing.T) {
+	repo := createTestRepo(t)
+	env := tempInitEnv(t, repo)
+
+	r := runWtSuccess(t, repo, env, "create", "--init", "--non-interactive", "--name", "plain")
+
+	// Behaves exactly like a plain create: init runs by default, branch is made.
+	assertFileExists(t, filepath.Join(strings.TrimSpace(r.Stdout), ".init-script-ran"))
+	assertBranchExists(t, repo, "plain")
+
+	// And --no-init still skips init when --init is absent.
+	r = runWtSuccess(t, repo, env, "create", "--no-init", "--non-interactive", "--name", "plain2")
+	if _, err := os.Stat(filepath.Join(strings.TrimSpace(r.Stdout), ".init-script-ran")); err == nil {
+		t.Error("--no-init did not skip init")
+	}
+}
+
+func TestCreateTemp_GitFailureExit3NothingLeft(t *testing.T) {
+	repo := createTestRepo(t)
+	// Make `git worktree add` fail via an unwritable worktrees directory.
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("permission-based failure injection unavailable")
+	}
+	wtDir := worktreesDir(repo)
+	if err := os.MkdirAll(wtDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(wtDir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(wtDir, 0755) })
+
+	r := runWt(t, repo, nil, "create", "--temp", "HEAD", "--non-interactive", "--name", "nope")
+
+	assertExitCode(t, r, 3)
+	assertContains(t, r.Stderr, "Failed to create worktree")
+	assertWorktreeNotExists(t, repo, "tmp-nope")
+}
+
+func TestCreateTemp_HelpListsFlags(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWtSuccess(t, repo, nil, "create", "--help")
+
+	assertContains(t, r.Stdout, "--temp")
+	assertContains(t, r.Stdout, "--init")
 }

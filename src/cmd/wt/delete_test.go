@@ -1119,3 +1119,142 @@ func TestDelete_DryRunMenuRoutePreviewsNoMutation(t *testing.T) {
 	assertWorktreeExists(t, repo, "menu-dry")
 	assertBranchExists(t, repo, "menu-dry")
 }
+
+// ---------- detached / temp worktrees have no branch handling ----------
+
+func TestDelete_TempByName(t *testing.T) {
+	repo := createTestRepo(t)
+	createTempViaWt(t, repo, "x")
+	gitRun(t, repo, "branch", "bystander")
+	branchesBefore := branchList(t, repo)
+
+	for _, args := range [][]string{
+		{"delete", "--non-interactive", "tmp-x"},
+		{"delete", "--non-interactive", "--worktree-name", "tmp-x"},
+	} {
+		createTempViaWtIfMissing(t, repo, "x")
+		r := runWtSuccess(t, repo, nil, args...)
+
+		combined := r.Stdout + r.Stderr
+		assertContains(t, combined, "Deleted worktree")
+		assertNotContains(t, combined, "branch deletion")
+		assertNotContains(t, combined, "Deleted branch")
+		assertNotContains(t, combined, "Skipped branch")
+		assertWorktreeNotExists(t, repo, "tmp-x")
+		if got := branchList(t, repo); got != branchesBefore {
+			t.Errorf("branches changed by `wt %s`: before %q, after %q", strings.Join(args, " "), branchesBefore, got)
+		}
+	}
+}
+
+// createTempViaWtIfMissing recreates tmp-<name> when a previous loop iteration
+// deleted it.
+func createTempViaWtIfMissing(t *testing.T, repo, name string) {
+	t.Helper()
+	if _, err := os.Stat(worktreePath(repo, "tmp-"+name)); err != nil {
+		createTempViaWt(t, repo, name)
+	}
+}
+
+func TestDelete_TempWithBranchTrueIsNoOp(t *testing.T) {
+	repo := createTestRepo(t)
+	createTempViaWt(t, repo, "x")
+	branchesBefore := branchList(t, repo)
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "tmp-x", "--branch", "true")
+
+	combined := r.Stdout + r.Stderr
+	assertNotContains(t, combined, "Deleted branch")
+	assertNotContains(t, combined, "Skipped branch")
+	assertWorktreeNotExists(t, repo, "tmp-x")
+	assertBranchExists(t, repo, "main")
+	if got := branchList(t, repo); got != branchesBefore {
+		t.Errorf("branches changed: before %q, after %q", branchesBefore, got)
+	}
+}
+
+func TestDelete_TempDoesNotTouchWtOrphanBranch(t *testing.T) {
+	repo := createTestRepo(t)
+	createTempViaWt(t, repo, "x")
+	// A same-named wt/ branch must survive: a detached worktree never had one.
+	gitRun(t, repo, "branch", "wt/tmp-x")
+
+	runWtSuccess(t, repo, nil, "delete", "--non-interactive", "tmp-x")
+
+	assertBranchExists(t, repo, "wt/tmp-x")
+}
+
+func TestDelete_TempDryRunNoBranchLines(t *testing.T) {
+	repo := createTestRepo(t)
+	createTempViaWt(t, repo, "x")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "tmp-x", "--dry-run", "--branch", "true")
+
+	assertContains(t, r.Stdout, "Would remove worktree: tmp-x")
+	assertNotContains(t, r.Stdout, "Would delete branch")
+	assertWorktreeExists(t, repo, "tmp-x")
+}
+
+func TestDelete_TempHeaderShowsDetached(t *testing.T) {
+	repo := createTestRepo(t)
+	createTempViaWt(t, repo, "x")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--worktree-name", "tmp-x", "--dry-run")
+
+	assertContains(t, r.Stderr, "Branch: (detached)")
+}
+
+func TestDelete_TempAll(t *testing.T) {
+	repo := createTestRepo(t)
+	createTempViaWt(t, repo, "x")
+	createTempViaWt(t, repo, "y")
+	branchesBefore := branchList(t, repo)
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "--all", "--branch", "true")
+
+	combined := r.Stdout + r.Stderr
+	assertNotContains(t, combined, "Deleted branch")
+	assertNotContains(t, combined, "Skipped branch")
+	assertWorktreeNotExists(t, repo, "tmp-x")
+	assertWorktreeNotExists(t, repo, "tmp-y")
+	if got := branchList(t, repo); got != branchesBefore {
+		t.Errorf("branches changed: before %q, after %q", branchesBefore, got)
+	}
+}
+
+func TestDelete_TempCurrentWorktree(t *testing.T) {
+	repo := createTestRepo(t)
+	path := createTempViaWt(t, repo, "x")
+	branchesBefore := branchList(t, repo)
+
+	// Delete-current: run from inside the temp worktree, no name. Dry-run first.
+	r := runWtSuccess(t, path, nil, "delete", "--non-interactive", "--dry-run", "--branch", "true")
+	assertContains(t, r.Stderr, "Branch: (detached)")
+	assertNotContains(t, r.Stderr, "Branch: HEAD")
+	assertNotContains(t, r.Stdout, "Would delete branch")
+	assertWorktreeExists(t, repo, "tmp-x")
+
+	r = runWtSuccess(t, path, nil, "delete", "--non-interactive", "--branch", "true")
+	combined := r.Stdout + r.Stderr
+	assertContains(t, combined, "Deleted worktree")
+	assertNotContains(t, combined, "Deleted branch")
+	assertNotContains(t, combined, "Skipped branch")
+	assertWorktreeNotExists(t, repo, "tmp-x")
+	if got := branchList(t, repo); got != branchesBefore {
+		t.Errorf("branches changed: before %q, after %q", branchesBefore, got)
+	}
+}
+
+func TestDelete_RawDetachedWorktreeHasNoBranchHandling(t *testing.T) {
+	repo := createTestRepo(t)
+	rawPath := filepath.Join(worktreesDir(repo), "raw-det")
+	gitRun(t, repo, "worktree", "add", "--detach", rawPath, "HEAD")
+
+	r := runWtSuccess(t, repo, nil, "delete", "--non-interactive", "raw-det", "--branch", "true")
+
+	combined := r.Stdout + r.Stderr
+	assertNotContains(t, combined, "Skipped branch")
+	assertNotContains(t, combined, "Deleted branch")
+	assertWorktreeNotExists(t, repo, "raw-det")
+	assertBranchExists(t, repo, "main")
+}

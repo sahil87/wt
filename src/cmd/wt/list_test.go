@@ -1019,3 +1019,118 @@ func TestList_LsAlias(t *testing.T) {
 	assertContains(t, r.Stdout, filepath.Base(repo))
 	assertContains(t, r.Stdout, "Location:")
 }
+
+// ---------- temp worktree marking ----------
+
+// tempListFixture builds a repo with a temp worktree (tmp-x), a normal
+// worktree (normal), and a raw detached worktree (raw-det) and returns the repo.
+func tempListFixture(t *testing.T) string {
+	t.Helper()
+	repo := createTestRepo(t)
+	createTempViaWt(t, repo, "x")
+	createWorktreeViaWt(t, repo, "normal")
+	rawPath := filepath.Join(worktreesDir(repo), "raw-det")
+	gitRun(t, repo, "worktree", "add", "--detach", rawPath, "HEAD")
+	return repo
+}
+
+func entryByName(t *testing.T, entries []map[string]interface{}, name string) map[string]interface{} {
+	t.Helper()
+	for _, e := range entries {
+		if e["name"] == name {
+			return e
+		}
+	}
+	t.Fatalf("no entry named %q in %v", name, entries)
+	return nil
+}
+
+func TestList_JSONTempMarking(t *testing.T) {
+	repo := tempListFixture(t)
+
+	r := runWtSuccess(t, repo, nil, "list", "--json")
+	entries := parseJSONList(t, r.Stdout)
+
+	tmp := entryByName(t, entries, "tmp-x")
+	if tmp["temp"] != true {
+		t.Errorf("tmp-x temp = %v, want true", tmp["temp"])
+	}
+	if v, ok := tmp["branch"]; !ok || v != nil {
+		t.Errorf("tmp-x branch = %v (present=%v), want explicit null", v, ok)
+	}
+
+	normal := entryByName(t, entries, "normal")
+	if normal["temp"] != false || normal["branch"] != "normal" {
+		t.Errorf("normal entry = %v, want temp=false branch=normal", normal)
+	}
+	main := entryByName(t, entries, "main")
+	if main["temp"] != false || main["branch"] != "main" {
+		t.Errorf("main entry = %v, want temp=false branch=main", main)
+	}
+	raw := entryByName(t, entries, "raw-det")
+	if raw["temp"] != false || raw["branch"] != "(detached)" {
+		t.Errorf("raw-det entry = %v, want temp=false branch=(detached)", raw)
+	}
+	// temp key is present on every record.
+	for _, e := range entries {
+		if _, ok := e["temp"]; !ok {
+			t.Errorf("record %v missing temp key", e["name"])
+		}
+	}
+}
+
+func TestList_JSONTempMarkingWithStatus(t *testing.T) {
+	repo := tempListFixture(t)
+
+	r := runWtSuccess(t, repo, nil, "list", "--status", "--json")
+	entries := parseJSONList(t, r.Stdout)
+
+	tmp := entryByName(t, entries, "tmp-x")
+	if tmp["temp"] != true || tmp["branch"] != nil {
+		t.Errorf("tmp-x = %v, want temp=true branch=null", tmp)
+	}
+	// Status fields still emitted; the unpushed probe is skipped for detached,
+	// so the preallocated zero value stands.
+	if _, ok := tmp["dirty"]; !ok {
+		t.Error("tmp-x missing dirty under --status")
+	}
+	if v, ok := tmp["unpushed"]; !ok || v != float64(0) {
+		t.Errorf("tmp-x unpushed = %v (present=%v), want 0", v, ok)
+	}
+}
+
+func TestList_TempBranchOnTmpNamedBranchNotTemp(t *testing.T) {
+	repo := createTestRepo(t)
+	// A tmp-* directory on a real branch is not temp.
+	createWorktreeViaWt(t, repo, "tmp-onbranch")
+
+	r := runWtSuccess(t, repo, nil, "list", "--json")
+	e := entryByName(t, parseJSONList(t, r.Stdout), "tmp-onbranch")
+
+	if e["temp"] != false || e["branch"] != "tmp-onbranch" {
+		t.Errorf("entry = %v, want temp=false branch=tmp-onbranch", e)
+	}
+}
+
+func TestList_HumanShowsDetachedForTemp(t *testing.T) {
+	repo := tempListFixture(t)
+
+	for _, args := range [][]string{
+		{"list"},
+		{"list", "--status"},
+		{"list", "--sort", "recent"},
+		{"list", "--sort", "branch"},
+	} {
+		r := runWtSuccess(t, repo, nil, args...)
+		var line string
+		for _, l := range strings.Split(r.Stdout, "\n") {
+			if strings.Contains(l, "tmp-x") {
+				line = l
+				break
+			}
+		}
+		if !strings.Contains(line, "(detached)") {
+			t.Errorf("wt %s: tmp-x row %q lacks (detached)", strings.Join(args, " "), line)
+		}
+	}
+}

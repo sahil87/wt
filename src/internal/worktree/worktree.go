@@ -10,6 +10,22 @@ import (
 	"strings"
 )
 
+// DetachedBranchLabel is the branch sentinel for a detached-HEAD worktree, as
+// produced by the porcelain parsers and shown in listings and summaries.
+const DetachedBranchLabel = "(detached)"
+
+// detachedHeadRef is what `git rev-parse --abbrev-ref HEAD` prints when HEAD is
+// detached (the delete-current path reads the branch that way).
+const detachedHeadRef = "HEAD"
+
+// IsDetachedBranch reports whether branch is one of the two representations of
+// "no branch": the porcelain sentinel DetachedBranchLabel, or the literal HEAD
+// from `git rev-parse --abbrev-ref HEAD`. A detached worktree has no branch to
+// clean up, so callers use this to skip branch handling.
+func IsDetachedBranch(branch string) bool {
+	return branch == DetachedBranchLabel || branch == detachedHeadRef
+}
+
 // Info holds the core state for a single worktree.
 type Info struct {
 	Name      string `json:"name"`
@@ -183,7 +199,7 @@ func parseWorktreeList(raw string) []worktreeEntry {
 		} else if line == "detached" {
 			// Detached HEAD: no branch ref. Map to a sentinel that mirrors
 			// what cmd/wt/list.go produces, so JSON/output stays consistent.
-			current.branch = "(detached)"
+			current.branch = DetachedBranchLabel
 		}
 	}
 	if current.path != "" {

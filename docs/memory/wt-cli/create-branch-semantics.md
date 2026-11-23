@@ -1,18 +1,18 @@
 ---
 type: memory
-description: "The `wt create` branch-selection contract — positional = new-branch-only, `--checkout` = existing-branch opt-in, `--pr <n>` = a same-repo PR's head branch via gh, `--base` = new-branch start-point (conflicts with `--checkout` and `--reuse`), the conflict/exit-code matrix, and the internal seam (CreateNewBranchWorktree / CheckoutBranchWorktree / ResolvePRHead + sentinel errors)."
+description: "The `wt create` branch-selection contract — positional = new-branch-only, `--checkout` = existing-branch opt-in, `--pr <n>` = a same-repo PR's head via gh, `--base` = new-branch start-point, `--temp <ref>` = detached throwaway worktree, the conflict/exit-code matrix, and the internal seam (CreateNewBranchWorktree / CheckoutBranchWorktree / CreateTempWorktree / ResolvePRHead + sentinel errors)."
 ---
 # wt-cli: Create Branch-Selection Contract
 
 > Post-implementation behavior capture for `wt create`'s branch-selection surface.
-> Source change: `260717-2af2-explicit-base-checkout-flags`.
+> Source changes: `260717-2af2-explicit-base-checkout-flags`, `261123-gcos-create-temp-detached-worktree`.
 
 This file documents how `wt create` decides which branch a new worktree lands on: the
 new-branch-only positional, the `--checkout` existing-branch opt-in, the `--pr <n>`
-pull-request head resolver in front of it, the `--base`
-new-branch start-point, the conflict/exit-code matrix, and the `internal/worktree` seam
-(`CreateNewBranchWorktree` / `CheckoutBranchWorktree` + the sentinel errors) that keeps the
-existence business-rule out of `cmd/`. Future changes touching `src/cmd/wt/create.go` or the
+pull-request head resolver in front of it, the `--base` new-branch start-point, the `--temp`
+detached throwaway mode, the conflict/exit-code matrix, and the `internal/worktree` seam
+(`CreateNewBranchWorktree` / `CheckoutBranchWorktree` / `CreateTempWorktree` + the sentinel
+errors) that keeps the existence business-rule out of `cmd/`. Future changes touching `src/cmd/wt/create.go` or the
 create/checkout functions in `src/internal/worktree/crud.go` should preserve these invariants
 unless an explicit spec amendment supersedes them.
 
@@ -134,13 +134,50 @@ short and fails closed on an existing name (260717-2af2).
 - **THEN** the command exits `ExitInvalidArgs` with `Invalid --base ref: bad-ref`, creating no
   worktree or branch.
 
+### `--temp <ref>` creates a DETACHED throwaway worktree
+
+- `wt create --temp <ref>` resolves `<ref>` (branch, tag, or commit SHA) once to a full commit SHA
+  via `ResolveCommit` (`git rev-parse --verify --quiet <ref>^{commit}`) and runs
+  `git worktree add --detach <path> <sha>` under `<repo>.worktrees/`. It creates **no branch**,
+  writes **no git config**, and leaves the ref's own branch un-checked-out (`--temp main` detaches
+  at main's tip; it never occupies `main`). Stdout's last line is the worktree path, as for every
+  mode.
+- Resolution runs in `cmd/create.go` up front, before any prompt or mutation. An unresolvable ref
+  exits `ExitInvalidArgs` (2): what `Invalid --temp ref: <ref>`, why `'<ref>' does not resolve to a
+  commit`, fix `Provide a valid branch name, tag, or commit SHA`. A `git worktree add` failure
+  exits `ExitGitError` (3) with `Failed to create worktree`, and the rollback leaves no directory.
+- The worktree name is always `tmp-`-prefixed: no `--name` → `tmp-<adjective>-<noun>` from the
+  existing generator (`GenerateUniqueNameWithPrefix`, collision-checked on the prefixed name);
+  `--name foo` → `tmp-foo`; `--name tmp-foo` → `tmp-foo` (`TempName` never doubles the prefix).
+  The interactive name prompt is skipped. An existing directory at the final name hits the
+  ordinary `Worktree '<name>' already exists` error (exit 1); random-name exhaustion is
+  `ExitRetryExhausted` (4).
+- Init is skipped by default under `--temp`; `--init` opts in (no `Initialize worktree?` confirm —
+  the flag is the consent). `--init` without `--temp` is a silent no-op. See
+  [`create-output-phases`](/wt-cli/create-output-phases.md) for the phase output and
+  [`init-failure-contract`](/wt-cli/init-failure-contract.md) for the failure behavior when
+  `--init` runs.
+- The dirty-state prompt, Open phase, and rollback/signal machinery behave as for every other
+  mode. The rollback registers only `git worktree remove --force <path>` (no `branch -D`; there is
+  no branch).
+
+- **GIVEN** a repo with a commit `C` that is not the current HEAD
+- **WHEN** the user runs `wt create --temp <C-sha> --non-interactive`
+- **THEN** `<repo>.worktrees/tmp-<adj>-<noun>` exists with HEAD at `C`, detached, `git branch
+  --list` is unchanged, and stdout's last line is the path.
+
+- **GIVEN** `--temp no-such-ref`
+- **WHEN** the user runs it
+- **THEN** the command exits `ExitInvalidArgs` (2) with the invalid-ref copy and creates nothing.
+
 ### Conflicting selectors are hard `ExitInvalidArgs` errors
 
-These flag combinations select contradictory modes and each exits `ExitInvalidArgs` (2) —
-matching the documented exit-2 class "mutually exclusive flags". All are pure argument-parsing
-checks (no git state), validated in `cmd/create.go` **before** any git work (before
-`ValidateGitRepo`, rollback setup, branch-name and `--base` ref validation), after the
-`--reuse requires --name` check:
+Flag combinations that select contradictory modes each exit `ExitInvalidArgs` (2) — matching
+the documented exit-2 class "mutually exclusive flags". All are pure argument-parsing checks
+(no git state), validated in `cmd/create.go` **before** any git work (before
+`ValidateGitRepo`, rollback setup, branch-name and `--base` ref validation). The `--temp` and
+`--init` conflicts are held in `checkModeConflicts`, which runs first; the `--checkout` and
+`--reuse` + `--base` checks run after the `--reuse requires --name` check, and the `--pr` checks after those:
 
 - `--checkout` + a positional arg:
   - what: `--checkout cannot be combined with a positional branch argument`
@@ -166,6 +203,34 @@ checks (no git state), validated in `cmd/create.go` **before** any git work (bef
   - `--pr` + `--checkout`: `--pr cannot be combined with --checkout`
   - `--pr` + `--reuse`: `--pr cannot be combined with --reuse` (`--reuse` keeps an existing
     worktree's branch, so there is no PR head to check out)
+
+- `--temp` + a positional arg:
+  - what: `--temp cannot be combined with a positional branch argument`
+  - why: `--temp creates a detached worktree with no branch; the positional names a new branch`
+  - fix: `Use one of: wt create <new-branch> | wt create --temp <ref>`
+- `--temp` + `--checkout`:
+  - what: `--temp cannot be combined with --checkout`
+  - why: `--temp creates a detached worktree; --checkout puts a worktree on an existing branch`
+  - fix: `Use one of: wt create --checkout <branch> | wt create --temp <ref>`
+- `--temp` + `--reuse`:
+  - what: `--temp cannot be combined with --reuse`
+  - why: `A temp worktree is always freshly created; --reuse returns an existing one`
+  - fix: `Drop --reuse, or reuse by name without --temp: wt create --reuse --name <name>`
+- `--temp` + `--base`:
+  - what: `--temp cannot be combined with --base`
+  - why: `--temp's <ref> is already the commit to detach at; --base is the start-point for a NEW branch`
+  - fix: `Pass the commit to --temp directly: wt create --temp <ref>`
+- `--temp` + `--pr` (rejected before `--pr`'s own validation, so `gh` never runs):
+  - what: `--temp cannot be combined with --pr`
+  - why: `--pr checks out the PR's head branch; --temp detaches at a commit`
+  - fix: `For a detached worktree at a PR head, pass its SHA: wt create --temp <sha>`
+- `--init` + `--no-init`:
+  - what: `--init cannot be combined with --no-init`
+  - why: `--init opts in to the init script for --temp; --no-init skips it`
+  - fix: `Pass one of --init or --no-init`
+
+The check order is `--init`×`--no-init` first, then (when `--temp` is set) positional,
+`--checkout`, `--reuse`, `--base`; the first match exits.
 
 - **GIVEN** `--checkout` and a positional arg
 - **WHEN** the user runs `wt create --checkout foo bar`
@@ -199,17 +264,21 @@ checks (no git state), validated in `cmd/create.go` **before** any git work (bef
 | `wt create --pr <n>` (fork / bad `<n>` / head missing) | pr | `ExitInvalidArgs` (2) |
 | `wt create --pr <n>` (gh missing / failing) | pr | `ExitGeneralError` (1) |
 | `wt create --pr <n>` + positional / `--base` / `--checkout` / `--reuse` | conflict | `ExitInvalidArgs` (2) |
+| `wt create --temp <ref>` | temp | detached worktree `tmp-*` at `<ref>`'s commit; no branch/config; init skipped unless `--init` |
+| `wt create --temp <bad-ref>` | temp | `ExitInvalidArgs` (2), invalid `--temp` ref |
+| `wt create --temp X <pos>` / `--checkout` / `--reuse` / `--base` / `--pr` | conflict | `ExitInvalidArgs` (2) |
+| `wt create --init --no-init` | conflict | `ExitInvalidArgs` (2) |
 | `wt create <new> --base <bad>` | positional, new | `ExitInvalidArgs` (2), invalid `--base` |
 | `wt create --reuse --name X --base Y` | conflict | `ExitInvalidArgs` (2), with or without an existing `X` |
 | `wt create --reuse --base Y` (no `--name`) | conflict | `ExitInvalidArgs` (2), `--reuse requires --name` (checked first) |
 | `wt create --reuse --name X …` (no `--base`) | reuse | reuse on collision; branch selectors NOT consulted |
 
-`ExitInvalidArgs` = 2, `ExitGitError` = 3 (`git worktree add` failure), both from
+`ExitInvalidArgs` = 2, `ExitGitError` = 3 (`git worktree add` failure, including `--detach`), both from
 `src/internal/worktree/errors.go`.
 
 ### The creation mode is visible at creation time in the summary output
 
-The three creation modes are **visually distinguished in the Git-phase summary output** by a
+The creation modes are **visually distinguished in the Git-phase summary output** by a
 fourth `From:` line — so a user can tell from the output which of this file's modes ran and what
 ref the branch was based on (the exact create-vs-checkout confusion this contract's flag split
 targets, surfaced at the output layer too) (260717-aeka-create-summary-base-ref). This is
@@ -222,6 +291,7 @@ mode dispatch is exactly as defined above:
 | positional new / bare, no `--base` | the resolved HEAD label (`DescribeHead()` — current branch, or short SHA when detached) |
 | `--checkout <branch>` (local or remote-only) | `existing branch '<branch>' (checked out directly)` |
 | `--pr <n>` | `PR #<n> (existing branch '<head>')` |
+| `--temp <ref>` | `<ref as typed> @ <7-char short sha>` (the resolved commit; `Branch:` reads `(detached)`) |
 | `--reuse` | *(no summary block — no `From:` line)* |
 
 The line's full contract (stderr-only, pre-dispatch resolution outside the reinstall window, the
@@ -251,7 +321,8 @@ warn-but-continue — see `/wt-cli/init-failure-contract.md`.)
 
 The interactive "Initialize worktree?" confirm fires when a branch was explicitly named —
 positional (new branch) **or** `--checkout` / `--pr` (existing branch) — and is skipped for the bare
-exploratory create. The gate is `!(nonInteractive || (branchArg == "" && checkout == ""))`.
+exploratory create. The gate is `!(nonInteractive || (branchArg == "" && checkout == ""))`. Under `--temp` init is
+instead gated by `--init` alone and the confirm never fires.
 
 - **GIVEN** an interactive `wt create --checkout foo` (foo exists)
 - **WHEN** init would run
@@ -263,7 +334,7 @@ exploratory create. The gate is `!(nonInteractive || (branchArg == "" && checkou
 
 ### The `internal/worktree` seam: two mode-explicit functions + sentinel errors
 
-Two mode-explicit functions in `src/internal/worktree/crud.go` own the existence dispatch, so
+Mode-explicit functions in `src/internal/worktree/crud.go` own the existence dispatch, so
 the branch-existence business rule lives in `internal/` and `cmd/` only routes flags
 (Constitution V). There is deliberately no combined create-or-checkout entry point.
 
@@ -281,6 +352,12 @@ the branch-existence business rule lives in `internal/` and `cmd/` only routes f
   `crud.go`. `cmd/create.go` maps them via `errors.Is`: `ErrBranchExists` → the R1 positional
   `ExitInvalidArgs` copy; `ErrBranchNotFound` → the R2 `--checkout` `ExitInvalidArgs` copy. Any
   **other** error from either function maps to `ExitGitError` ("Failed to create worktree").
+- `CreateTempWorktree(sha, name string, ctx *RepoContext, rb *Rollback) (string, error)` — takes the
+  **already-resolved** commit SHA (callers resolve with `ResolveCommit` in `git.go`, which also
+  powers `ShortSHA` for the summary label), runs `EnsureWorktreesDir` then
+  `git worktree add --detach <path> <sha>`, and registers **only** worktree removal on rollback.
+  It writes no git config. Name helpers (`TempNamePrefix = "tmp-"`, `TempName`,
+  `GenerateUniqueNameWithPrefix`, `IsTempWorktree`) live in `names.go`.
 - `CreateExploratoryWorktree` (the bare path) is untouched. The reused `git.go` helpers
   (`BranchExistsLocally` / `BranchExistsRemotely` / `FetchRemoteBranch`) are unchanged.
 
@@ -382,6 +459,29 @@ the checkout overload (unneeded complexity for a single known external consumer 
 author — hence the hard break above).
 *Introduced by*: `260717-2af2-explicit-base-checkout-flags`.
 
+### `--temp` is its own mode: detached, `tmp-`-named, init off by default
+**Decision**: `--temp <ref>` creates a detached worktree (`git worktree add --detach <path> <sha>`)
+with a `tmp-`-prefixed name, no branch, and no git config, and skips init unless `--init` is
+passed. Plan `26-11-23-worktree-base-receipts.md` W5 binds the mode; the init default resolves
+that plan's open question.
+**Why**: surgery worktrees (conflict resolution, restacking, inspecting a commit) must not be able
+to pollute a branch and must be visibly disposable; the prefix makes them so in every listing and
+lets `wt list` mark them without extra git calls. Init is skipped because `fab sync` would write
+files into the very tree being operated on, and init is the slowest create phase.
+**Rejected**: running init as usual (every throwaway pays for and is dirtied by init, forcing
+`--no-init` on every call); recording the base in git config (the plan's recorded-base step
+excludes `--temp`).
+*Introduced by*: `261123-gcos-create-temp-detached-worktree`.
+
+### `--temp` + `--base` is a usage error, not silent precedence
+**Decision**: the combination exits `ExitInvalidArgs` (2) even though the plan's W5 exclusive
+list names only the positional, `--checkout`, `--reuse`, and `--pr`.
+**Why**: `--temp`'s value already is the commit to detach at; `--base` is the start-point for a
+*new* branch, and `--temp` creates none. Letting one silently win is the gotcha the plan's
+`--reuse`+`--base` rule removes elsewhere.
+**Rejected**: ignoring `--base`, or letting it override `<ref>`.
+*Introduced by*: `261123-gcos-create-temp-detached-worktree`.
+
 ## Cross-references
 
 - Spec doc: [`docs/specs/cli-surface.md`](../../specs/cli-surface.md) § `wt create` (flags table
@@ -392,9 +492,12 @@ author — hence the hard break above).
   `--base` validation, `ValidateBranchName` on positional-or-`--checkout`, `DeriveWorktreeName`
   suggestion, the create-dispatch switch mapping the sentinels, the generalized init-confirm
   gate, the `Long` help text); `src/internal/worktree/crud.go`
-  (`CreateNewBranchWorktree` / `CheckoutBranchWorktree`, `ErrBranchExists` / `ErrBranchNotFound`,
-  `CreateExploratoryWorktree` untouched); `src/internal/worktree/git.go`
-  (`BranchExistsLocally` / `BranchExistsRemotely` / `FetchRemoteBranch`, reused);
+  (`CreateNewBranchWorktree` / `CheckoutBranchWorktree` / `CreateTempWorktree`,
+  `ErrBranchExists` / `ErrBranchNotFound`, `CreateExploratoryWorktree` untouched);
+  `src/internal/worktree/names.go` (`TempNamePrefix`, `TempName`, `GenerateUniqueNameWithPrefix`,
+  `IsTempWorktree`); `src/internal/worktree/git.go`
+  (`BranchExistsLocally` / `BranchExistsRemotely` / `FetchRemoteBranch`, reused; `ResolveCommit` /
+  `ShortSHA` for `--temp`);
   `src/internal/worktree/context.go` (`ValidateBranchName`, `DeriveWorktreeName`);
   `src/internal/worktree/errors.go` (`ExitInvalidArgs`, `ExitGitError`, `ExitWithError`).
 - `--pr` source and tests: `src/internal/worktree/pr.go` (`ResolvePRHead`, `PRHead`,
@@ -407,7 +510,8 @@ author — hence the hard break above).
 - Tests: `src/cmd/wt/create_test.go` (positional-existing local/remote → exit 2, `--checkout`
   local/remote-only success, `--checkout` missing → exit 2, `--checkout`+`--base` → exit 2,
   `--checkout`+positional → exit 2, `--reuse`+`--base` → exit 2 with/without collision and with
-  an invalid ref, `--reuse`+`--base` without `--name`; the removed `--base`-with-existing-branch warn tests);
+  an invalid ref, `--reuse`+`--base` without `--name`; the removed `--base`-with-existing-branch
+  warn tests; `--temp` happy path / naming / conflicts / bad ref / init gate);
   `src/cmd/wt/integration_test.go` (`TestIntegration_BranchDeletePreservesOthers` on an existing
   branch via `--checkout`; `TestIntegration_ReuseWithBaseConflict` end-to-end); `src/cmd/wt/edge_test.go` (`TestEdge_BranchWithSpecialChars` via
   `--checkout`; `TestEdge_BranchWithSlashes` stays a new-branch positional).

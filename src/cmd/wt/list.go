@@ -36,6 +36,25 @@ type listEntry struct {
 	Unpushed   *int       `json:"unpushed,omitempty"`
 	LastActive *time.Time `json:"last_active,omitempty"`
 	Idle       *bool      `json:"idle,omitempty"`
+	// Temp marks a `wt create --temp` worktree (detached, non-main, tmp- name).
+	// Always emitted so the record schema is stable.
+	Temp bool `json:"temp"`
+}
+
+// MarshalJSON emits `"branch": null` for temp records (a temp worktree has no
+// branch) and the plain branch string for everything else — including
+// non-temp detached worktrees, which keep the "(detached)" sentinel. Branch
+// stays a string in memory so sorting and human rendering are unaffected.
+func (e listEntry) MarshalJSON() ([]byte, error) {
+	type plain listEntry
+	if !e.Temp {
+		return json.Marshal(plain(e))
+	}
+	// The shallower Branch shadows the embedded one, so null wins.
+	return json.Marshal(struct {
+		plain
+		Branch *string `json:"branch"`
+	}{plain: plain(e)})
 }
 
 // maxListConcurrency caps the worker pool for --status enrichment regardless of
@@ -567,8 +586,9 @@ func handleFormattedOutput(entries []listEntry, ctx *wt.RepoContext, showStatus 
 }
 
 type rawEntry struct {
-	path   string
-	branch string
+	path     string
+	branch   string
+	detached bool // porcelain reported `detached` (no branch ref)
 }
 
 func listWorktreeEntries() ([]rawEntry, error) {
@@ -589,7 +609,8 @@ func listWorktreeEntries() ([]rawEntry, error) {
 		} else if strings.HasPrefix(line, "branch refs/heads/") {
 			current.branch = strings.TrimPrefix(line, "branch refs/heads/")
 		} else if line == "detached" {
-			current.branch = "(detached)"
+			current.branch = wt.DetachedBranchLabel
+			current.detached = true
 		}
 	}
 	if current.path != "" {
@@ -610,6 +631,7 @@ func buildBaseEntry(r rawEntry, mainPath, currentDir string) listEntry {
 		e.Name = "main"
 	} else {
 		e.Name = filepath.Base(r.path)
+		e.Temp = wt.IsTempWorktree(e.Name, r.detached)
 	}
 	resolvedPath, _ := filepath.EvalSymlinks(r.path)
 	if resolvedPath == currentDir || strings.HasPrefix(currentDir, resolvedPath+string(filepath.Separator)) {
@@ -701,7 +723,7 @@ func listEntriesEnriched(ctx *wt.RepoContext) ([]listEntry, error) {
 			defer func() { <-sem }()
 			dirty := checkDirty(r.path)
 			*entries[i].Dirty = dirty
-			if r.branch != "(detached)" {
+			if !r.detached {
 				*entries[i].Unpushed = getUnpushedInDir(r.path)
 			}
 		}(i, r)
