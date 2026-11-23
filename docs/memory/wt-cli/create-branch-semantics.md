@@ -1,11 +1,11 @@
 ---
 type: memory
-description: "The `wt create` branch-selection contract — positional = new-branch-only, `--checkout` = existing-branch opt-in, `--pr <n>` = a same-repo PR's head via gh, `--base` = new-branch start-point pinned to a SHA with upstream restored (conflicts with `--checkout` and `--reuse`), `--fetch` for a fresh base, `--temp <ref>` = detached throwaway worktree, the conflict/exit-code matrix, and the internal seam (sentinel errors, LIFO rollback)."
+description: "The `wt create` branch-selection contract — positional = new-branch-only, `--checkout` = existing-branch opt-in, `--pr <n>` = a same-repo PR's head via gh, `--base` = new-branch start-point pinned to a SHA with upstream restored (conflicts with `--checkout` and `--reuse`), `--fetch` for a fresh base, `--temp <ref>` = detached throwaway worktree, the recorded base written to branch git config for wt-created branches only, the conflict/exit-code matrix, and the internal seam (sentinel errors, LIFO rollback)."
 ---
 # wt-cli: Create Branch-Selection Contract
 
 > Post-implementation behavior capture for `wt create`'s branch-selection surface.
-> Source changes: `260717-2af2-explicit-base-checkout-flags`, `261123-gcos-create-temp-detached-worktree`, `261123-xhgg`.
+> Source changes: `260717-2af2-explicit-base-checkout-flags`, `261123-gcos-create-temp-detached-worktree`, `261123-xhgg`, `261123-o7jg`.
 
 This file documents how `wt create` decides which branch a new worktree lands on: the
 new-branch-only positional, the `--checkout` existing-branch opt-in, the `--pr <n>`
@@ -180,6 +180,19 @@ short and fails closed on an existing name (260717-2af2).
 - **GIVEN** `wt create --non-interactive --name w nb --base origin/main` in a clone
 - **WHEN** it succeeds
 - **THEN** `git rev-parse --abbrev-ref nb@{upstream}` prints `origin/main` and the branch tip is the pinned SHA; with `--base main` (local) and default config `nb` has no upstream.
+
+### The recorded base is written to branch git config for wt-created branches only
+
+- After a successful `git worktree add -b` (and after `trackUpstream`), the two new-branch modes — positional and bare exploratory, with or without `--base` — write two repo-level git config keys on the new branch: `branch.<branch>.wt-base` = the base ref as typed to `--base` (or the HEAD label `wt.DescribeHead()` returns when there is no `--base`) and `branch.<branch>.wt-base-sha` = the full 40-hex pinned start-point SHA. The values are exactly the `--json` receipt's `base_ref` / `base_sha` and the `From:` line's ref, so the three always agree. A detached invoking HEAD records the short-SHA label with the full SHA.
+- **Never written for a branch `wt` did not create**: `--checkout` (existing branch — `CheckoutBranchWorktree` writes nothing, local or remote-only) and `--reuse` (no create function runs) leave no `wt-base*` keys. A create function called with an empty start-point records nothing.
+- **Writer**: `wt.RecordBase` (`src/internal/worktree/base.go`) runs two argv-exec'd `git config branch.<branch>.<key> <value>` calls from the repo cwd — never `--global`, no shell — and `recordBase` in `crud.go` calls it inside the rollback scope.
+- **Failure**: a failed write (e.g. a stale `.git/config.lock`) returns `*wt.RecordBaseError{Branch, Output}`; `recordBase` executes and disarms the rollback, removing the worktree and branch. `git branch -D` deletes the branch's whole `branch.<branch>` config section, so no `wt-base*` key survives a partial or full write. `cmd/create.go` detects the typed error with `errors.As` (`failIfRecordBase`, beside `failIfSetUpstream`) on both new-branch arms and exits `ExitGitError` (3): `Failed to record base for branch '<branch>'` / `Why:` git's first output line / `Fix: Check that .git/config is writable (no stale config.lock), then retry`. Under `--json` it is the usual failure document with `code` 3. No new exit code.
+- **Reading**: any tool reads the base with `git config branch.<b>.wt-base[-sha]`; `wt list --json` surfaces it as `base` / `base_sha` (see [`list-status-contract`](/wt-cli/list-status-contract.md)). `git branch -m` moves the `branch.<name>` section with the branch; `git branch -D` removes it.
+- The writes are git subprocesses inside the create functions, like `SetUpstream`: they run before the init-phase `signal.Reset` under the rollback handler and emit no stdout/stderr, so the deferred-summary / reinstall-window contract in [`create-output-phases`](/wt-cli/create-output-phases.md) is unaffected.
+
+- **GIVEN** `wt create --non-interactive --name w nb --base origin/main --json`
+- **WHEN** it succeeds
+- **THEN** `git config branch.nb.wt-base` prints `origin/main` and `git config branch.nb.wt-base-sha` prints the receipt's `base_sha`; after `wt create --checkout existing` there is no `wt-base*` key for `existing`.
 
 ### `--fetch` refreshes the base's remote before the base is resolved
 
@@ -378,10 +391,10 @@ Mode-explicit functions in `src/internal/worktree/crud.go` own the existence dis
 the branch-existence business rule lives in `internal/` and `cmd/` only routes flags
 (Constitution V). There is deliberately no combined create-or-checkout entry point.
 
-- `CreateNewBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback, startPoint, upstream string) (string, error)`
+- `CreateNewBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback, baseRef, startPoint, upstream string) (string, error)`
   — returns the sentinel `ErrBranchExists` and creates nothing when `BranchExistsLocally(branch)
   || BranchExistsRemotely(branch)`; otherwise runs the new-branch path (`git worktree add -b`
-  from `startPoint` — a pinned SHA), applies `upstream` (when non-empty) via `trackUpstream`, and registers **both** rollbacks: worktree removal AND
+  from `startPoint` — a pinned SHA), applies `upstream` (when non-empty) via `trackUpstream`, records `baseRef` + `startPoint` via `recordBase`, and registers **both** rollbacks: worktree removal AND
   `git branch -D <branch>` (the branch is newly created, so it must be torn down on rollback). Rollback runs **LIFO**, so `registerNewBranchRollback` registers `git branch -D` **before** `git worktree remove --force`: the worktree is removed first, then the branch (git refuses to delete a branch still checked out in a worktree). `CreateExploratoryWorktree` registers in the same order.
 - `CheckoutBranchWorktree(branch, name string, ctx *RepoContext, rb *Rollback) (string, error)`
   — takes **no** `startPoint` (a checkout of an existing branch has no start-point). Local branch
@@ -398,7 +411,7 @@ the branch-existence business rule lives in `internal/` and `cmd/` only routes f
   `git worktree add --detach <path> <sha>`, and registers **only** worktree removal on rollback.
   It writes no git config. Name helpers (`TempNamePrefix = "tmp-"`, `TempName`,
   `GenerateUniqueNameWithPrefix`, `IsTempWorktree`) live in `names.go`.
-- `CreateExploratoryWorktree(name, ctx, rb, startPoint, upstream)` (the bare path) takes the same pinned `startPoint` and `upstream`. The `git.go` helpers `RemoteForRef`, `FetchRemote`, `ResolveCommit`, `ShortSHA`, `UpstreamForBase`, and `SetUpstream` (with its `*SetUpstreamError`) serve the base pipeline; `BranchExistsLocally` / `BranchExistsRemotely` / `FetchRemoteBranch` are reused unchanged. All of these git operations live in `internal/worktree` (Constitution V); `cmd/create.go` only orchestrates and maps errors.
+- `CreateExploratoryWorktree(name, ctx, rb, baseRef, startPoint, upstream)` (the bare path) takes the same `baseRef`, pinned `startPoint` and `upstream`. The `git.go` helpers `RemoteForRef`, `FetchRemote`, `ResolveCommit`, `ShortSHA`, `UpstreamForBase`, and `SetUpstream` (with its `*SetUpstreamError`) serve the base pipeline, and `base.go` holds the recorded-base writer, reader and typed error (`RecordBase`, `RecordedBases`, `*RecordBaseError`); `BranchExistsLocally` / `BranchExistsRemotely` / `FetchRemoteBranch` are reused unchanged. All of these git operations live in `internal/worktree` (Constitution V); `cmd/create.go` only orchestrates and maps errors.
 
 Because the existence check lives inside the internal function and the function creates no
 worktree on the error path, the "before any worktree mutation" guarantee holds without any
@@ -501,6 +514,13 @@ the caller cannot see from its own argv).
 **Rejected**: fetching by default (network dependency on every create); falling back to the local ref when the fetch fails (silently stale); fetching after resolution (pins the stale SHA).
 *Introduced by*: `261123-xhgg-create-fetch-json-receipt` (plan `fab/plans/sahil/26-11-23-worktree-base-receipts.md`, step W1).
 
+### Record the base in branch git config, only for branches wt created
+
+**Decision**: a wt-created branch carries `branch.<b>.wt-base` / `wt-base-sha` in the repository's own git config, written after the add inside the rollback scope, with the receipt's values; a write failure is `ExitGitError` (3) with rollback; `--checkout` and `--reuse` never write it.
+**Why**: the base is otherwise ephemeral — the `--json` receipt reaches only the immediate caller, so a later tool (hexokit's engine, a respawned agent, `fab`) would have to guess the PR base. Git config keyed by branch lives in the repository (Constitution I — no hidden state file), follows `git branch -m`/`-D`, and is readable with plain `git config`. Writing it for an existing branch would assert a base `wt` never chose, so the write is tied to the new-branch modes; riding the existing rollback means a failed write leaves no worktree, branch or config behind, and `git branch -D` already drops the section.
+**Rejected**: a `wt` state file (hidden state outside the repo, Constitution I); a git note or ref (not keyed by branch, harder to read); recording for `--checkout`/`--reuse` (base unknown or not wt's to claim); a best-effort write that warns and continues (leaves a worktree with no readable base, silently); an explicit `config --unset` rollback step (redundant with `branch -D`).
+*Introduced by*: `261123-o7jg-create-recorded-base-list-json` (plan `fab/plans/sahil/26-11-23-worktree-base-receipts.md`, step W2).
+
 ### Keep the positional (new-branch-only) rather than remove it
 **Decision**: the positional survives with exactly one meaning (name a NEW branch); an existing
 local/remote name is a hard error pointing at `--checkout`.
@@ -550,7 +570,7 @@ list names only the positional, `--checkout`, `--reuse`, and `--pr`.
   `GenerateUniqueNameWithPrefix`, `IsTempWorktree`); `src/internal/worktree/git.go`
   (`BranchExistsLocally` / `BranchExistsRemotely` / `FetchRemoteBranch` reused; `ResolveCommit` /
   `ShortSHA` shared by `--temp` and the base pin; `RemoteForRef`, `FetchRemote`, `UpstreamForBase`,
-  `SetUpstream` — `261123-xhgg`);
+  `SetUpstream` — `261123-xhgg`); `src/internal/worktree/base.go` (`RecordBase`, `RecordedBases`, `RecordBaseError`, the `wt-base` / `wt-base-sha` key constants — `261123-o7jg`);
   `src/internal/worktree/context.go` (`ValidateBranchName`, `DeriveWorktreeName`);
   `src/internal/worktree/errors.go` (`ExitInvalidArgs`, `ExitGitError`, `ExitWithError`).
 - `--pr` source and tests: `src/internal/worktree/pr.go` (`ResolvePRHead`, `PRHead`,
@@ -560,6 +580,7 @@ list names only the positional, `--checkout`, `--reuse`, and `--pr`.
   missing, gh failure, head not found) and `src/cmd/wt/integration_test.go`
   (`TestIntegration_CreatePR_RemoteOnlyHead`), via the `writeGhStub` helper in
   `src/cmd/wt/testutil_test.go`.
+- Tests (`261123-o7jg`): `src/internal/worktree/base_test.go` (reader parsing incl. `feat/v1.2`, unrelated keys, empty map) and `crud_test.go` (both keys written by both create functions, nothing for checkout or an empty start-point, config-lock failure rolls back with `*RecordBaseError`); `src/cmd/wt/create_test.go` (config present after create, absent after `--checkout` / `--reuse`, record failure exit 3); `src/cmd/wt/integration_test.go` (bare-origin + clone: config equals the receipt, `wt list --json` agrees).
 - Tests: `src/cmd/wt/integration_test.go` (`261123-xhgg`: bare-origin + clone fixture proving `--fetch` picks up a commit pushed after the clone's last fetch, the stale commit without it, fetch failure exit 3 with nothing created, `--fetch --checkout` no-op); `src/cmd/wt/create_test.go` (`261123-xhgg`: base pin, upstream restoration, `ghost/main` stray remote-tracking ref, set-upstream failure rollback, the `--reuse` + `--base` conflict as a `--json` failure document; positional-existing local/remote → exit 2, `--checkout`
   local/remote-only success, `--checkout` missing → exit 2, `--checkout`+`--base` → exit 2,
   `--checkout`+positional → exit 2, `--reuse`+`--fetch` → exit 2 with/without collision, no fetch attempted (`TestCreate_ReuseWithFetchConflict`, incl. the `--json` document); `--reuse`+`--base` → exit 2 with/without collision and with
