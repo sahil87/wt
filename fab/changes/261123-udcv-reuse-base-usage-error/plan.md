@@ -113,38 +113,42 @@ caller cannot see from its own argv).
 
 ### Functional Completeness
 
-- [ ] A-001 R1: `wt create --reuse --name X --base <ref>` exits 2 with the exact Error/Why/Fix copy, before any git work
-- [ ] A-002 R2: `--reuse requires --name` still fires first; `--reuse --name X` alone still reuses
-- [ ] A-003 R3: the `--base` validation guard is `base != ""` and its comment no longer describes `--reuse` precedence
-- [ ] A-004 R4: `--base` usage and `create` Long text name the `--reuse` conflict
-- [ ] A-005 R5: `cli-surface.md`, `docs/site/skill.md`, and `src/cmd/wt/skill.md` describe the conflict; no doc claims `--reuse` takes precedence over `--base`
+- [x] A-001 R1: `wt create --reuse --name X --base <ref>` exits 2 with the exact Error/Why/Fix copy, before any git work
+- [x] A-002 R2: `--reuse requires --name` still fires first; `--reuse --name X` alone still reuses
+- [x] A-003 R3: the `--base` validation guard is `base != ""` and its comment no longer describes `--reuse` precedence
+- [x] A-004 R4: `--base` usage and `create` Long text name the `--reuse` conflict
+- [x] A-005 R5: `cli-surface.md`, `docs/site/skill.md`, and `src/cmd/wt/skill.md` describe the conflict; no doc claims `--reuse` takes precedence over `--base`
 
 ### Behavioral Correctness
 
-- [ ] A-006 R1: a non-colliding `--reuse --name X --base R` now exits 2 instead of creating `X` off `R`, and the old precedence tests are replaced, not deleted without coverage
+- [x] A-006 R1: a non-colliding `--reuse --name X --base R` now exits 2 instead of creating `X` off `R`, and the old precedence tests are replaced, not deleted without coverage
 
 ### Scenario Coverage
 
-- [ ] A-007 R1: tests cover existing worktree, no worktree, and invalid-ref conflict cases, each asserting exit 2 and no state change
-- [ ] A-008 R1: an integration case in `src/cmd/wt/integration_test.go` exercises the conflict against a real temp repo
+- [x] A-007 R1: tests cover existing worktree, no worktree, and invalid-ref conflict cases, each asserting exit 2 and no state change
+- [x] A-008 R1: an integration case in `src/cmd/wt/integration_test.go` exercises the conflict against a real temp repo
 
 ### Edge Cases & Error Handling
 
-- [ ] A-009 R1: on conflict, nothing is written to stdout and no worktree directory or branch is left behind
-- [ ] A-010 R2: `--reuse --base R` without `--name` exits 2 with `--reuse requires --name`
+- [x] A-009 R1: on conflict, nothing is written to stdout and no worktree directory or branch is left behind
+- [x] A-010 R2: `--reuse --base R` without `--name` exits 2 with `--reuse requires --name`
 
 ### Code Quality
 
-- [ ] A-011 Pattern consistency: the new check uses `wt.ExitWithError(wt.ExitInvalidArgs, …)` and sits with the sibling conflict checks, matching their copy shape
-- [ ] A-012 No unnecessary duplication: tests reuse `runWt` / `assertExitCode` / `assertWorktreeNotExists` / `assertBranchNotExists` helpers
-- [ ] A-013 Readability: no magic strings beyond the user-facing copy; comments updated where the old precedence was described
-- [ ] A-014: No new exit codes; no `src/internal/worktree/` change
+- [x] A-011 Pattern consistency: the new check uses `wt.ExitWithError(wt.ExitInvalidArgs, …)` and sits with the sibling conflict checks, matching their copy shape
+- [x] A-012 No unnecessary duplication: tests reuse `runWt` / `assertExitCode` / `assertWorktreeNotExists` / `assertBranchNotExists` helpers
+- [x] A-013 Readability: no magic strings beyond the user-facing copy; comments updated where the old precedence was described
+- [x] A-014: No new exit codes; no `src/internal/worktree/` change
 
 ## Notes
 
 - Check items as you review: `- [x]`
 - All acceptance items must pass before `/fab-continue` (hydrate)
 - If an item is not applicable, mark checked and prefix with **N/A**: `- [x] A-NNN **N/A**: {reason}`
+
+## Deletion Candidates
+
+- None — this change adds new functionality without making existing code redundant (the one thing it made dead, the `!reuse` arm of the `--base` validation guard at `src/cmd/wt/create.go:160`, was already removed in the diff). Stale prose remains only in `docs/memory/wt-cli/create-branch-semantics.md:88` and `:163`, which hydrate owns.
 
 ## Assumptions
 

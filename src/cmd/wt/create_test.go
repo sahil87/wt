@@ -643,7 +643,8 @@ func TestCreate_ReuseWithBaseConflict_NoCollision(t *testing.T) {
 func TestCreate_ReuseWithInvalidBaseConflict(t *testing.T) {
 	repo := createTestRepo(t)
 
-	createWorktreeViaWt(t, repo, "reuse-invalid-base")
+	firstPath := createWorktreeViaWt(t, repo, "reuse-invalid-base")
+	headBefore := gitRun(t, firstPath, "rev-parse", "HEAD")
 
 	r := runWt(t, repo, nil, "create", "--non-interactive", "--reuse", "--worktree-name", "reuse-invalid-base",
 		"--base", "nonexistent-ref")
@@ -651,6 +652,12 @@ func TestCreate_ReuseWithInvalidBaseConflict(t *testing.T) {
 	assertExitCode(t, r, 2)
 	assertContains(t, r.Stderr, "--reuse and --base cannot be combined")
 	assertNotContains(t, r.Stderr, "Invalid --base ref")
+	if strings.TrimSpace(r.Stdout) != "" {
+		t.Errorf("expected empty stdout on conflict, got %q", r.Stdout)
+	}
+	if headAfter := gitRun(t, firstPath, "rev-parse", "HEAD"); headAfter != headBefore {
+		t.Errorf("reused worktree HEAD changed: %s -> %s", headBefore, headAfter)
+	}
 }
 
 // TestCreate_ReuseWithBaseWithoutName asserts --reuse requires --name stays
