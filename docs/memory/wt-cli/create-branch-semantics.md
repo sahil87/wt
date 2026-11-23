@@ -1,6 +1,6 @@
 ---
 type: memory
-description: "The `wt create` branch-selection contract — positional = new-branch-only, `--checkout` = existing-branch opt-in, `--base` = new-branch start-point (conflicts with `--checkout` and `--reuse`), the conflict/exit-code matrix, and the internal seam (CreateNewBranchWorktree / CheckoutBranchWorktree + sentinel errors)."
+description: "The `wt create` branch-selection contract — positional = new-branch-only, `--checkout` = existing-branch opt-in, `--pr <n>` = a same-repo PR's head branch via gh, `--base` = new-branch start-point (conflicts with `--checkout` and `--reuse`), the conflict/exit-code matrix, and the internal seam (CreateNewBranchWorktree / CheckoutBranchWorktree / ResolvePRHead + sentinel errors)."
 ---
 # wt-cli: Create Branch-Selection Contract
 
@@ -8,7 +8,8 @@ description: "The `wt create` branch-selection contract — positional = new-bra
 > Source change: `260717-2af2-explicit-base-checkout-flags`.
 
 This file documents how `wt create` decides which branch a new worktree lands on: the
-new-branch-only positional, the `--checkout` existing-branch opt-in, the `--base`
+new-branch-only positional, the `--checkout` existing-branch opt-in, the `--pr <n>`
+pull-request head resolver in front of it, the `--base`
 new-branch start-point, the conflict/exit-code matrix, and the `internal/worktree` seam
 (`CreateNewBranchWorktree` / `CheckoutBranchWorktree` + the sentinel errors) that keeps the
 existence business-rule out of `cmd/`. Future changes touching `src/cmd/wt/create.go` or the
@@ -79,6 +80,45 @@ short and fails closed on an existing name (260717-2af2).
 - **THEN** the command exits `ExitInvalidArgs` (2) with the create-new fix hint, and no worktree
   directory is left behind.
 
+### `--pr <n>` checks out a same-repository pull request's head branch
+
+- `wt create --pr <n>` resolves PR `<n>`'s head with
+  `gh pr view <n> --json headRefName,isCrossRepository` (argv exec, 15 s timeout, run in the
+  current directory) and then runs the `--checkout <headRefName>` path **unchanged**: local
+  as-is / remote-only fetch-then-checkout, suggested name `DeriveWorktreeName(<head>)`, the
+  init-confirm gate, init, Open, rollback, the stdout path line. `--pr` is a resolver in front of
+  `--checkout`, not a separate checkout implementation.
+- `<n>` must be a positive decimal number (`^[1-9][0-9]*$`); the check keys on the flag being
+  **set** (`Flags().Changed("pr")`), so an explicit empty `--pr ""` (an unset `$PR` in a script)
+  is rejected rather than falling through to a bare create. Copy: `Invalid --pr value: <v>` /
+  `--pr takes a pull request number` / `Example: wt create --pr 42` → `ExitInvalidArgs` (2).
+- The lookup runs after `ValidateGitRepo` / `GetRepoContext` and **before** the dirty-state menu,
+  the name prompt and any mutation, so every lookup failure leaves nothing behind:
+
+  | Lookup outcome | Exit | Error copy (what) |
+  |---|---|---|
+  | `gh` not on PATH (`ErrGhNotFound`) | `ExitGeneralError` (1) | `GitHub CLI (gh) not found` — fix names the install URL and `--checkout` |
+  | `isCrossRepository: true` (`ErrPRCrossRepository`) | `ExitInvalidArgs` (2) | `PR #<n> is from a fork (head branch '<head>')` — fix: `Add the fork as a remote and use --checkout` |
+  | gh exits non-zero / times out / malformed output | `ExitGeneralError` (1) | `Could not resolve PR #<n>`; why = gh's first non-empty stderr line |
+  | head branch neither local nor on origin (`ErrBranchNotFound`) | `ExitInvalidArgs` (2) | `PR #<n> head branch '<head>' not found` |
+
+- `gh` is an **optional** runtime dependency, consulted only when `--pr` is passed; every other
+  path still needs only `git`.
+- **Repository assumption**: gh resolves the PR in *its* default repository (an `upstream`
+  remote or `gh repo set-default` wins), while the checkout looks the head up locally and on
+  `origin`. `--pr` therefore assumes gh's repository is `origin`; in a fork clone (origin = fork,
+  gh default = upstream) the documented answer is `--checkout`. Detection is deliberately absent.
+
+- **GIVEN** a same-repo PR 7 whose head `feature/x` exists only on origin
+- **WHEN** the user runs `wt create --pr 7 --non-interactive`
+- **THEN** `feature/x` is fetched and checked out, the summary reads
+  `From: PR #7 (existing branch 'feature/x')`, and stdout's last line is the worktree path.
+
+- **GIVEN** a PR whose head is in a fork
+- **WHEN** the user runs `wt create --pr 7`
+- **THEN** the command exits `ExitInvalidArgs` (2) with the fork copy and creates nothing, even
+  when a same-named branch exists on origin.
+
 ### `--base <ref>` is the NEW-branch start-point; it always applies to the positional
 
 - `--base` is the git start-point (branch / tag / SHA) for the **new** branch, validated via
@@ -96,7 +136,7 @@ short and fails closed on an existing name (260717-2af2).
 
 ### Conflicting selectors are hard `ExitInvalidArgs` errors
 
-Three flag combinations select contradictory modes and each exits `ExitInvalidArgs` (2) —
+These flag combinations select contradictory modes and each exits `ExitInvalidArgs` (2) —
 matching the documented exit-2 class "mutually exclusive flags". All are pure argument-parsing
 checks (no git state), validated in `cmd/create.go` **before** any git work (before
 `ValidateGitRepo`, rollback setup, branch-name and `--base` ref validation), after the
@@ -119,6 +159,13 @@ checks (no git state), validated in `cmd/create.go` **before** any git work (bef
   not a worktree named `--name` exists, so the outcome never depends on filesystem state the
   caller cannot see in its own argv. A non-empty `--base` is the trigger (an explicit
   `--base ""` reads as unset, like the `--checkout` + `--base` check).
+- `--pr` excludes every other branch selector — each check exits 2 before `gh` runs, after the
+  `--reuse requires --name` check:
+  - `--pr` + positional: `--pr cannot be combined with a positional branch argument`
+  - `--pr` + `--base`: `--base cannot be combined with --pr`
+  - `--pr` + `--checkout`: `--pr cannot be combined with --checkout`
+  - `--pr` + `--reuse`: `--pr cannot be combined with --reuse` (`--reuse` keeps an existing
+    worktree's branch, so there is no PR head to check out)
 
 - **GIVEN** `--checkout` and a positional arg
 - **WHEN** the user runs `wt create --checkout foo bar`
@@ -148,6 +195,10 @@ checks (no git state), validated in `cmd/create.go` **before** any git work (bef
 | `wt create --checkout <missing>` | checkout | `ExitInvalidArgs` (2) → create-new |
 | `wt create --checkout X <pos>` | conflict | `ExitInvalidArgs` (2) |
 | `wt create --checkout X --base Y` | conflict | `ExitInvalidArgs` (2) |
+| `wt create --pr <n>` (same-repo, head exists) | pr | worktree on the PR's head branch (the `--checkout` path) |
+| `wt create --pr <n>` (fork / bad `<n>` / head missing) | pr | `ExitInvalidArgs` (2) |
+| `wt create --pr <n>` (gh missing / failing) | pr | `ExitGeneralError` (1) |
+| `wt create --pr <n>` + positional / `--base` / `--checkout` / `--reuse` | conflict | `ExitInvalidArgs` (2) |
 | `wt create <new> --base <bad>` | positional, new | `ExitInvalidArgs` (2), invalid `--base` |
 | `wt create --reuse --name X --base Y` | conflict | `ExitInvalidArgs` (2), with or without an existing `X` |
 | `wt create --reuse --base Y` (no `--name`) | conflict | `ExitInvalidArgs` (2), `--reuse requires --name` (checked first) |
@@ -170,6 +221,7 @@ mode dispatch is exactly as defined above:
 | positional new / bare, `--base` given | the `--base` ref verbatim as typed |
 | positional new / bare, no `--base` | the resolved HEAD label (`DescribeHead()` — current branch, or short SHA when detached) |
 | `--checkout <branch>` (local or remote-only) | `existing branch '<branch>' (checked out directly)` |
+| `--pr <n>` | `PR #<n> (existing branch '<head>')` |
 | `--reuse` | *(no summary block — no `From:` line)* |
 
 The line's full contract (stderr-only, pre-dispatch resolution outside the reinstall window, the
@@ -198,7 +250,7 @@ warn-but-continue — see `/wt-cli/init-failure-contract.md`.)
 ### The init-confirm gate fires whenever a branch was explicitly named
 
 The interactive "Initialize worktree?" confirm fires when a branch was explicitly named —
-positional (new branch) **or** `--checkout` (existing branch) — and is skipped for the bare
+positional (new branch) **or** `--checkout` / `--pr` (existing branch) — and is skipped for the bare
 exploratory create. The gate is `!(nonInteractive || (branchArg == "" && checkout == ""))`.
 
 - **GIVEN** an interactive `wt create --checkout foo` (foo exists)
@@ -262,6 +314,28 @@ consumer is owned by the same author.
 
 ## Design Decisions
 
+### `--pr` is a resolver in front of `--checkout`
+**Decision**: `--pr <n>` only turns `<n>` into a branch name via `gh pr view` (in
+`internal/worktree/pr.go`: `ResolvePRHead`, `ErrGhNotFound`, `ErrPRCrossRepository`) and then
+sets the `--checkout` target; every later phase is the existing checkout path.
+**Why**: plan `fab/plans/sahil/26-11-23-worktree-base-receipts.md` (step W4) — reuse the tested
+remote-only checkout path instead of the hand-rolled `gh` + `git worktree add` callers wrote;
+Constitution V keeps the `gh` exec in `internal/`.
+**Rejected**: fetching `refs/pull/<n>/head` (a detached commit, not the PR's branch); calling the
+GitHub API directly (auth handling and a dependency — `gh` is the toolkit's GitHub seam).
+*Introduced by*: 261123-c3ek-create-pr-head-worktree
+
+### Fork PRs are refused, and the gh-repo = origin assumption is documented, not detected
+**Decision**: `isCrossRepository: true` exits 2 pointing at "add the fork as a remote and use
+--checkout"; the case where gh's default repository is not `origin` (a fork clone) is a
+documented limitation, and the gh argv stays `--json headRefName,isCrossRepository`.
+**Why**: a fork's head is not on `origin`, so checking out a same-named `origin` branch would be
+the wrong code; `wt` does not manage remotes (plan scope, Constitution I). Detecting the
+repo mismatch would need origin-URL parsing against gh's repository for a rare setup.
+**Rejected**: auto-adding the fork as a remote (hidden state); requesting
+`headRepositoryOwner` and comparing it to a parsed origin URL (complexity beyond the W4 Brief).
+*Introduced by*: 261123-c3ek-create-pr-head-worktree
+
 ### Typed sentinel errors in `internal/`, mapped to exit codes in `cmd/`
 **Decision**: `internal/worktree` owns the existence rules and exposes `ErrBranchExists` /
 `ErrBranchNotFound` sentinels; `cmd/create.go` maps them to `ExitInvalidArgs` via `errors.Is`.
@@ -323,6 +397,13 @@ author — hence the hard break above).
   (`BranchExistsLocally` / `BranchExistsRemotely` / `FetchRemoteBranch`, reused);
   `src/internal/worktree/context.go` (`ValidateBranchName`, `DeriveWorktreeName`);
   `src/internal/worktree/errors.go` (`ExitInvalidArgs`, `ExitGitError`, `ExitWithError`).
+- `--pr` source and tests: `src/internal/worktree/pr.go` (`ResolvePRHead`, `PRHead`,
+  `ErrGhNotFound`, `ErrPRCrossRepository`, the 15 s `prLookupTimeout`) with
+  `src/internal/worktree/pr_test.go` (stub `gh` on PATH); `src/cmd/wt/create_test.go`
+  (`TestCreate_PR*` — local head + gh argv, invalid/empty value, the four conflicts, fork, gh
+  missing, gh failure, head not found) and `src/cmd/wt/integration_test.go`
+  (`TestIntegration_CreatePR_RemoteOnlyHead`), via the `writeGhStub` helper in
+  `src/cmd/wt/testutil_test.go`.
 - Tests: `src/cmd/wt/create_test.go` (positional-existing local/remote → exit 2, `--checkout`
   local/remote-only success, `--checkout` missing → exit 2, `--checkout`+`--base` → exit 2,
   `--checkout`+positional → exit 2, `--reuse`+`--base` → exit 2 with/without collision and with

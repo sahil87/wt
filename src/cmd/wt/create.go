@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sync/atomic"
 	"syscall"
 
@@ -14,6 +15,9 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
+
+// prNumberPattern is the accepted --pr value: a positive decimal PR number.
+var prNumberPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 
 func createCmd() *cobra.Command {
 	var (
@@ -25,6 +29,7 @@ func createCmd() *cobra.Command {
 		nonInteractive bool
 		base           string
 		checkout       string
+		pr             string
 	)
 
 	cmd := &cobra.Command{
@@ -45,7 +50,12 @@ fetched then checked out). --checkout cannot be combined with a positional
 branch argument or with --base.
 
 --reuse cannot be combined with --base: a reused worktree keeps its existing
-branch, so a start-point has nothing to apply to.`,
+branch, so a start-point has nothing to apply to.
+
+--pr <n> creates the worktree on pull request <n>'s head branch, resolved
+with the GitHub CLI (gh pr view), then checked out exactly like --checkout.
+Only same-repository PRs are supported; a PR from a fork exits 2. --pr cannot
+be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var branchArg string
@@ -109,6 +119,44 @@ branch, so a start-point has nothing to apply to.`,
 					"Drop --base, or drop --reuse to create a new worktree")
 			}
 
+			// --pr resolves a PR's head branch and then runs the --checkout
+			// path, so it excludes every other branch selector. Keyed on
+			// Changed, not the value, so an explicit empty --pr "" (e.g. an
+			// unset $PR in a script) is rejected rather than falling through
+			// to a bare create.
+			if cmd.Flags().Changed("pr") {
+				if !prNumberPattern.MatchString(pr) {
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						fmt.Sprintf("Invalid --pr value: %s", pr),
+						"--pr takes a pull request number",
+						"Example: wt create --pr 42")
+				}
+				if branchArg != "" {
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						"--pr cannot be combined with a positional branch argument",
+						"--pr checks out the PR's existing head branch; the positional creates a new branch",
+						"Use one of: wt create <new-branch> | wt create --pr <n>")
+				}
+				if base != "" {
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						"--base cannot be combined with --pr",
+						"--base is the start-point for a NEW branch; --pr targets the PR's existing head branch",
+						"Drop --base, or create a new branch: wt create <name> --base <ref>")
+				}
+				if checkout != "" {
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						"--pr cannot be combined with --checkout",
+						"Both select an existing branch to check out",
+						"Use one of: wt create --pr <n> | wt create --checkout <branch>")
+				}
+				if reuse {
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						"--pr cannot be combined with --reuse",
+						"--reuse keeps an existing worktree's branch, so there is no PR head to check out",
+						"Drop --reuse, or reuse by name: wt create --reuse --name <name>")
+				}
+			}
+
 			// Validate git repo
 			if err := wt.ValidateGitRepo(); err != nil {
 				wt.ExitWithError(wt.ExitGitError,
@@ -123,6 +171,31 @@ branch, so a start-point has nothing to apply to.`,
 					"Not a git repository",
 					"This command must be run from within a git repository",
 					"Navigate to a git repository and try again")
+			}
+
+			// Resolve --pr to its head branch before any prompt or mutation, so
+			// a failed lookup leaves nothing behind. From here on --pr is the
+			// --checkout path.
+			if pr != "" {
+				head, err := wt.ResolvePRHead(pr)
+				switch {
+				case errors.Is(err, wt.ErrGhNotFound):
+					wt.ExitWithError(wt.ExitGeneralError,
+						"GitHub CLI (gh) not found",
+						"--pr resolves the pull request's head branch with gh",
+						"Install gh (https://cli.github.com) and run gh auth login, or use: wt create --checkout <branch>")
+				case errors.Is(err, wt.ErrPRCrossRepository):
+					wt.ExitWithError(wt.ExitInvalidArgs,
+						fmt.Sprintf("PR #%s is from a fork (head branch '%s')", pr, head.Branch),
+						"--pr only supports pull requests whose head branch is in this repository",
+						"Add the fork as a remote and use --checkout")
+				case err != nil:
+					wt.ExitWithError(wt.ExitGeneralError,
+						fmt.Sprintf("Could not resolve PR #%s", pr),
+						err.Error(),
+						"Check the PR number and that gh is authenticated (gh auth status)")
+				}
+				checkout = head.Branch
 			}
 
 			// Set up rollback and signal handling
@@ -269,7 +342,8 @@ branch, so a start-point has nothing to apply to.`,
 			// Three modes route here: bare create (exploratory new branch),
 			// a positional (NEW branch — existing → ExitInvalidArgs pointing at
 			// --checkout), and --checkout (EXISTING branch — missing →
-			// ExitInvalidArgs pointing at create-new). The existence rules live
+			// ExitInvalidArgs pointing at create-new; --pr arrives here as
+			// --checkout of the PR's head). The existence rules live
 			// in internal/worktree; cmd/ maps the sentinel errors to exit codes.
 			var wtPath string
 			var createdSummaryBranch string // branch label shown in the summary
@@ -281,11 +355,14 @@ branch, so a start-point has nothing to apply to.`,
 			// contract). wt create never moves the invoking worktree's HEAD, so
 			// HEAD here equals HEAD at summary time — resolving pre-dispatch is
 			// equivalent.
+			//   --pr       → fixed copy naming the PR and its head (no query)
 			//   --checkout → fixed copy naming the existing-branch path (no query)
 			//   --base     → the ref verbatim as typed (no query)
 			//   else       → the resolved HEAD label (one query, best-effort)
 			var createdSummaryFrom string
 			switch {
+			case pr != "":
+				createdSummaryFrom = fmt.Sprintf("PR #%s (existing branch '%s')", pr, checkout)
 			case checkout != "":
 				createdSummaryFrom = fmt.Sprintf("existing branch '%s' (checked out directly)", checkout)
 			case base != "":
@@ -298,6 +375,12 @@ branch, so a start-point has nothing to apply to.`,
 			case checkout != "":
 				wtPath, err = wt.CheckoutBranchWorktree(checkout, finalName, ctx, rb)
 				if err != nil {
+					if errors.Is(err, wt.ErrBranchNotFound) && pr != "" {
+						wt.ExitWithError(wt.ExitInvalidArgs,
+							fmt.Sprintf("PR #%s head branch '%s' not found", pr, checkout),
+							"The branch exists neither locally nor on origin",
+							fmt.Sprintf("Fetch it yourself, or check the PR: gh pr view %s", pr))
+					}
 					if errors.Is(err, wt.ErrBranchNotFound) {
 						wt.ExitWithError(wt.ExitInvalidArgs,
 							fmt.Sprintf("Branch '%s' not found", checkout),
@@ -345,8 +428,8 @@ branch, so a start-point has nothing to apply to.`,
 			//   4. Run init via RunWorktreeSetupWithObserver (no prompt
 			//      inside the runner).
 			// The confirm fires whenever a branch was explicitly named —
-			// positional (new branch) or --checkout (existing branch) — and is
-			// skipped for the bare exploratory create.
+			// positional (new branch) or --checkout / --pr (existing branch) —
+			// and is skipped for the bare exploratory create.
 			runInit := worktreeInit == "true"
 			if runInit && !(nonInteractive || (branchArg == "" && checkout == "")) {
 				runInit = session.ConfirmYesNo("Initialize worktree?")
@@ -592,6 +675,7 @@ branch, so a start-point has nothing to apply to.`,
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts; use defaults and skip menus")
 	cmd.Flags().StringVar(&base, "base", "", "Git ref (branch, tag, SHA) to use as start-point for new branch (not with --checkout or --reuse)")
 	cmd.Flags().StringVar(&checkout, "checkout", "", "Check out an EXISTING branch (local or remote) into the worktree instead of creating a new one")
+	cmd.Flags().StringVar(&pr, "pr", "", "Create the worktree on pull request <n>'s head branch (resolved via gh; same-repository PRs only)")
 
 	return cmd
 }

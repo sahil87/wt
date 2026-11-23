@@ -76,7 +76,7 @@ $ wt delete lively-otter      # removes worktree (and optionally the branch)
 
 | Command | Summary |
 |---------|---------|
-| `wt create [branch]` (alias `wt new`) | Create a worktree on a **new** branch (random name, or the named positional). Key flags: `--checkout <branch>` (existing branch), `--base <ref>`, `--reuse`, `--name`/`-n`, `--non-interactive`. |
+| `wt create [branch]` (alias `wt new`) | Create a worktree on a **new** branch (random name, or the named positional). Key flags: `--checkout <branch>` (existing branch), `--pr <n>` (a PR's head branch, via `gh`), `--base <ref>`, `--reuse`, `--name`/`-n`, `--non-interactive`. |
 | `wt list` (alias `wt ls`) | List all worktrees with name, branch, and path. Add `--status` for dirty/unpushed indicators; `--path` and `--json` for scripting. |
 | `wt open [name\|path]` | Open a worktree — or any directory — in a detected app (editor, terminal, file manager). No arg opens the current context; `--app`/`-a` skips the app menu. |
 | `wt go [name]` | Pick a worktree (menu or by name) and `cd` there via the shell wrapper. `--open` launches the selection instead (menu with `--open prompt`). |
