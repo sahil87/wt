@@ -9,7 +9,7 @@ progress:
     apply: done
     review: done
     hydrate: done
-    ship: active
+    ship: done
     review-pr: pending
 plan:
     generated: true
@@ -33,14 +33,15 @@ stage_metrics:
     apply: {started_at: "2026-11-23T15:12:50Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T15:24:08Z"}
     review: {started_at: "2026-11-23T15:24:08Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T15:27:29Z"}
     hydrate: {started_at: "2026-11-23T15:27:29Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T15:31:11Z"}
-    ship: {started_at: "2026-11-23T15:31:11Z", driver: fab-fff, iterations: 1}
-prs: []
+    ship: {started_at: "2026-11-23T15:31:11Z", driver: fab-fff, iterations: 1, completed_at: "2026-11-23T15:32:13Z"}
+prs:
+    - https://github.com/sahil87/wt/pull/65
 change_type_source: explicit
 base_branch: main
 true_impact:
-    added: 1591
-    deleted: 18
-    net: 1573
+    added: 1832
+    deleted: 54
+    net: 1778
     excluding:
         added: 1054
         deleted: 13
@@ -49,9 +50,9 @@ true_impact:
         added: 826
         deleted: 0
         net: 826
-    computed_at: "2026-11-23T15:31:11Z"
-    computed_at_stage: hydrate
+    computed_at: "2026-11-23T15:32:13Z"
+    computed_at_stage: ship
 summary: 'wt create --temp <ref>: detached tmp- throwaway worktree (init skipped unless --init); wt list temp key; wt delete no branch handling for detached worktrees'
 # base_branch: written by /git-branch or /fab-new when the change's branch is created (no placeholder here).
 # true_impact: lazily created on first stage-finish that computes it (no placeholder here).
-last_updated: 2026-11-23T15:31:11Z
+last_updated: 2026-11-23T15:32:13Z
