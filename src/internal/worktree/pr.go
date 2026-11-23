@@ -30,6 +30,10 @@ var (
 // prompt cannot stall wt create indefinitely.
 const prLookupTimeout = 15 * time.Second
 
+// prLookupWaitDelay caps how long Wait lingers after the timeout kill for a
+// gh descendant still holding the output pipes, keeping the bound honest.
+const prLookupWaitDelay = 2 * time.Second
+
 // PRHead is what `gh pr view` reports about a pull request's head.
 type PRHead struct {
 	Branch          string // headRefName
@@ -50,6 +54,7 @@ func ResolvePRHead(number string) (PRHead, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "gh", "pr", "view", number, "--json", "headRefName,isCrossRepository")
+	cmd.WaitDelay = prLookupWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

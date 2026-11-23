@@ -1049,10 +1049,11 @@ func TestCreate_PRInvalidValue(t *testing.T) {
 	repo := createTestRepo(t)
 	env, argsFile := writeGhStub(t, prHeadJSON("x", false), "", 0)
 
-	for _, v := range []string{"abc", "0", "#42", "-1"} {
-		r := runWt(t, repo, env, "create", "--non-interactive", "--pr="+v)
+	for _, v := range []string{"", "abc", "0", "#42", "-1"} {
+		r := runWt(t, repo, env, "create", "--non-interactive", "--name", "badpr-wt", "--pr="+v)
 		assertExitCode(t, r, 2)
 		assertContains(t, r.Stderr, "Invalid --pr value: "+v)
+		assertWorktreeNotExists(t, repo, "badpr-wt")
 	}
 	assertFileNotExists(t, argsFile)
 }

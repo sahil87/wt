@@ -120,8 +120,11 @@ be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 			}
 
 			// --pr resolves a PR's head branch and then runs the --checkout
-			// path, so it excludes every other branch selector.
-			if pr != "" {
+			// path, so it excludes every other branch selector. Keyed on
+			// Changed, not the value, so an explicit empty --pr "" (e.g. an
+			// unset $PR in a script) is rejected rather than falling through
+			// to a bare create.
+			if cmd.Flags().Changed("pr") {
 				if !prNumberPattern.MatchString(pr) {
 					wt.ExitWithError(wt.ExitInvalidArgs,
 						fmt.Sprintf("Invalid --pr value: %s", pr),
@@ -339,7 +342,8 @@ be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 			// Three modes route here: bare create (exploratory new branch),
 			// a positional (NEW branch — existing → ExitInvalidArgs pointing at
 			// --checkout), and --checkout (EXISTING branch — missing →
-			// ExitInvalidArgs pointing at create-new). The existence rules live
+			// ExitInvalidArgs pointing at create-new; --pr arrives here as
+			// --checkout of the PR's head). The existence rules live
 			// in internal/worktree; cmd/ maps the sentinel errors to exit codes.
 			var wtPath string
 			var createdSummaryBranch string // branch label shown in the summary
@@ -351,6 +355,7 @@ be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 			// contract). wt create never moves the invoking worktree's HEAD, so
 			// HEAD here equals HEAD at summary time — resolving pre-dispatch is
 			// equivalent.
+			//   --pr       → fixed copy naming the PR and its head (no query)
 			//   --checkout → fixed copy naming the existing-branch path (no query)
 			//   --base     → the ref verbatim as typed (no query)
 			//   else       → the resolved HEAD label (one query, best-effort)
@@ -423,8 +428,8 @@ be combined with a positional branch argument, --base, --checkout, or --reuse.`,
 			//   4. Run init via RunWorktreeSetupWithObserver (no prompt
 			//      inside the runner).
 			// The confirm fires whenever a branch was explicitly named —
-			// positional (new branch) or --checkout (existing branch) — and is
-			// skipped for the bare exploratory create.
+			// positional (new branch) or --checkout / --pr (existing branch) —
+			// and is skipped for the bare exploratory create.
 			runInit := worktreeInit == "true"
 			if runInit && !(nonInteractive || (branchArg == "" && checkout == "")) {
 				runInit = session.ConfirmYesNo("Initialize worktree?")

@@ -67,7 +67,11 @@ mutation, then runs the `--checkout <head>` path unchanged; the summary's
 `From:` line reads `PR #<n> (existing branch '<head>')`. `gh` is needed only
 for this flag. A PR whose head is in a fork (`isCrossRepository: true`) is
 refused with `ExitInvalidArgs` — add the fork as a remote and use
-`--checkout`; `wt` does not manage remotes.
+`--checkout`; `wt` does not manage remotes. `gh` resolves the PR in its own
+default repository (it prefers an `upstream` remote, or `gh repo set-default`)
+while the checkout looks the head up locally and on `origin`, so `--pr` assumes
+gh's repository *is* `origin`; in a fork clone (origin = your fork, gh default =
+upstream) use `--checkout` instead.
 
 On success, the worktree path is always written as the last line of stdout.
 (When the chosen app was `open_here`, the unified shell-cd contract's own
