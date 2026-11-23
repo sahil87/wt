@@ -84,6 +84,31 @@ func TestIntegration_CreatedWorktreeHasCorrectBranch(t *testing.T) {
 	assertContains(t, r.Stdout, "branch-verify")
 }
 
+// TestIntegration_ReuseWithBaseConflict drives the --reuse + --base usage
+// error end-to-end: the conflict exits 2 and leaves the existing worktree and
+// the worktree set untouched, while --reuse alone still reuses.
+func TestIntegration_ReuseWithBaseConflict(t *testing.T) {
+	repo := createTestRepo(t)
+
+	firstPath := strings.TrimSpace(runWtSuccess(t, repo, nil,
+		"create", "--non-interactive", "--name", "reuse-conflict", "--no-init").Stdout)
+	listBefore := runWtSuccess(t, repo, nil, "list", "--json").Stdout
+
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--reuse", "--name", "reuse-conflict",
+		"--no-init", "--base", "main")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "--reuse and --base cannot be combined")
+	assertContains(t, r.Stderr, "Drop --base, or drop --reuse to create a new worktree")
+	if listAfter := runWtSuccess(t, repo, nil, "list", "--json").Stdout; listAfter != listBefore {
+		t.Errorf("worktree set changed after conflict:\nbefore: %s\nafter:  %s", listBefore, listAfter)
+	}
+
+	r = runWtSuccess(t, repo, nil, "create", "--non-interactive", "--reuse", "--name", "reuse-conflict", "--no-init")
+	if reusedPath := strings.TrimSpace(r.Stdout); reusedPath != firstPath {
+		t.Errorf("--reuse alone: got path %q, want %q", reusedPath, firstPath)
+	}
+}
+
 func TestIntegration_BranchDeletePreservesOthers(t *testing.T) {
 	repo := createTestRepo(t)
 

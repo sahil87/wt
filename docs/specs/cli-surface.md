@@ -34,9 +34,9 @@ Create a git worktree as a sibling of the main repo (`<repo>.worktrees/<name>/`)
 | `--name`, `-n <name>` | random adjective-noun | Set the worktree directory name; skips the name prompt. |
 | `--open`, `-o <prompt\|default\|skip\|<app>>` | `prompt` (`skip` when `--non-interactive`) | Behavior after creation: show app menu, open in detected default, skip, or open in a specific app (e.g. `code`, `cursor`). Requires an explicit value (no bare form — a bare `--open code` would be parsed as the positional `[branch]`). |
 | `--no-init` | (unset — init runs) | Skip the worktree init script (init runs by default). |
-| `--reuse` | `false` | If a worktree with `--name` already exists, reuse it instead of erroring. Requires `--name`. |
+| `--reuse` | `false` | If a worktree with `--name` already exists, reuse it instead of erroring. Requires `--name`. Cannot be combined with `--base`. |
 | `--non-interactive` | `false` | No prompts; fail or use defaults rather than prompting. |
-| `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for the NEW branch. Validated via `git rev-parse --verify` whenever set and `--reuse` is not. Cannot be combined with `--checkout`. |
+| `--base <ref>` | (none) | Git start-point (branch / tag / SHA) for the NEW branch. Validated via `git rev-parse --verify`. Cannot be combined with `--checkout` or `--reuse`. |
 | `--checkout <branch>` | (none) | Check out an EXISTING branch (local as-is, or remote-only fetched then checked out) into the worktree, instead of creating a new one. Cannot be combined with a positional branch argument or with `--base`. |
 
 **Deprecated aliases** (still accepted; hidden from `--help`; print a stderr deprecation warning): `--worktree-name` → `--name`, `--worktree-open` → `--open`, `--worktree-init true|false` → `--no-init` (`--worktree-init false` ≡ `--no-init`).
