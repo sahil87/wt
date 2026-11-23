@@ -83,8 +83,8 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   path, `list --json`, `list --path`, the `go` target path) go to stdout; all
   progress, prompts, warnings, and errors go to stderr. Init-script output is
   diagnostic and streams to stderr. So `p=$(wt create ...)` captures the path clean.
-- **Errors are structured** `Error: <what>` / `Why: <why>` / `Fix: <fix>` on stderr,
-  emitted via `ExitWithError`.
+- **Errors are structured** `Error: <what>` / `Why: <why>` / `Fix: <fix>` on stderr;
+  under `wt create --json` a failure document also goes to stdout (see Gotchas).
 - **Typed exit codes** (from `internal/worktree/errors.go`) let scripts branch:
   - `0` success · `1` general error · `2` invalid args / incompatible flags
   - `3` git error (or not a git repo) · `4` name-generation retries exhausted
@@ -108,6 +108,15 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   an error (exit 2), even when no worktree by that name exists yet — a reused
   worktree keeps its existing branch. To cut from a fresh ref, create a new
   worktree (drop `--reuse`): `wt create --name <n> --base origin/<b> --fetch`.
+- **`wt create --json` is one document, nothing else, on stdout** — on success *and*
+  failure. It implies `--non-interactive` and `--open skip` (an explicit non-skip
+  `--open` is exit 2). `ok` is true iff the exit code is 0; failures carry
+  `error.code` = the exit code. `mode` is `new|checkout|reuse|temp` (`--pr` →
+  `checkout`); `base_ref`/`base_sha` are null for checkout/reuse, `branch` null for
+  temp. Exit 7 (init failed, worktree kept) still carries `result` with `init:"failed"`.
+- **`--fetch` is explicit and fails closed.** No fetch happens without it; a failed
+  fetch exits 3 with nothing created. The new branch is pinned to the resolved
+  `base_sha`, and a remote-tracking `--base` still gets its upstream (as plain git would).
 - **`--pr` needs `gh` and a same-repository PR.** Without `gh` it exits `1`; a
   PR from a fork exits `2` — add the fork as a remote and use `--checkout`. It
   assumes gh's repo is `origin`; in a fork clone, use `--checkout` instead.
