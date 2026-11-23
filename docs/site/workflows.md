@@ -146,7 +146,7 @@ whether the branch already exists:
 | With `--checkout <branch>` | provided | Error (exit 2): `--base` sets a new branch's start-point; `--checkout` targets an existing branch. |
 | Exploratory (no branch arg) | provided | Exploratory branch created from the `--base` ref. |
 | Exploratory | omitted | Branch created from the current `HEAD` (default). |
-| With `--reuse` (worktree exists) | provided | `--reuse` takes precedence; `--base` has no effect. |
+| With `--reuse` | provided | Error (exit 2): a reused worktree keeps its existing branch, so `--base` has nothing to apply to. |
 | Invalid ref | provided | Error exit; no worktree or branch created. |
 
 The ref is validated with `git rev-parse --verify` before worktree creation, so
@@ -235,7 +235,7 @@ but for a worktree created on an existing branch they differ freely.
 - **The `wt create` positional never checks out an existing branch.** Naming a
   branch that already exists (locally or on the remote) is an error (exit 2) —
   checkout of an existing branch is an explicit opt-in via `--checkout <branch>`.
-  `--reuse` takes precedence over `--base`.
+  `--reuse` cannot be combined with `--base` (exit 2).
 - **Worktrees survive `cd` into deleted directories.** If you delete a worktree
   from outside (`rm -rf`), run `git worktree prune` in the main repo to clean up
   git's bookkeeping.

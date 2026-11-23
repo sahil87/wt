@@ -569,7 +569,7 @@ func TestCreate_BaseInvalidRef(t *testing.T) {
 }
 
 // TestCreate_BaseValidatedEvenWithExistingPositional asserts --base is now
-// validated whenever it is set (and --reuse is not), even when the positional
+// validated whenever it is set, even when the positional
 // names an already-existing branch. The old warn-and-ignore behavior (which
 // skipped --base validation for existing branches) is gone — the positional is
 // always a NEW branch, so --base always applies and an invalid ref fails.
@@ -592,27 +592,15 @@ func TestCreate_BaseValidatedEvenWithExistingPositional(t *testing.T) {
 	assertWorktreeNotExists(t, repo, "exist-branch")
 }
 
-func TestCreate_BaseInvalidRefWithReuse(t *testing.T) {
+// TestCreate_ReuseWithBaseConflict asserts --reuse and --base are mutually
+// exclusive: a reused worktree keeps its existing branch, so --base has nothing
+// to apply to. The conflict fires before any git work, so an existing worktree
+// is left untouched (no reuse, no init) and nothing is printed on stdout.
+func TestCreate_ReuseWithBaseConflict(t *testing.T) {
 	repo := createTestRepo(t)
 
-	// Create a worktree first
-	firstPath := createWorktreeViaWt(t, repo, "reuse-invalid-base")
-
-	// Attempt to reuse the existing worktree with an invalid --base; --reuse should take precedence
-	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--reuse", "--worktree-name", "reuse-invalid-base",
-		"--base", "nonexistent-ref")
-
-	reusedPath := strings.TrimSpace(r.Stdout)
-	if reusedPath != firstPath {
-		t.Errorf("--reuse path mismatch with invalid --base: got %q, want %q", reusedPath, firstPath)
-	}
-}
-
-func TestCreate_BaseWithReuse(t *testing.T) {
-	repo := createTestRepo(t)
-
-	// Create a worktree first
 	firstPath := createWorktreeViaWt(t, repo, "reuse-base")
+	headBefore := gitRun(t, firstPath, "rev-parse", "HEAD")
 
 	// Create a branch to use as --base
 	gitRun(t, repo, "checkout", "-b", "base-branch")
@@ -621,14 +609,59 @@ func TestCreate_BaseWithReuse(t *testing.T) {
 	gitRun(t, repo, "commit", "-q", "-m", "Add base.txt")
 	gitRun(t, repo, "checkout", "main")
 
-	// Try to create with --reuse and --base — reuse should take precedence
-	r := runWtSuccess(t, repo, nil, "create", "--non-interactive", "--reuse", "--worktree-name", "reuse-base",
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--reuse", "--worktree-name", "reuse-base",
 		"--base", "base-branch")
 
-	reusePath := strings.TrimSpace(r.Stdout)
-	if reusePath != firstPath {
-		t.Errorf("--reuse path mismatch: got %q, want %q", reusePath, firstPath)
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "--reuse and --base cannot be combined")
+	if strings.TrimSpace(r.Stdout) != "" {
+		t.Errorf("expected empty stdout on conflict, got %q", r.Stdout)
 	}
+	if headAfter := gitRun(t, firstPath, "rev-parse", "HEAD"); headAfter != headBefore {
+		t.Errorf("reused worktree HEAD changed: %s -> %s", headBefore, headAfter)
+	}
+}
+
+// TestCreate_ReuseWithBaseConflict_NoCollision asserts the conflict is
+// unconditional: with no existing worktree to reuse, --reuse --base still
+// exits 2 and creates neither the worktree nor its branch.
+func TestCreate_ReuseWithBaseConflict_NoCollision(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--reuse", "--worktree-name", "reuse-fresh-base",
+		"--worktree-init", "false", "--base", "main")
+
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "--reuse and --base cannot be combined")
+	assertWorktreeNotExists(t, repo, "reuse-fresh-base")
+	assertBranchNotExists(t, repo, "reuse-fresh-base")
+}
+
+// TestCreate_ReuseWithInvalidBaseConflict asserts the conflict check runs
+// before --base ref validation: an unresolvable ref still reports the
+// conflict, not "Invalid --base ref".
+func TestCreate_ReuseWithInvalidBaseConflict(t *testing.T) {
+	repo := createTestRepo(t)
+
+	createWorktreeViaWt(t, repo, "reuse-invalid-base")
+
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--reuse", "--worktree-name", "reuse-invalid-base",
+		"--base", "nonexistent-ref")
+
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "--reuse and --base cannot be combined")
+	assertNotContains(t, r.Stderr, "Invalid --base ref")
+}
+
+// TestCreate_ReuseWithBaseWithoutName asserts --reuse requires --name stays
+// the first --reuse check, ahead of the --base conflict.
+func TestCreate_ReuseWithBaseWithoutName(t *testing.T) {
+	repo := createTestRepo(t)
+
+	r := runWt(t, repo, nil, "create", "--non-interactive", "--reuse", "--base", "main")
+
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "--reuse requires --name")
 }
 
 func TestCreate_BaseDoesNotAffectExistingBehavior(t *testing.T) {

@@ -96,8 +96,10 @@ One line per subcommand (run `wt <cmd> --help` for flags):
   `lively-otter`) unless you pass `-n/--name`.
 - **The `create` positional is new-branch-only.** Naming a branch that already
   exists (locally or on the remote) is an error (exit 2) pointing you at
-  `--checkout <branch>` — the explicit opt-in for existing branches. `--reuse`
-  takes precedence over `--base`.
+  `--checkout <branch>` — the explicit opt-in for existing branches.
+- **`--reuse` and `--base` don't mix.** Passing both is an error (exit 2), even
+  when no worktree by that name exists yet — a reused worktree keeps its existing
+  branch. To cut from a ref, create a new worktree (drop `--reuse`).
 - **Init failure keeps the worktree.** If the init script exits non-zero, `wt`
   exits `7` (not `1`) and leaves the worktree in place with a retry hint
   (`cd <path> && wt init`) — the git operations already succeeded. It does not roll

@@ -42,7 +42,10 @@ use --checkout to put a worktree on an existing branch.
 
 --checkout <branch> checks out an EXISTING branch (local as-is, or remote-only
 fetched then checked out). --checkout cannot be combined with a positional
-branch argument or with --base.`,
+branch argument or with --base.
+
+--reuse cannot be combined with --base: a reused worktree keeps its existing
+branch, so a start-point has nothing to apply to.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var branchArg string
@@ -85,7 +88,8 @@ branch argument or with --base.`,
 
 			// --checkout selects an existing branch; the positional creates a
 			// new one. They are mutually exclusive modes, as are --checkout and
-			// --base (--base is the start-point for a NEW branch only).
+			// --base, and --reuse and --base (--base is the start-point for a
+			// NEW branch only).
 			if checkout != "" && branchArg != "" {
 				wt.ExitWithError(wt.ExitInvalidArgs,
 					"--checkout cannot be combined with a positional branch argument",
@@ -97,6 +101,12 @@ branch argument or with --base.`,
 					"--base cannot be combined with --checkout",
 					"--base is the start-point for a NEW branch; --checkout targets an existing branch",
 					"Drop --base, or create a new branch: wt create <name> --base <ref>")
+			}
+			if reuse && base != "" {
+				wt.ExitWithError(wt.ExitInvalidArgs,
+					"--reuse and --base cannot be combined",
+					"--reuse keeps the existing worktree's branch, so a start-point has nothing to apply to",
+					"Drop --base, or drop --reuse to create a new worktree")
 			}
 
 			// Validate git repo
@@ -144,12 +154,10 @@ branch argument or with --base.`,
 				}
 			}
 
-			// Validate --base ref whenever it is set and --reuse is not.
-			// The positional is always a NEW branch now, so --base always
-			// applies to it; only --reuse short-circuits before --base is used
-			// (so `wt create --reuse --base <bad>` must not fail on the ref).
-			// (--base + --checkout was already rejected above.)
-			if base != "" && !reuse {
+			// Validate --base ref whenever it is set. --base + --checkout and
+			// --base + --reuse were both rejected above, so a --base reaching
+			// here always applies to a NEW branch (positional or bare).
+			if base != "" {
 				if err := exec.Command("git", "rev-parse", "--verify", base).Run(); err != nil {
 					wt.ExitWithError(wt.ExitInvalidArgs,
 						fmt.Sprintf("Invalid --base ref: %s", base),
@@ -582,7 +590,7 @@ branch argument or with --base.`,
 	cmd.Flags().MarkDeprecated("worktree-init", "use --no-init instead")
 	cmd.Flags().BoolVar(&reuse, "reuse", false, "Reuse existing worktree if name collides (requires --name)")
 	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "No prompts; use defaults and skip menus")
-	cmd.Flags().StringVar(&base, "base", "", "Git ref (branch, tag, SHA) to use as start-point for new branch")
+	cmd.Flags().StringVar(&base, "base", "", "Git ref (branch, tag, SHA) to use as start-point for new branch (not with --checkout or --reuse)")
 	cmd.Flags().StringVar(&checkout, "checkout", "", "Check out an EXISTING branch (local or remote) into the worktree instead of creating a new one")
 
 	return cmd
